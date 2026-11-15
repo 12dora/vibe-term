@@ -3,7 +3,7 @@ import { ControlModeCommandQueue } from './control-mode-capture';
 import { createControlModeParser } from './control-mode-parser';
 import { sendExternalInput } from './external-input';
 import { InputCommandWindow, InputQueueFullError } from './input-command-window';
-import { SEND_KEYS_HEX_CHUNK_BYTES } from './input-encoder';
+import { PIPELINED_INPUT_TIMEOUT_MS, SEND_KEYS_HEX_CHUNK_BYTES } from './input-encoder';
 
 function harness() {
   let current = true;
@@ -163,5 +163,120 @@ describe('external input synchronous acknowledgement', () => {
     await expect(failedWrite).rejects.toThrow('closed pipe');
     expect(acknowledgements).toBe(0);
     h.queue.dispose();
+  });
+});
+
+interface FakeExecuteCall {
+  command: string;
+  poisonOnTimeout?: boolean;
+  sample?: boolean;
+  timeoutMs?: number;
+}
+
+function fakeQueue(replies: Array<Promise<unknown> | Error> = []) {
+  const calls: FakeExecuteCall[] = [];
+  let index = 0;
+  const queue = {
+    execute: (
+      _write: (command: string) => void,
+      command: string,
+      options: {
+        poisonOnTimeout?: boolean;
+        sample?: boolean;
+        timeoutMs?: number;
+        onAck?: () => void;
+        transform: () => undefined;
+      }
+    ) => {
+      calls.push({
+        command,
+        poisonOnTimeout: options.poisonOnTimeout,
+        sample: options.sample,
+        timeoutMs: options.timeoutMs,
+      });
+      const reply = replies[index];
+      index += 1;
+      if (reply instanceof Error) return Promise.reject(reply);
+      return (reply ?? Promise.resolve(undefined)).then((value) => {
+        options.onAck?.();
+        return value;
+      });
+    },
+  };
+  return { queue, calls };
+}
+
+describe('external input timeout and coalescing', () => {
+  test('input execute never poisons the control queue on timeout', async () => {
+    const timeout = new Error('tmux control command timed out: send-keys');
+    const fake = fakeQueue([timeout]);
+    const errors: Error[] = [];
+    const result = sendExternalInput(
+      {
+        queue: fake.queue as unknown as ControlModeCommandQueue,
+        write: () => {},
+        isCurrent: () => true,
+        run: () => Promise.resolve(),
+        onError: (error) => errors.push(error),
+      },
+      '%1',
+      new Uint8Array([0x41])
+    );
+    await expect(result).rejects.toThrow('timed out');
+    expect(fake.calls).toEqual([
+      {
+        command: 'send-keys -H -t %1 41',
+        poisonOnTimeout: false,
+        sample: true,
+        timeoutMs: undefined,
+      },
+    ]);
+    expect(errors).toEqual([timeout]);
+  });
+
+  test('resolves function timeoutMs at execute time, not enqueue time', async () => {
+    const blocker = Promise.withResolvers<void>();
+    const fake = fakeQueue([blocker.promise, Promise.resolve()]);
+    const window = new InputCommandWindow(() => 1);
+    let timeoutMs = 11;
+    const transport = {
+      queue: fake.queue as unknown as ControlModeCommandQueue,
+      window,
+      write: () => {},
+      isCurrent: () => true,
+      run: () => Promise.resolve(),
+      onError: () => {},
+      timeoutMs: () => timeoutMs,
+    };
+    const first = sendExternalInput(transport, '%1', new Uint8Array([0x41]));
+    const second = sendExternalInput(transport, '%1', new Uint8Array([0x42]));
+    timeoutMs = 22;
+    blocker.resolve();
+    await Promise.all([first, second]);
+    expect(fake.calls.map((call) => call.timeoutMs)).toEqual([11, 22]);
+    expect(fake.calls.every((call) => call.poisonOnTimeout === false)).toBe(true);
+    window.dispose('done');
+  });
+
+  test('multi-chunk input keeps at least the pipelined timeout', async () => {
+    const fake = fakeQueue();
+    const result = sendExternalInput(
+      {
+        queue: fake.queue as unknown as ControlModeCommandQueue,
+        write: () => {},
+        isCurrent: () => true,
+        run: () => Promise.resolve(),
+        onError: () => {},
+        timeoutMs: () => 1_000,
+      },
+      '%1',
+      new Uint8Array(SEND_KEYS_HEX_CHUNK_BYTES + 1).fill(0x41)
+    );
+    await result;
+    expect(fake.calls).toHaveLength(2);
+    expect(fake.calls.map((call) => call.timeoutMs)).toEqual([
+      PIPELINED_INPUT_TIMEOUT_MS,
+      PIPELINED_INPUT_TIMEOUT_MS,
+    ]);
   });
 });

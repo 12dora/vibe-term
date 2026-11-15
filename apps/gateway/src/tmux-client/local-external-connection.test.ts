@@ -5,6 +5,7 @@ import { createDevice as createDeviceRow, getDeviceById, getDeviceRuntimeStatus 
 import { runMigrations } from '../db/migrate';
 import type { ControlModeCommandQueue } from './control-mode-capture';
 import type { TmuxEvent } from './events';
+import { CONTROL_COMMAND_TIMEOUT_MS } from './external/constants';
 import type { InputCommandWindow } from './input-command-window';
 import { PIPELINED_INPUT_TIMEOUT_MS } from './input-encoder';
 import {
@@ -400,6 +401,8 @@ describe('LocalExternalTmuxConnection', () => {
       "tmux set-hook -t vibeterm-snapshot after-new-window set-option -w window-style 'fg=#d0d0d0,bg=#262626'",
       'tmux list-windows -t vibeterm-snapshot -F #{window_id}',
       'tmux set-option -w -t @1 window-style fg=#d0d0d0,bg=#262626',
+      // 合并快照查询未被桩应答，回退为三条独立命令。
+      'tmux display-message -p -t vibeterm-snapshot #{session_id}|#{session_name} ; display-message -p -t vibeterm-snapshot __VT_SECTION__1 ; list-windows -t vibeterm-snapshot -F #{window_id}|#{window_index}|#{window_active}|#{window_layout}|#{window_name} ; display-message -p -t vibeterm-snapshot __VT_SECTION__2 ; list-panes -s -t vibeterm-snapshot -F #{pane_id}|#{window_id}|#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_left}|#{pane_top}|#{window_active}|#{pane_pid}|#{pane_title}|#{pane_current_command}|#{pane_current_path}',
       'tmux display-message -p -t vibeterm-snapshot #{session_id}|#{session_name}',
       'tmux list-windows -t vibeterm-snapshot -F #{window_id}|#{window_index}|#{window_active}|#{window_layout}|#{window_name}',
       'tmux list-panes -s -t vibeterm-snapshot -F #{pane_id}|#{window_id}|#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_left}|#{pane_top}|#{window_active}|#{pane_pid}|#{pane_title}|#{pane_current_command}|#{pane_current_path}',
@@ -1404,6 +1407,7 @@ describe('LocalExternalTmuxConnection', () => {
     );
 
     await connection.connect();
+    (connection as any).controlCommands.idleMs = () => Number.POSITIVE_INFINITY;
 
     (connection as any).sendHeartbeat();
 
@@ -1437,6 +1441,7 @@ describe('LocalExternalTmuxConnection', () => {
     );
 
     await connection.connect();
+    (connection as any).controlCommands.idleMs = () => Number.POSITIVE_INFINITY;
 
     (connection as any).sendHeartbeat();
     expect((connection as any).heartbeatPending).toBe(true);
@@ -1452,7 +1457,7 @@ describe('LocalExternalTmuxConnection', () => {
     connection.disconnect();
   });
 
-  test('heartbeat timeout kills process', async () => {
+  test('heartbeat kills the process only when the control channel is stalled', async () => {
     const fakes: FakeControlProcess[] = [];
     const connection = new LocalExternalTmuxConnection(
       {
@@ -1482,20 +1487,25 @@ describe('LocalExternalTmuxConnection', () => {
     const target = fakes[0];
     if (!target) throw new Error('control process was not created');
 
-    (connection as any).sendHeartbeat();
+    const c = connection as any;
+    c.controlCommands.idleMs = () => Number.POSITIVE_INFINITY;
+    c.sendHeartbeat();
     expect(target.writtenData).toContain('display-message -p "vibeterm-hb"\n');
 
-    // Replace the 10s timeout with a short one to avoid slow test.
-    // The replacement replicates the same guard logic from sendHeartbeat.
-    clearTimeout((connection as any).heartbeatTimeoutTimer);
-    (connection as any).heartbeatTimeoutTimer = setTimeout(() => {
-      const c = connection as any;
-      if (!c.heartbeatPending || !c.connected || c.manualDisconnect) {
-        return;
-      }
-      c.controlProcess?.kill();
-    }, 50);
+    // 控制流仍有进展：心跳检查不拆通道。
+    c.controlCommands.noteActivity();
+    c.controlLifecycle.checkHeartbeat();
+    expect(target.killed()).toBe(false);
+    clearTimeout(c.heartbeatTimeoutTimer);
 
+    // 整窗无进展（卡死窗口压到 0）才拆。
+    c.controlStallTimeoutMs = 0;
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      c.controlLifecycle.checkHeartbeat();
+    } finally {
+      warn.mockRestore();
+    }
     await waitFor(() => (target.killed() ? true : null), 2000);
     expect(target.killed()).toBe(true);
 
@@ -1603,6 +1613,7 @@ describe('LocalExternalTmuxConnection', () => {
 
     expect((connection as any).heartbeatTimer).not.toBeNull();
 
+    (connection as any).controlCommands.idleMs = () => Number.POSITIVE_INFINITY;
     (connection as any).sendHeartbeat();
     expect((connection as any).heartbeatTimeoutTimer).not.toBeNull();
 
@@ -2249,7 +2260,8 @@ describe('控制模式下的输入流水线', () => {
   test('六个按键只写四条，每个回执按 FIFO 补一条', async () => {
     const h = await connectControlMode('vibeterm-window-six');
     try {
-      const inputs = [...'ABCDEF'].map((key) => h.connection.sendInput('%1', key));
+      // 不同 pane：同 pane 等待中的 send-keys 会被窗口合并，这里只验证槽位与 FIFO。
+      const inputs = [...'ABCDEF'].map((key, i) => h.connection.sendInput(`%${i + 1}`, key));
       expect(h.sendKeys().map((line) => line.trim().split(' ').at(-1))).toEqual([
         '41',
         '42',
@@ -2311,7 +2323,7 @@ describe('控制模式下的输入流水线', () => {
       await Promise.all(inputs);
       expect(execute.mock.calls.map((call) => call[2].timeoutMs)).toEqual([
         ...Array(6).fill(PIPELINED_INPUT_TIMEOUT_MS),
-        undefined,
+        CONTROL_COMMAND_TIMEOUT_MS,
         ...Array(3).fill(PIPELINED_INPUT_TIMEOUT_MS),
       ]);
     } finally {
@@ -2324,7 +2336,7 @@ describe('控制模式下的输入流水线', () => {
     const h = await connectControlMode('vibeterm-window-error');
     try {
       const failed = h.connection.sendInput('%1', 'A');
-      const later = [...'BCDEF'].map((key) => h.connection.sendInput('%2', key));
+      const later = [...'BCDEF'].map((key, i) => h.connection.sendInput(`%${i + 2}`, key));
       h.answer(1, 'error');
       await expect(failed).rejects.toThrow('no such pane');
       expect(h.sendKeys()).toHaveLength(5);
@@ -2342,18 +2354,20 @@ describe('控制模式下的输入流水线', () => {
   test('disconnect 拒绝在途和待发输入、清除定时器，connect 后不重放', async () => {
     const h = await connectControlMode('vibeterm-window-disconnect');
     const inputs = [...'ABCDEF'].map((key) => h.connection.sendInput('%1', key));
-    const timers = (
-      h.internals.controlCommands as unknown as {
-        pending: { timer: ReturnType<typeof setTimeout> }[];
-      }
-    ).pending.map((pending) => pending.timer);
+    const internals = h.internals.controlCommands as unknown as {
+      pending: unknown[];
+      timer: ReturnType<typeof setTimeout> | null;
+    };
+    const pendingCount = internals.pending.length;
+    const watchdog = internals.timer;
     const cleared = spyOn(globalThis, 'clearTimeout');
     try {
       h.connection.disconnect();
       const results = await Promise.allSettled(inputs);
       expect(results.map((result) => result.status)).toEqual(Array(6).fill('rejected'));
-      expect(timers).toHaveLength(4);
-      for (const timer of timers) expect(cleared).toHaveBeenCalledWith(timer);
+      expect(pendingCount).toBe(4);
+      expect(watchdog).not.toBeNull();
+      expect(cleared).toHaveBeenCalledWith(watchdog);
       expect(h.fake.killed()).toBe(true);
       await h.connection.connect();
       const current = h.fakes[1];
@@ -2484,7 +2498,7 @@ describe('控制模式下的输入流水线', () => {
     try {
       h.internals.handleControlClientExit(h.fake.proc, 1);
       expect(() => h.internals.spawnControlClientProcess(() => {})).toThrow('control spawn failed');
-      const inputs = [...'ABCDEF'].map((key) => h.connection.sendInput('%1', key));
+      const inputs = [...'ABCDEF'].map((key, i) => h.connection.sendInput(`%${i + 1}`, key));
       expect(run).toHaveBeenCalledTimes(1);
       for (let i = 0; i < inputs.length; i += 1) {
         replies[i].resolve(ok());
@@ -2496,6 +2510,90 @@ describe('控制模式下的输入流水线', () => {
       run.mockRestore();
       h.connection.disconnect();
       h.fake.proc.kill();
+    }
+  });
+
+  test('控制流 stdout 计入通道活动，输入超时取自适应 getter，鼠标查询走控制队列', async () => {
+    const h = await connectControlMode('vibeterm-control-activity');
+    const execute = spyOn(h.internals.controlCommands, 'execute');
+    try {
+      const queue = h.internals.controlCommands;
+      (queue as unknown as { stall: { noteActivity(now: number): void } }).stall.noteActivity(
+        queue.now() - 60_000
+      );
+      expect(queue.idleMs()).toBeGreaterThanOrEqual(60_000);
+      h.fake.pushStdout('%output %1 hi\n');
+      await waitFor(() => (queue.idleMs() < 1_000 ? true : null));
+
+      const input = h.connection.sendInput('%1', 'A');
+      expect(execute.mock.calls.at(-1)?.[2].timeoutMs).toBe(CONTROL_COMMAND_TIMEOUT_MS);
+      expect(h.connection.getInputCommandTimeoutMs()).toBe(CONTROL_COMMAND_TIMEOUT_MS);
+      h.answer(1);
+      await input;
+
+      const mouse = h.connection.queryPaneMouse('%1');
+      expect(execute.mock.calls.at(-1)?.[1]).toStartWith('display-message -p -t %1 ');
+      expect(execute.mock.calls.at(-1)?.[2].poisonOnTimeout).toBe(false);
+      h.connection.disconnect();
+      await mouse.catch(() => undefined);
+      await expect(h.connection.queryPaneMouse('%1')).resolves.toBeNull();
+    } finally {
+      execute.mockRestore();
+      h.connection.disconnect();
+    }
+  });
+
+  test('首个控制命令超时时学 tmux server pid，卡死判定读注入的 /proc', async () => {
+    const session = 'vibeterm-liveness';
+    const fake = createFakeControlProcess();
+    const reads: number[] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        enableSubscription: true,
+        platform: 'linux',
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice(session),
+        run: createRunStub(session, {
+          overrides: (command) => (command === 'display-message -p #{pid}' ? ok('4242\n') : null),
+        }),
+        readProcStat: (pid) => {
+          reads.push(pid);
+          return `${pid} (tmux: server) S 1`;
+        },
+        spawnControlClient: () => {
+          fake.pushStdout(`%begin 1 1 0\n%end 1 1 0\n%session-changed $1 ${session}\n`);
+          return fake.proc;
+        },
+      }
+    );
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await connection.connect();
+      const internals = connection as unknown as {
+        controlCommands: ControlModeCommandQueue;
+        serverLiveness: { serverPid: number | null; check(): string };
+      };
+      const slow = internals.controlCommands.execute(() => {}, 'display-message -p slow', {
+        timeoutMs: 5,
+        transform: () => undefined,
+      });
+      await expect(slow).rejects.toThrow(/timed out/);
+      await waitFor(() => internals.serverLiveness.serverPid);
+      expect(internals.serverLiveness.check()).toBe('alive');
+      expect(reads).toEqual([4242]);
+      expect(fake.killed()).toBe(false);
+    } finally {
+      warn.mockRestore();
+      connection.disconnect();
     }
   });
 

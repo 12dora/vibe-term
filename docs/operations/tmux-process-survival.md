@@ -126,6 +126,13 @@ VibeTerm 为自己创建的会话开启 `remain-on-exit on`，并在 UI 上把 `
 
 命令重新跑通后，网关清掉设备上滞留的 `lastError` 并广播 `reconnected`，前端据此撤下错误提示——此前 `lastError` 只在重连成功时才清，而这类故障下连接从不断开，错误会一直挂着。
 
+控制通道「慢」与「死」分开处理（`control-mode-capture.ts`、`control-stall-detector.ts`）：
+
+- 单条命令超时从它到达 FIFO 队头（tmux 开始处理）起算，基准本机 10 s / SSH 30 s，并随宿主一跳 EWMA 放大为 `clamp(max(基准, 8 × EWMA), 基准, 60 s)`；另有自入队起 4 倍的硬上限。超时只拒绝该命令的调用方，迟到的 `%end` 按 orphan / command-number 对齐丢弃，不毒化队列。
+- 只有「有命令在途且控制流（任何 stdout 字节、命令块、`%output`、通知）整窗无进展」才判卡死：本机 45 s、SSH 60 s。本机还会读 `/proc/<tmux server pid>/stat`（pid 在首次超时时学习）：进程仍在运行 / 睡眠 / D 态视为慢，再宽限一窗，最多 3 次；已停止（`T`/`t`）、僵尸或不存在视为死，立即拆通道。非 Linux 不做这一检查。
+- 心跳（30 s 无任何控制流活动才发，不毒化队列）同样只在整窗无进展时杀控制进程 / 关 SSH 通道。
+- 状态跃迁经 `onControlHealth` 上报 `slow` / `stalled` / `recovered`，每次事故日志各一条：`[tmux] control channel slow device=… head_age_ms=… last_activity_ms=…`、`[tmux] control channel recovered device=… slow_ms=…`。
+
 控制通道在宿主过载下变慢（`tmux control command timed out` 等）时，网关把错误归为 `tmux_busy`，而不是 SSH 的 `timeout` / `unknown`。单次慢命令不告警；慢状态持续 ≥15 s 或通道 `stalled` 才落库并广播。控制通道 `recovered`、控制客户端重挂成功、或随后快照/命令成功时，只清 `tmux_busy`（及历史上被标成 `unknown` 的同类控制通道文案），并广播 `reconnected`；不会用控制通道恢复掩盖 SSH / 认证失败。
 
 ### 需要用户自己做的

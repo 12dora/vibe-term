@@ -9,7 +9,6 @@ import {
   getLocalShellPath,
 } from '../tmux/local-shell-path';
 import type { TmuxConnectionOptions } from './connection-types';
-import { ControlModeCommandQueue } from './control-mode-capture';
 import * as history from './control-mode-history';
 import {
   type ControlModeSubscription,
@@ -29,7 +28,7 @@ import {
   ExternalTmuxConnectionCore,
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
-import { hostLatencySampler, probeHostLatency } from './host-latency-tracker';
+import { probeHostLatency } from './host-latency-tracker';
 import { InputCommandWindow } from './input-command-window';
 import {
   CONTROL_RECONNECT_POLICY,
@@ -37,6 +36,8 @@ import {
   reconnectControlChannel,
 } from './reconnect-control-channel';
 import { notifyDeviceRuntimeError } from './runtime-error-alert';
+import { SOCKET_PROBE_ARGV } from './socket-recovery';
+import { LocalTmuxServerLiveness, type ProcStatReader } from './tmux-server-liveness';
 import {
   isControlModeSupported,
   parseTmuxVersion,
@@ -60,6 +61,7 @@ interface LocalExternalTmuxConnectionDeps {
   ensureGhosttyTerminfo: () => Promise<boolean>;
   parkingCommand: () => string;
   spawnControlClient: (argv: string[]) => ControlClientProcess;
+  readProcStat?: ProcStatReader;
 }
 
 export function shouldIgnoreReaderAbortError(error: unknown): boolean {
@@ -254,6 +256,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   private inputCommands = new InputCommandWindow(() => 1);
   private controlProcess: ControlClientProcess | null = null;
   private spawnUnavailableNotified = false;
+  private readonly serverLiveness: LocalTmuxServerLiveness;
 
   constructor(
     options: TmuxConnectionOptions,
@@ -279,6 +282,11 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
       parkingCommand: inputDeps.parkingCommand ?? (() => getLocalParkingCommand(platform)),
       spawnControlClient: inputDeps.spawnControlClient ?? defaultSpawnControlClient,
     };
+    this.serverLiveness = new LocalTmuxServerLiveness(
+      platform,
+      async () => (await this.runTmuxAllowFailure(SOCKET_PROBE_ARGV)).stdout,
+      inputDeps.readProcStat
+    );
   }
 
   async connect(): Promise<void> {
@@ -327,6 +335,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
           this.connected && this.controlProcess === control && this.controlCommands === queue,
         run: (argv) => this.runTmux(argv),
         onError: (error) => this.callbacks.onError(error),
+        timeoutMs: () => this.getInputCommandTimeoutMs(),
       },
       paneId,
       Uint8Array.from(data),
@@ -505,13 +514,14 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     const inputCommands = new InputCommandWindow(() => (this.controlProcess ? 4 : 1));
     this.inputCommands = inputCommands;
     let proc: ControlClientProcess | null = null;
-    const controlCommands = new ControlModeCommandQueue(
+    const controlCommands = this.createControlQueue(
       () => {
         this.callbacks.onInputTransportInvalidated?.();
         inputCommands.dispose('tmux input control queue poisoned');
         proc?.kill();
       },
-      hostLatencySampler(this.callbacks, wsBorsh.DEVICE_LATENCY_HOP_LOCAL)
+      wsBorsh.DEVICE_LATENCY_HOP_LOCAL,
+      this.serverLiveness
     );
     this.controlCommands = controlCommands;
     const metricsOptions = shouldLog('debug')
@@ -564,6 +574,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
         if (chunk.done || this.controlProcess !== proc) {
           break;
         }
+        this.controlCommands.noteActivity();
         subscription.push(chunk.value);
       }
     } catch (error) {

@@ -7,6 +7,7 @@ import {
 } from '@vibeterm/shared';
 
 import type { LifecycleEventEmitter, TmuxConnectionOptions } from '../connection-types';
+import type { ControlHealthEvent } from '../control-health';
 import type { TmuxEvent, TmuxSourceMetadataEvent } from '../events';
 import type {
   MetadataProjection,
@@ -44,6 +45,7 @@ export interface DeviceSessionRuntimeListener {
     panes: ReadonlyArray<{ paneId: string; cols: number; rows: number }>
   ) => void;
   onError?: (error: Error) => void;
+  onControlHealth?: (event: ControlHealthEvent) => void;
   onClose?: () => void;
 }
 
@@ -127,6 +129,9 @@ export class RuntimeEventBridge {
       onSnapshot: (payload, baseRevision) => this.handleSnapshot(payload, baseRevision),
       onError: (error) => {
         this.host.broadcast((listener) => listener.onError?.(error));
+      },
+      onControlHealth: (event) => {
+        this.host.broadcast((listener) => listener.onControlHealth?.(event));
       },
       onClose: () => {
         this.host.handleUnexpectedClose();

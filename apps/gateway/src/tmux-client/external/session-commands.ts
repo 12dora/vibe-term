@@ -1,6 +1,5 @@
 import { encodePaneModes } from '@vibeterm/shared';
 import type { TmuxWindow } from '@vibeterm/shared';
-
 import { config } from '../../config';
 import {
   PANE_HISTORY_CAPTURE_INFO_FORMAT,

@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { ControlModeCommandQueue } from './control-mode-capture';
 import { createControlModeParser } from './control-mode-parser';
+import { createFakeClock } from './control-queue-test-helpers';
 import { InputCommandWindow } from './input-command-window';
 
 const encoder = new TextEncoder();
@@ -8,10 +9,15 @@ const encoder = new TextEncoder();
 function harness(timeoutMs = 10_000, failAt = -1) {
   const window = new InputCommandWindow(() => 4);
   let poisonCount = 0;
-  const queue = new ControlModeCommandQueue(() => {
-    poisonCount += 1;
-    window.dispose('poisoned');
-  });
+  const clock = createFakeClock();
+  const queue = new ControlModeCommandQueue(
+    () => {
+      poisonCount += 1;
+      window.dispose('poisoned');
+    },
+    undefined,
+    { clock, stallTimeoutMs: () => 1_000 }
+  );
   const writes: string[] = [];
   const outputs: string[] = [];
   const transformed: string[] = [];
@@ -29,6 +35,7 @@ function harness(timeoutMs = 10_000, failAt = -1) {
   return {
     window,
     queue,
+    clock,
     write,
     writes,
     outputs,
@@ -104,33 +111,44 @@ describe('input window with the real control queue and parser', () => {
     h.queue.dispose();
   });
 
-  test('timeout poisons all four active commands and cancels pending input and timers', async () => {
+  test('input timeouts never poison a progressing channel; a real stall poisons once', async () => {
     const h = harness(5);
-    const cleared = spyOn(globalThis, 'clearTimeout');
-    try {
-      const inputs = ['a', 'b', 'c', 'd', 'e', 'f'].map((key) => h.enqueue([key]));
-      const results = await Promise.allSettled(inputs);
-      expect(results.map((result) => result.status)).toEqual(Array(6).fill('rejected'));
-      expect(cleared).toHaveBeenCalledTimes(4);
-      expect(h.poisonCount()).toBe(1);
-      expect(h.writes).toEqual(['a', 'b', 'c', 'd']);
-      h.push(reply(1) + reply(2) + reply(3) + reply(4));
-      await expect(h.enqueue(['new'])).rejects.toThrow('poisoned');
-      expect(h.writes).toEqual(['a', 'b', 'c', 'd']);
-    } finally {
-      cleared.mockRestore();
-      h.queue.dispose();
-    }
+    const inputs = ['a', 'b', 'c', 'd', 'e', 'f'].map((key) => h.enqueue([key]));
+    const settled = inputs.map((input) =>
+      input.then(
+        () => 'ok',
+        () => 'rejected'
+      )
+    );
+    expect(h.writes).toEqual(['a', 'b', 'c', 'd']);
+    h.clock.advance(5);
+    await flush();
+    expect(h.poisonCount()).toBe(0);
+    expect(await settled[0]).toBe('rejected');
+    h.push(reply(1));
+    await flush();
+    expect(h.writes).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(h.poisonCount()).toBe(0);
+
+    h.clock.advance(999);
+    expect(h.poisonCount()).toBe(0);
+    h.clock.advance(1);
+    expect(h.poisonCount()).toBe(1);
+    expect(await Promise.all(settled)).toEqual(Array(6).fill('rejected'));
+    h.push(reply(2) + reply(3) + reply(4) + reply(5));
+    await expect(h.enqueue(['new'])).rejects.toThrow('poisoned');
+    expect(h.writes).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 
   test('synchronous write failure closes the window before the pump can write more commands', async () => {
     const h = harness(10_000, 2);
-    const cleared = spyOn(globalThis, 'clearTimeout');
+    const cleared = spyOn(h.clock, 'clearTimeout');
     try {
       const paste = h.enqueue(['a', 'b', 'c', 'd', 'e', 'f']);
       await expect(paste).rejects.toThrow();
       expect(h.poisonCount()).toBe(1);
-      expect(cleared).toHaveBeenCalledTimes(3);
+      // 队列只有一个看门狗定时器，毒化时清掉它。
+      expect(cleared).toHaveBeenCalledTimes(1);
       expect(h.writes).toEqual(['a', 'b']);
       await expect(h.enqueue(['new'])).rejects.toThrow('poisoned');
       h.push(reply(1) + reply(2));

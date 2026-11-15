@@ -40,12 +40,19 @@ export interface ControlModeHost {
   heartbeatTimer: ReturnType<typeof setInterval> | null;
   heartbeatPending: boolean;
   heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | null;
-  lastControlActivityAt?: () => number;
 }
 
+interface HeartbeatProbe {
+  queue: ControlModeCommandQueue;
+  sentAt: number;
+  rejected: boolean;
+}
+
+const HEARTBEAT_COMMAND = 'display-message -p "vibeterm-hb"';
+
 export class ControlModeLifecycle {
-  private lastTerminalOutputAt = 0;
   private attachedOnce = false;
+  private heartbeat: HeartbeatProbe | null = null;
 
   constructor(private readonly host: ControlModeHost) {}
 
@@ -128,44 +135,73 @@ export class ControlModeLifecycle {
       this.host.heartbeatTimeoutTimer = null;
     }
     this.host.heartbeatPending = false;
+    this.heartbeat = null;
   }
 
+  /** 任何控制流进展（命令回执、%output、通知）都说明通道活着，一个心跳周期内不再补心跳。 */
   sendHeartbeat(): void {
     const host = this.host;
     const write = host.getControlWriter();
     if (!write || host.heartbeatPending || !host.connected || host.manualDisconnect) {
       return;
     }
-    const lastActivity = Math.max(host.lastControlActivityAt?.() ?? 0, this.lastTerminalOutputAt);
-    if (lastActivity > 0 && Date.now() - lastActivity < HEARTBEAT_INTERVAL_MS) {
-      return;
-    }
+    const queue = host.controlCommands;
+    if (queue.idleMs() < HEARTBEAT_INTERVAL_MS) return;
     host.heartbeatPending = true;
-    void host.controlCommands
-      .execute((value) => write(value), 'display-message -p "vibeterm-hb"', {
+    const probe: HeartbeatProbe = { queue, sentAt: queue.now(), rejected: false };
+    this.heartbeat = probe;
+    void queue
+      .execute((value) => write(value), HEARTBEAT_COMMAND, {
         timeoutMs: HEARTBEAT_TIMEOUT_MS,
+        poisonOnTimeout: false,
         transform: (block) => {
           if (block.lines.length !== 1 || block.lines[0] !== 'vibeterm-hb') {
             throw new Error('invalid tmux heartbeat response');
           }
         },
       })
-      .then(() => this.onHeartbeatResponse())
-      .catch(() => {});
-    host.heartbeatTimeoutTimer = setTimeout(() => {
-      if (!host.heartbeatPending || !host.connected || host.manualDisconnect) {
-        return;
-      }
+      .then(
+        () => this.onHeartbeatResponse(),
+        () => {
+          probe.rejected = true;
+        }
+      );
+    this.armHeartbeatCheck();
+  }
+
+  /** 心跳没回执时只在通道整窗无进展（卡死）才拆；慢但仍在出数据就继续等。 */
+  checkHeartbeat(): void {
+    const host = this.host;
+    const probe = this.heartbeat;
+    host.heartbeatTimeoutTimer = null;
+    if (!probe || !host.heartbeatPending || !host.connected || host.manualDisconnect) return;
+    if (host.controlCommands !== probe.queue) {
+      this.onHeartbeatResponse();
+      return;
+    }
+    if (probe.queue.assessStall(probe.sentAt) === 'stalled') {
       console.warn(
         `${host.logPrefix} tmux control client heartbeat timeout on ${host.deviceId}, killing stalled ${host.stalledControlLabel}`
       );
       host.callbacks.onInputTransportInvalidated?.();
+      probe.queue.poisonStalled();
       host.killControlTransport();
-    }, HEARTBEAT_TIMEOUT_MS);
+      return;
+    }
+    if (probe.rejected && probe.queue.lastActivityAt > probe.sentAt) {
+      this.onHeartbeatResponse();
+      return;
+    }
+    this.armHeartbeatCheck();
+  }
+
+  private armHeartbeatCheck(): void {
+    this.host.heartbeatTimeoutTimer = setTimeout(() => this.checkHeartbeat(), HEARTBEAT_TIMEOUT_MS);
   }
 
   onHeartbeatResponse(): void {
     const host = this.host;
+    this.heartbeat = null;
     if (!host.heartbeatPending) {
       return;
     }
@@ -185,7 +221,6 @@ export class ControlModeLifecycle {
     const host = this.host;
     return {
       onTerminalOutput: (paneId, data) => {
-        this.lastTerminalOutputAt = Date.now();
         host.callbacks.onTerminalOutput(paneId, data);
       },
       onTitle: (paneId, title) => {

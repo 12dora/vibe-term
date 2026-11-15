@@ -21,18 +21,32 @@ export function encodeBytesToHexChunks(
  * `SEND_KEYS_HEX_CHUNK_BYTES * 3` 字符（256 字节 = 768 字符），远低于 tmux 的命令长度上限；
  * 粘贴不再由调用方按字符切块，整段交给连接后由这里统一切。
  */
+export function buildSendKeysArgv(paneId: string, hex: readonly string[]): string[] {
+  return ['send-keys', '-H', '-t', paneId, ...hex];
+}
+
+const HEX_BYTE = /^[0-9a-f]{2}$/;
+
+export function parseSendKeysHexArgv(
+  argv: readonly string[]
+): { paneId: string; hex: string[] } | null {
+  if (argv.length < 4) return null;
+  if (argv[0] !== 'send-keys' || argv[1] !== '-H' || argv[2] !== '-t') return null;
+  const paneId = argv[3];
+  if (!paneId) return null;
+  const hex = argv.slice(4);
+  for (const token of hex) {
+    if (!HEX_BYTE.test(token)) return null;
+  }
+  return { paneId, hex };
+}
+
 export function buildSendKeysCommands(
   paneId: string,
   bytes: Uint8Array,
   chunkBytes = SEND_KEYS_HEX_CHUNK_BYTES
 ): string[][] {
-  return encodeBytesToHexChunks(bytes, chunkBytes).map((chunk) => [
-    'send-keys',
-    '-H',
-    '-t',
-    paneId,
-    ...chunk,
-  ]);
+  return encodeBytesToHexChunks(bytes, chunkBytes).map((chunk) => buildSendKeysArgv(paneId, chunk));
 }
 
 /**

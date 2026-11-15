@@ -146,4 +146,59 @@ describe('SSH 一次性 tmux 命令失败的上报', () => {
       connectionAlertNotifier.clear(device.id);
     }
   });
+
+  test('控制通道重连放弃时与本机一致：落 lastErrorType 并广播设备错误', async () => {
+    const device = sshDevice('r2151-ssh-gave-up');
+    createDevice(device);
+    const events: EventDevicePayload[] = [];
+    const originalError = console.error;
+    const originalWarn = console.warn;
+    console.error = () => {};
+    console.warn = () => {};
+    connectionAlertNotifier.setSettingsProvider(settings);
+    connectionAlertNotifier.setPersister((deviceId, friendlyMessage, errorType) => {
+      updateDeviceRuntimeStatus(deviceId, {
+        lastSeenAt: new Date().toISOString(),
+        lastError: friendlyMessage,
+        lastErrorType: errorType,
+      });
+    });
+    connectionAlertNotifier.setBroadcaster((_deviceId, payload) => {
+      events.push(payload);
+    });
+    try {
+      const connection = new SshExternalTmuxConnection(
+        {
+          deviceId: device.id,
+          onEvent: () => {},
+          onTerminalOutput: () => {},
+          onTerminalHistory: () => {},
+          onSnapshot: () => {},
+          onError: () => {},
+          onClose: () => {},
+        },
+        { getDevice: () => device }
+      );
+      const internals = connection as unknown as {
+        controlStartedAt: number;
+        controlRestartCount: number;
+        reconnectControlClient(): Promise<void>;
+      };
+      internals.controlStartedAt = Date.now();
+      internals.controlRestartCount = 3;
+      await internals.reconnectControlClient();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(events.map((event) => event.type)).toEqual(['error']);
+      const status = getDeviceRuntimeStatus(device.id);
+      expect(status.lastError).toContain('tmux control client channel closed repeatedly');
+      expect(status.lastErrorType).toBeTruthy();
+    } finally {
+      console.error = originalError;
+      console.warn = originalWarn;
+      connectionAlertNotifier.setBroadcaster(null);
+      connectionAlertNotifier.setSettingsProvider(() => getSiteSettings());
+      connectionAlertNotifier.clear(device.id);
+    }
+  });
 });

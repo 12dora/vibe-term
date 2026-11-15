@@ -5,8 +5,11 @@ import {
   HOST_LATENCY_IDLE_PROBE_MS,
   HOST_LATENCY_MAX_SAMPLE_MS,
   HOST_LATENCY_PROBE_TIMEOUT_MS,
+  HostLatencyEwma,
   type HostLatencySample,
   HostLatencyTracker,
+  adaptiveControlTimeoutMs,
+  hostLatencySampler,
   probeHostLatency,
 } from './host-latency-tracker';
 import { TestClock } from './pane-input-test-helpers';
@@ -232,5 +235,44 @@ describe('probeHostLatency', () => {
       spy.mockRestore();
       queue.dispose();
     }
+  });
+});
+
+describe('adaptive control command timeout', () => {
+  test('clamps max(base, 8 × EWMA) into [base, 60 s]', () => {
+    expect(adaptiveControlTimeoutMs(10_000, null)).toBe(10_000);
+    expect(adaptiveControlTimeoutMs(10_000, 200)).toBe(10_000);
+    expect(adaptiveControlTimeoutMs(10_000, 2_000)).toBe(16_000);
+    expect(adaptiveControlTimeoutMs(30_000, 5_000)).toBe(40_000);
+    expect(adaptiveControlTimeoutMs(10_000, 20_000)).toBe(60_000);
+  });
+
+  test('HostLatencyEwma smooths samples and drops unusable ones', () => {
+    const ewma = new HostLatencyEwma();
+    expect(ewma.rttMs).toBeNull();
+    expect(ewma.record(Number.NaN)).toBeNull();
+    expect(ewma.record(HOST_LATENCY_MAX_SAMPLE_MS + 1)).toBeNull();
+    ewma.record(100);
+    ewma.record(500);
+    expect(ewma.rttMs).toBe(200);
+  });
+
+  test('sampler feeds the connection EWMA even without an upstream sink', () => {
+    const ewma = new HostLatencyEwma();
+    const sampler = hostLatencySampler(
+      {
+        deviceId: 'dev-1',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: () => {},
+        onClose: () => {},
+      },
+      1,
+      ewma
+    );
+    sampler?.onSample(1_500);
+    expect(ewma.rttMs).toBe(1_500);
   });
 });

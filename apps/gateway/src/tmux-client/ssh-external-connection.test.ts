@@ -822,6 +822,7 @@ describe('SshExternalTmuxConnection', () => {
     const controlChannel = fakeClient.controlChannels[0];
     if (!controlChannel) throw new Error('control channel was not created');
 
+    (connection as any).controlCommands.idleMs = () => Number.POSITIVE_INFINITY;
     (connection as any).sendHeartbeat();
     await Bun.sleep(20);
 
@@ -832,7 +833,7 @@ describe('SshExternalTmuxConnection', () => {
     connection.disconnect();
   });
 
-  test('heartbeat timeout stops control channel', async () => {
+  test('heartbeat stops the control channel only once it is stalled', async () => {
     const session = 'vibeterm-ssh-hb-timeout';
     const fakeClient = new FakeClient();
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
@@ -852,9 +853,18 @@ describe('SshExternalTmuxConnection', () => {
       const controlChannel = fakeClient.controlChannels[0];
       if (!controlChannel) throw new Error('control channel was not created');
 
-      (connection as any).sendHeartbeat();
+      const c = connection as any;
+      expect(c.controlStallTimeoutMs).toBe(60_000);
+      expect(c.getInputCommandTimeoutMs()).toBe(30_000);
+      c.controlCommands.idleMs = () => Number.POSITIVE_INFINITY;
+      c.sendHeartbeat();
+      c.controlLifecycle.checkHeartbeat();
+      expect(controlChannel.ended).toBe(false);
+      clearTimeout(c.heartbeatTimeoutTimer);
 
-      await waitFor(() => (controlChannel.ended ? true : null), 12000);
+      c.controlStallTimeoutMs = 0;
+      c.controlLifecycle.checkHeartbeat();
+      await waitFor(() => (controlChannel.ended ? true : null), 2000);
 
       expect(controlChannel.ended).toBe(true);
       expect(controlChannel.closed).toBe(true);
@@ -869,7 +879,7 @@ describe('SshExternalTmuxConnection', () => {
       warn.mockRestore();
       connection.disconnect();
     }
-  }, 20000);
+  });
 
   test('%pause triggers continue command on control channel', async () => {
     const fakeClient = new FakeClient();
@@ -1316,7 +1326,10 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
     if (!control) throw new Error('control channel was not created');
     const queued: Promise<void>[] = [];
     for (let i = 0; i < 260; i += 1) {
-      queued.push(connection.sendInputBytes('%1', new Uint8Array([65])));
+      // 满块不会被窗口合并，才能真正占满条目上限。
+      queued.push(
+        connection.sendInputBytes('%1', new Uint8Array(SEND_KEYS_HEX_CHUNK_BYTES).fill(65))
+      );
     }
     await Bun.sleep(0);
     const before = control.writes.filter((line) => line.includes('send-keys')).length;

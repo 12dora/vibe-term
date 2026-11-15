@@ -7,6 +7,7 @@ import {
   capturePaneFrameAtControlBarrier,
 } from './control-mode-capture';
 import { createControlModeParser } from './control-mode-parser';
+import { createFakeClock } from './control-queue-test-helpers';
 
 const encoder = new TextEncoder();
 
@@ -158,34 +159,19 @@ describe('control command latency sampling', () => {
     expect(samples).toEqual([]);
   });
 
-  test('timeout poisons the queue by default', async () => {
+  test('a per-command timeout rejects only its caller and never poisons a live queue', async () => {
     let poisoned = 0;
     const queue = new ControlModeCommandQueue(() => {
       poisoned += 1;
     });
-    const first = queue
-      .execute(() => {}, 'cmd-a', { timeoutMs: 20, transform: () => 'a' })
-      .then(
-        () => {
-          throw new Error('cmd-a should time out');
-        },
-        (error: Error) => error
-      );
-    const second = queue
-      .execute(() => {}, 'cmd-b', { timeoutMs: 5_000, transform: () => 'b' })
-      .then(
-        () => {
-          throw new Error('cmd-b should time out');
-        },
-        (error: Error) => error
-      );
-    const [firstError, secondError] = await Promise.all([first, second]);
-    expect(firstError.message).toMatch(/timed out/);
-    expect(secondError.message).toMatch(/timed out/);
-    expect(poisoned).toBe(1);
-    await expect(queue.execute(() => {}, 'cmd-c', { transform: () => 'c' })).rejects.toThrow(
-      /closed/
-    );
+    const first = queue.execute(() => {}, 'cmd-a', { timeoutMs: 20, transform: () => 'a' });
+    const second = queue.execute(() => {}, 'cmd-b', { timeoutMs: 5_000, transform: () => 'b' });
+    await expect(first).rejects.toThrow(/timed out/);
+    expect(poisoned).toBe(0);
+    expect(queue.handleBlock({ args: '', isError: false, lines: ['late-a'] })).toBe(true);
+    expect(queue.handleBlock({ args: '', isError: false, lines: [] })).toBe(true);
+    await expect(second).resolves.toBe('b');
+    queue.dispose();
   });
 
   test('poisonOnTimeout false rejects only that command and leaves the queue intact', async () => {
@@ -272,17 +258,24 @@ describe('control command latency sampling', () => {
     disposed.dispose();
     expect(disposed.handleBlock({ args: '', isError: false, lines: ['vibeterm-lat'] })).toBe(false);
 
+    const clock = createFakeClock();
     let poisoned = 0;
-    const live = new ControlModeCommandQueue(() => {
-      poisoned += 1;
-    });
+    const live = new ControlModeCommandQueue(
+      () => {
+        poisoned += 1;
+      },
+      undefined,
+      { clock, stallTimeoutMs: () => 1_000 }
+    );
     const first = live.execute(() => {}, 'cmd-a', {
       timeoutMs: 20,
       poisonOnTimeout: false,
       transform: () => 'a',
     });
-    await expect(first).rejects.toThrow(/timed out/);
     const boom = live.execute(() => {}, 'cmd-b', { timeoutMs: 20, transform: () => 'b' });
+    clock.advance(20);
+    await expect(first).rejects.toThrow(/timed out/);
+    clock.advance(1_000);
     await expect(boom).rejects.toThrow(/timed out/);
     expect(poisoned).toBe(1);
     expect(live.handleBlock({ args: '', isError: false, lines: ['late'] })).toBe(false);
@@ -343,7 +336,7 @@ describe('control command latency sampling', () => {
   test('two consecutive non-poison timeouts keep late blocks aligned in order', async () => {
     const queue = new ControlModeCommandQueue();
     const first = queue.execute(() => {}, 'display-message -p a', {
-      timeoutMs: 80,
+      timeoutMs: 200,
       poisonOnTimeout: false,
       transform: () => 'a',
     });

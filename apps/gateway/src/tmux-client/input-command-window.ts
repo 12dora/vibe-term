@@ -1,4 +1,9 @@
 import { logAt } from '../log/level';
+import {
+  SEND_KEYS_HEX_CHUNK_BYTES,
+  buildSendKeysArgv,
+  parseSendKeysHexArgv,
+} from './input-encoder';
 import type { InputSubmission } from './input-submission';
 
 export const INPUT_PENDING_MAX_ENTRIES = 256;
@@ -24,18 +29,53 @@ export function isQueueFullError(error: unknown): boolean {
   return code === 'input_queue_full' || code === 'control_queue_full';
 }
 
-interface InputCommandJob {
-  submission?: InputSubmission;
-  bytes: number;
-  run(): Promise<unknown>;
+export type InputCommandExecute = (argv: string[], onAck?: () => void) => Promise<unknown>;
+
+interface JobCompletion {
   resolve(): void;
   reject(error: unknown): void;
 }
 
-function argvBytes(argv: string[]): number {
+interface InputCommandJob {
+  argv: string[];
+  submission?: InputSubmission;
+  bytes: number;
+  execute: InputCommandExecute;
+  acks: Array<() => void>;
+  completions: JobCompletion[];
+}
+
+function argvBytes(argv: readonly string[]): number {
   let n = 0;
   for (const part of argv) n += part.length;
   return n;
+}
+
+function resolveJob(job: InputCommandJob): void {
+  for (const completion of job.completions) completion.resolve();
+}
+
+function rejectJob(job: InputCommandJob, error: unknown): void {
+  for (const completion of job.completions) completion.reject(error);
+}
+
+function fireAcks(job: InputCommandJob): () => void {
+  return () => {
+    for (const ack of job.acks) ack();
+  };
+}
+
+function mergedSendKeysArgv(last: readonly string[], incoming: readonly string[]): string[] | null {
+  const left = parseSendKeysHexArgv(last);
+  const right = parseSendKeysHexArgv(incoming);
+  if (!left || !right || left.paneId !== right.paneId) return null;
+  if (left.hex.length + right.hex.length > SEND_KEYS_HEX_CHUNK_BYTES) return null;
+  return buildSendKeysArgv(left.paneId, left.hex.concat(right.hex));
+}
+
+function canMergeJobs(last: InputCommandJob, incoming: InputCommandJob): string[] | null {
+  if (last.submission !== incoming.submission) return null;
+  return mergedSendKeysArgv(last.argv, incoming.argv);
 }
 
 export class InputCommandWindow {
@@ -52,26 +92,27 @@ export class InputCommandWindow {
     return this.closed !== null;
   }
 
+  get pendingJobCount(): number {
+    return this.pending.length;
+  }
+
+  get pendingByteCount(): number {
+    return this.pendingBytes;
+  }
+
   enqueue(
     commands: readonly string[][],
-    execute: (argv: string[]) => Promise<unknown>,
-    submission?: InputSubmission
+    execute: InputCommandExecute,
+    submission?: InputSubmission,
+    onAck?: () => void
   ): Promise<void> {
     if (this.closed) return Promise.reject(this.closed);
     if (commands.length === 0) return Promise.resolve();
-    if (this.wouldExceed(commands)) {
+    if (this.wouldExceed(commands, submission)) {
       this.warnFull();
       return Promise.reject(new InputQueueFullError());
     }
-    const completions = commands.map(
-      (argv) =>
-        new Promise<void>((resolve, reject) => {
-          const bytes = argvBytes(argv);
-          this.pending.push({ run: () => execute(argv), resolve, reject, submission, bytes });
-          this.pendingBytes += bytes;
-        })
-    );
-    const result = Promise.all(completions).then(() => undefined);
+    const result = this.accept(commands, execute, submission, onAck);
     const unsubscribe = submission?.onCancel(() => this.cancelPending(submission));
     if (unsubscribe) void result.then(unsubscribe, unsubscribe);
     this.pump();
@@ -82,14 +123,85 @@ export class InputCommandWindow {
     if (this.closed) return;
     this.closed = new Error(reason);
     this.pendingBytes = 0;
-    for (const job of this.pending.splice(0)) job.reject(this.closed);
+    for (const job of this.pending.splice(0)) rejectJob(job, this.closed);
   }
 
-  private wouldExceed(commands: readonly string[][]): boolean {
-    if (this.pending.length >= INPUT_PENDING_MAX_ENTRIES) return true;
-    let extraBytes = 0;
-    for (const argv of commands) extraBytes += argvBytes(argv);
-    return this.pendingBytes + extraBytes > INPUT_PENDING_MAX_BYTES;
+  private accept(
+    commands: readonly string[][],
+    execute: InputCommandExecute,
+    submission: InputSubmission | undefined,
+    onAck: (() => void) | undefined
+  ): Promise<void> {
+    const completions = commands.map(
+      (argv) =>
+        new Promise<void>((resolve, reject) => {
+          this.pushJob({
+            argv: argv.slice(),
+            bytes: argvBytes(argv),
+            execute,
+            submission,
+            acks: onAck ? [onAck] : [],
+            completions: [{ resolve, reject }],
+          });
+        })
+    );
+    return Promise.all(completions).then(() => undefined);
+  }
+
+  private pushJob(job: InputCommandJob): void {
+    if (this.mergeIntoLast(job)) return;
+    this.pending.push(job);
+    this.pendingBytes += job.bytes;
+  }
+
+  private mergeIntoLast(incoming: InputCommandJob): boolean {
+    const last = this.pending.at(-1);
+    if (!last) return false;
+    const merged = canMergeJobs(last, incoming);
+    if (!merged) return false;
+    const previousBytes = last.bytes;
+    last.argv = merged;
+    last.bytes = argvBytes(merged);
+    last.completions.push(...incoming.completions);
+    last.acks.push(...incoming.acks);
+    this.pendingBytes += last.bytes - previousBytes;
+    return true;
+  }
+
+  private wouldExceed(commands: readonly string[][], submission?: InputSubmission): boolean {
+    const extra = this.extraCost(commands, submission);
+    if (extra.entries > 0 && this.pending.length >= INPUT_PENDING_MAX_ENTRIES) return true;
+    return this.pendingBytes + extra.bytes > INPUT_PENDING_MAX_BYTES;
+  }
+
+  private extraCost(
+    commands: readonly string[][],
+    submission?: InputSubmission
+  ): { entries: number; bytes: number } {
+    const last = this.pending.at(-1);
+    let lastArgv = last?.argv;
+    let lastBytes = last?.bytes ?? 0;
+    let lastSubmission = last?.submission;
+    let entries = 0;
+    let bytes = 0;
+    for (const argv of commands) {
+      const merged =
+        lastArgv && lastSubmission === submission ? mergedSendKeysArgv(lastArgv, argv) : null;
+      if (merged) {
+        const mergedBytes = argvBytes(merged);
+        bytes += mergedBytes - lastBytes;
+        lastArgv = merged;
+        lastBytes = mergedBytes;
+        continue;
+      }
+      entries += 1;
+      const size = argvBytes(argv);
+      bytes += size;
+      lastArgv = argv;
+      lastBytes = size;
+      lastSubmission = submission;
+    }
+    return { entries, bytes };
   }
 
   private warnFull(): void {
@@ -107,7 +219,7 @@ export class InputCommandWindow {
       if (this.pending[index].submission !== submission) continue;
       const [job] = this.pending.splice(index, 1);
       this.pendingBytes = Math.max(0, this.pendingBytes - (job?.bytes ?? 0));
-      job?.resolve();
+      if (job) resolveJob(job);
     }
   }
 
@@ -127,27 +239,31 @@ export class InputCommandWindow {
       if (!job) return;
       this.pendingBytes = Math.max(0, this.pendingBytes - job.bytes);
       if (job.submission && !job.submission.isValid()) {
-        job.resolve();
+        resolveJob(job);
         continue;
       }
-      this.inFlight += 1;
-      let result: Promise<unknown>;
-      try {
-        result = job.run();
-      } catch (error) {
-        result = Promise.reject(error);
-      }
-      void result.then(
-        () => {
-          job.resolve();
-          this.finish();
-        },
-        (error) => {
-          job.reject(error);
-          this.finish();
-        }
-      );
+      this.startJob(job);
     }
+  }
+
+  private startJob(job: InputCommandJob): void {
+    this.inFlight += 1;
+    let result: Promise<unknown>;
+    try {
+      result = job.execute(job.argv, fireAcks(job));
+    } catch (error) {
+      result = Promise.reject(error);
+    }
+    void result.then(
+      () => {
+        resolveJob(job);
+        this.finish();
+      },
+      (error) => {
+        rejectJob(job, error);
+        this.finish();
+      }
+    );
   }
 
   private finish(): void {

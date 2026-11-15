@@ -1,6 +1,7 @@
 import type { EventType, StateSnapshotPayload, WebhookEvent } from '@vibeterm/shared';
 
 import type { WindowMemoryConnectionHooks } from '../window-memory/types';
+import type { ControlHealthEvent } from './control-health';
 import type { TmuxEvent } from './events';
 import type { TmuxSourceMetadataEvent } from './events';
 import type { PromptMarker } from './pane-stream-parser';
@@ -34,5 +35,7 @@ export interface TmuxConnectionOptions {
   beginMetadataReconcile?: () => bigint;
   onSnapshot: (payload: StateSnapshotPayload, baseRevision?: bigint) => void;
   onError: (error: Error) => void;
+  /** 控制通道健康跃迁（slow / stalled / recovered），宿主繁忙时用它代替连接失败告警。 */
+  onControlHealth?: (event: ControlHealthEvent) => void;
   onClose: () => void;
 }

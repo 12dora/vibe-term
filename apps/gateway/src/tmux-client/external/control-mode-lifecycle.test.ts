@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import type { TmuxConnectionOptions } from '../connection-types';
 import { ControlModeCommandQueue } from '../control-mode-capture';
 import { SOURCE_METADATA_SUBSCRIPTION_COMMANDS } from '../control-mode-subscription';
+import { createFakeClock } from '../control-queue-test-helpers';
 import { type ControlModeHost, ControlModeLifecycle } from './control-mode-lifecycle';
 import type { ExternalControlHandle } from './types';
 
@@ -208,29 +209,96 @@ describe('ControlModeLifecycle', () => {
     queue.dispose();
   });
 
-  test('sendHeartbeat skips when control traffic is recent and sends after silence', async () => {
-    const { host, written } = createHost();
-    const commands: string[] = [];
-    host.controlCommands = {
-      execute: async (write: (data: string) => void, command: string) => {
-        commands.push(command);
-        write(`${command}\n`);
+  function createClockedQueue() {
+    const clock = createFakeClock();
+    let poisoned = 0;
+    const queue = new ControlModeCommandQueue(
+      () => {
+        poisoned += 1;
       },
-    } as unknown as ControlModeCommandQueue;
+      undefined,
+      { clock, stallTimeoutMs: () => 45_000 }
+    );
+    return { clock, queue, poisoned: () => poisoned };
+  }
+
+  test('sendHeartbeat skips while any control activity is recent and sends after silence', () => {
+    const { host, written } = createHost();
+    const { clock, queue } = createClockedQueue();
+    host.controlCommands = queue;
     const lifecycle = new ControlModeLifecycle(host);
-    const recent = Date.now();
-    host.lastControlActivityAt = () => recent;
+    clock.advance(29_000);
+    queue.noteActivity();
+    clock.advance(29_000);
     lifecycle.sendHeartbeat();
-    expect(commands).toEqual([]);
     expect(written).toEqual([]);
     expect(host.heartbeatPending).toBe(false);
 
-    host.lastControlActivityAt = () => recent - 30_001;
+    clock.advance(1_000);
     lifecycle.sendHeartbeat();
-    expect(commands).toEqual(['display-message -p "vibeterm-hb"']);
     expect(written).toEqual(['display-message -p "vibeterm-hb"\n']);
     expect(host.heartbeatPending).toBe(true);
     expect(host.heartbeatTimeoutTimer).not.toBeNull();
     lifecycle.stopHeartbeat();
+    queue.dispose();
+  });
+
+  test('heartbeat never kills a slow channel that keeps making progress', async () => {
+    const { host, order } = createHost();
+    const { clock, queue, poisoned } = createClockedQueue();
+    host.controlCommands = queue;
+    const lifecycle = new ControlModeLifecycle(host);
+    clock.advance(30_000);
+    lifecycle.sendHeartbeat();
+    for (let i = 0; i < 6; i += 1) {
+      clock.advance(10_000);
+      queue.noteActivity();
+      lifecycle.checkHeartbeat();
+    }
+    expect(order).not.toContain('kill');
+    expect(poisoned()).toBe(0);
+    await Promise.resolve();
+    lifecycle.checkHeartbeat();
+    expect(host.heartbeatPending).toBe(false);
+    lifecycle.stopHeartbeat();
+    queue.dispose();
+  });
+
+  test('heartbeat kills the transport once the channel is silent for the stall window', () => {
+    const { host, order } = createHost();
+    const { clock, queue, poisoned } = createClockedQueue();
+    host.controlCommands = queue;
+    const lifecycle = new ControlModeLifecycle(host);
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      clock.advance(30_000);
+      lifecycle.sendHeartbeat();
+      clock.advance(44_999);
+      lifecycle.checkHeartbeat();
+      expect(order).not.toContain('kill');
+      clock.advance(1);
+      lifecycle.checkHeartbeat();
+      expect(order).toContain('kill');
+      expect(poisoned()).toBe(1);
+    } finally {
+      console.warn = warn;
+      lifecycle.stopHeartbeat();
+    }
+  });
+
+  test('heartbeat response clears the pending check', async () => {
+    const { host } = createHost();
+    const { clock, queue } = createClockedQueue();
+    host.controlCommands = queue;
+    const lifecycle = new ControlModeLifecycle(host);
+    clock.advance(30_000);
+    lifecycle.sendHeartbeat();
+    queue.handleBlock({ args: '', isError: false, lines: ['vibeterm-hb'] });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(host.heartbeatPending).toBe(false);
+    expect(host.heartbeatTimeoutTimer).toBeNull();
+    queue.dispose();
   });
 });

@@ -10,15 +10,18 @@ import {
 } from '../window-memory/bind';
 import type { WindowMemoryTrackerHandle } from '../window-memory/tracker';
 import type { HostShellResult, HostShellRunner } from '../window-memory/types';
+import { createBellDedupBook, noteBellDedup } from './bell-dedup';
 import type { PaneInfo } from './capture-history';
 import type { TmuxConnectionOptions } from './connection-types';
+import { type ControlHealthEvent, ControlHealthReporter } from './control-health';
 import { type AtomicPaneCapture, ControlModeCommandQueue } from './control-mode-capture';
 import type {
   ControlModeSubscription,
   ControlModeSubscriptionCallbacks,
 } from './control-mode-subscription';
+import type { ControlStallProbe } from './control-stall-detector';
 import { ConnectionCleanup, type ConnectionCleanupHost } from './external/connection-cleanup';
-import { BELL_DEDUP_WINDOW_MS } from './external/constants';
+import { CONTROL_COMMAND_TIMEOUT_MS, CONTROL_STALL_TIMEOUT_MS } from './external/constants';
 import { type ControlModeHost, ControlModeLifecycle } from './external/control-mode-lifecycle';
 import { type SessionCommandHost, SessionCommands } from './external/session-commands';
 import { SnapshotProjector, type SnapshotProjectorHost } from './external/snapshot-projector';
@@ -27,7 +30,13 @@ import {
   type ThemeSubscriptionHost,
 } from './external/theme-subscription';
 import type { CommandResult, ExternalControlHandle } from './external/types';
+import {
+  HostLatencyEwma,
+  adaptiveControlTimeoutMs,
+  hostLatencySampler,
+} from './host-latency-tracker';
 import { ConnectionLifecycleEmitter } from './lifecycle-emitter';
+import { type PaneMouseFlags, queryPaneMouseFlags } from './pane-mouse-state';
 import type { PaneStreamNotification } from './pane-stream-parser';
 import { ensureStableServerEpoch } from './server-epoch';
 import { SnapshotRefreshCoordinator } from './snapshot-refresh-coordinator';
@@ -46,52 +55,13 @@ export {
   PARKING_WINDOW_NAME,
 } from './external/constants';
 export { hasRenderableTerminalContent, isTmuxServerGoneMessage } from './external/helpers';
-
-export const BELL_DEDUP_PRUNE_EVERY_INSERTS = 32;
-
-export interface BellDedupBook {
-  entries: Map<string, number>;
-  insertsSincePrune: number;
-  lastPruneAt: number;
-}
-
-export function createBellDedupBook(): BellDedupBook {
-  return { entries: new Map(), insertsSincePrune: 0, lastPruneAt: 0 };
-}
-
-export function pruneBellDedupEntries(
-  entries: Map<string, number>,
-  now: number,
-  windowMs: number
-): void {
-  for (const [key, timestamp] of entries) {
-    if (now - timestamp >= windowMs) {
-      entries.delete(key);
-    }
-  }
-}
-
-export function noteBellDedup(
-  book: BellDedupBook,
-  key: string,
-  now: number,
-  windowMs: number = BELL_DEDUP_WINDOW_MS,
-  pruneEveryInserts: number = BELL_DEDUP_PRUNE_EVERY_INSERTS
-): boolean {
-  const previous = book.entries.get(key) ?? 0;
-  if (now - previous < windowMs) {
-    return false;
-  }
-
-  book.entries.set(key, now);
-  book.insertsSincePrune += 1;
-  if (book.insertsSincePrune >= pruneEveryInserts || now - book.lastPruneAt >= windowMs) {
-    pruneBellDedupEntries(book.entries, now, windowMs);
-    book.insertsSincePrune = 0;
-    book.lastPruneAt = now;
-  }
-  return true;
-}
+export {
+  BELL_DEDUP_PRUNE_EVERY_INSERTS,
+  type BellDedupBook,
+  createBellDedupBook,
+  noteBellDedup,
+  pruneBellDedupEntries,
+} from './bell-dedup';
 
 class ConnectAbandonedError extends Error {
   readonly name = 'ConnectAbandonedError';
@@ -139,6 +109,10 @@ export abstract class ExternalTmuxConnectionCore implements HostShellRunner {
   protected heartbeatPending = false;
   protected heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
   protected connectGeneration = 0;
+  protected controlStallTimeoutMs = CONTROL_STALL_TIMEOUT_MS;
+  protected controlCommandBaseTimeoutMs = CONTROL_COMMAND_TIMEOUT_MS;
+  protected readonly controlHealth: ControlHealthReporter;
+  private readonly latencyEwma = new HostLatencyEwma();
 
   private readonly sessionCommands: SessionCommands;
   private readonly controlLifecycle: ControlModeLifecycle;
@@ -161,6 +135,9 @@ export abstract class ExternalTmuxConnectionCore implements HostShellRunner {
     this.deviceId = options.deviceId;
     this.callbacks = options;
     this.lookupDevice = lookupDevice;
+    this.controlHealth = new ControlHealthReporter(options.deviceId, (event: ControlHealthEvent) =>
+      options.onControlHealth?.(event)
+    );
     this.lifecycle = new ConnectionLifecycleEmitter({
       getDevice: () => this.device ?? this.lookupDevice(this.deviceId),
       getSessionName: () => this.sessionName,
@@ -546,8 +523,36 @@ export abstract class ExternalTmuxConnectionCore implements HostShellRunner {
     throw new Error('unsupported');
   }
 
+  /** 单条控制命令超时：clamp(max(基准, 8 × 宿主一跳 EWMA), 基准, 60 s)。 */
   protected getControlCommandTimeoutMs(): number {
-    return 10_000;
+    return adaptiveControlTimeoutMs(this.controlCommandBaseTimeoutMs, this.latencyEwma.rttMs);
+  }
+
+  getInputCommandTimeoutMs(): number {
+    return this.getControlCommandTimeoutMs();
+  }
+
+  queryPaneMouse(paneId: string): Promise<PaneMouseFlags | null> {
+    const write = this.connected ? this.getControlWriter() : null;
+    return queryPaneMouseFlags(this.controlCommands, write, paneId);
+  }
+
+  /** 每次 attach 新建控制队列：自适应超时、卡死判定与设备级健康上报都在这里接好。 */
+  protected createControlQueue(
+    onPoison: () => void,
+    hop: number,
+    stallProbe?: ControlStallProbe
+  ): ControlModeCommandQueue {
+    return new ControlModeCommandQueue(
+      onPoison,
+      hostLatencySampler(this.callbacks, hop, this.latencyEwma),
+      {
+        defaultTimeoutMs: () => this.getControlCommandTimeoutMs(),
+        stallTimeoutMs: () => this.controlStallTimeoutMs,
+        stallProbe,
+        health: this.controlHealth,
+      }
+    );
   }
 
   protected onControlAttachPrematureClose(_message: string): void {}
@@ -572,8 +577,7 @@ export abstract class ExternalTmuxConnectionCore implements HostShellRunner {
     return this.sessionCommands.configureSessionOptions();
   }
 
-  // window-style 让 tmux 代答 pane 内 OSC 10/11；控制模式 client 无法上报 tty 颜色，
-  // 否则回复纯黑。window option 无 session 层，需逐 window 设置并用 hook 覆盖新窗口。
+  // window-style 让 tmux 代答 pane 内 OSC 10/11；控制模式 client 无法上报 tty 颜色，否则回复纯黑；window option 无 session 层，需逐 window 设置并用 hook 覆盖新窗口。
   protected async configureWindowStyle(styleValue: string = config.tmuxWindowStyle): Promise<void> {
     return this.sessionCommands.configureWindowStyleDefault(styleValue);
   }

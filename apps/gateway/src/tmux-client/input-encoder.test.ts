@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   SEND_KEYS_HEX_CHUNK_BYTES,
+  buildSendKeysArgv,
   buildSendKeysCommands,
   encodeBytesToHexChunks,
+  parseSendKeysHexArgv,
 } from './input-encoder';
 
 describe('input encoder', () => {
@@ -47,5 +49,28 @@ describe('buildSendKeysCommands', () => {
 
   test('空输入不产生命令', () => {
     expect(buildSendKeysCommands('%1', new Uint8Array(0))).toEqual([]);
+  });
+});
+
+describe('parseSendKeysHexArgv / buildSendKeysArgv', () => {
+  test('round-trips send-keys -H argv and rejects non-matching commands', () => {
+    const argv = buildSendKeysArgv('%3', ['1b', '5b', '41']);
+    expect(parseSendKeysHexArgv(argv)).toEqual({ paneId: '%3', hex: ['1b', '5b', '41'] });
+    expect(parseSendKeysHexArgv(['send-keys', '-l', '-t', '%1', '41'])).toBeNull();
+    expect(parseSendKeysHexArgv(['send-keys', '-H', '-t'])).toBeNull();
+    expect(parseSendKeysHexArgv(['send-keys', '-H', '-t', '%1', 'gg'])).toBeNull();
+  });
+
+  test('merged argv decodes to the exact concatenation of previously separate payloads', () => {
+    const first = new TextEncoder().encode('\x1b[<35;21;2M');
+    const second = new TextEncoder().encode('中');
+    const left = parseSendKeysHexArgv(buildSendKeysCommands('%1', first)[0]);
+    const right = parseSendKeysHexArgv(buildSendKeysCommands('%1', second)[0]);
+    expect(left).not.toBeNull();
+    expect(right).not.toBeNull();
+    const merged = buildSendKeysArgv('%1', left!.hex.concat(right!.hex));
+    const hex = parseSendKeysHexArgv(merged)?.hex ?? [];
+    const decoded = Uint8Array.from(hex, (token) => Number.parseInt(token, 16));
+    expect(decoded).toEqual(Uint8Array.from([...first, ...second]));
   });
 });

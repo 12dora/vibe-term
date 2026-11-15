@@ -6,7 +6,6 @@ import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
 import { runSshHostShell } from '../window-memory/ssh-host-shell';
 import { joinShellArgs, quoteShellArg } from './command-builder';
 import type { TmuxConnectionOptions } from './connection-types';
-import { ControlModeCommandQueue } from './control-mode-capture';
 import { createControlModeSubscription } from './control-mode-subscription';
 import { sendExternalInput } from './external-input';
 import {
@@ -15,8 +14,9 @@ import {
   type ExternalControlHandle,
   ExternalTmuxConnectionCore,
 } from './external-tmux-core';
+import { CONTROL_COMMAND_TIMEOUT_SSH_MS, CONTROL_STALL_TIMEOUT_SSH_MS } from './external/constants';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
-import { hostLatencySampler, probeHostLatency } from './host-latency-tracker';
+import { probeHostLatency } from './host-latency-tracker';
 import { InputCommandWindow } from './input-command-window';
 import type { InputCompletion } from './input-submission';
 import { appendRollingTail, decodeRollingTail } from './local-external-connection';
@@ -55,6 +55,8 @@ const COMMAND_SENTINEL = '\x1eVIBETERM_END ';
 export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   protected readonly logPrefix = '[ssh]';
   protected readonly stalledControlLabel = 'channel';
+  protected override controlStallTimeoutMs = CONTROL_STALL_TIMEOUT_SSH_MS;
+  protected override controlCommandBaseTimeoutMs = CONTROL_COMMAND_TIMEOUT_SSH_MS;
   private readonly deps: SshExternalTmuxConnectionDeps;
   private controlChannel: ControlChannelHandle | null = null;
   private sshClient: Client | null = null;
@@ -120,7 +122,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
           this.connected && this.controlChannel === control && this.controlCommands === queue,
         run: (argv) => this.runTmux(argv),
         onError: (error) => this.callbacks.onError(error),
-        timeoutMs: this.getControlCommandTimeoutMs(),
+        timeoutMs: () => this.getInputCommandTimeoutMs(),
       },
       paneId,
       Uint8Array.from(data),
@@ -195,9 +197,6 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   protected async runHistoryCapture(argv: string[], maxOutputBytes: number): Promise<string> {
     return (await this.runTmuxIsolated(argv, maxOutputBytes, 30_000)).stdout;
   }
-
-  // biome-ignore format: line budget
-  protected getControlCommandTimeoutMs(): number { return 30_000; }
 
   protected async disposeTransport(): Promise<void> {
     this.rejectPendingCommand(new Error('SSH command channel closed'));
@@ -390,13 +389,10 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     this.inputCommands = new InputCommandWindow(() => (this.controlChannel ? 4 : 1));
     this.controlCommands.dispose('tmux control connection replaced');
     const handle: ControlChannelHandle = { stop: () => {}, write: () => {} };
-    const controlCommands = new ControlModeCommandQueue(
-      () => {
-        this.callbacks.onInputTransportInvalidated?.();
-        handle.stop();
-      },
-      hostLatencySampler(this.callbacks, wsBorsh.DEVICE_LATENCY_HOP_SSH)
-    );
+    const controlCommands = this.createControlQueue(() => {
+      this.callbacks.onInputTransportInvalidated?.();
+      handle.stop();
+    }, wsBorsh.DEVICE_LATENCY_HOP_SSH);
     this.controlCommands = controlCommands;
     const subscription = createControlModeSubscription(
       this.buildControlModeCallbacks(
@@ -417,6 +413,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
       {
         onData: (data) => {
           if (this.controlChannel === handle) {
+            controlCommands.noteActivity();
             subscription.push(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
           }
         },
@@ -454,11 +451,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
       onGaveUp: (stderr) => {
         const message = stderr || 'tmux control client channel closed repeatedly';
         console.warn(`[ssh] tmux control client gave up on ${this.deviceId}: ${message}`);
-        updateDeviceRuntimeStatus(this.deviceId, {
-          lastSeenAt: new Date().toISOString(),
-          tmuxAvailable: false,
-          lastError: message,
-        });
+        void notifyDeviceRuntimeError(this.deviceId, message);
         void this.shutdownInternal(true);
       },
       onAttempt: (count) => {

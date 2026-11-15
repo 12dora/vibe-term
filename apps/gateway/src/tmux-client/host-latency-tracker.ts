@@ -1,5 +1,6 @@
 import type { TmuxConnectionOptions } from './connection-types';
 import type { ControlCommandLatencyOptions, ControlModeCommandQueue } from './control-mode-capture';
+import { CONTROL_COMMAND_TIMEOUT_MAX_MS } from './external/constants';
 import type { InputLaneClock } from './pane-input-pacer';
 
 /** 设备宿主一跳（网关 ↔ tmux）往返延迟。 */
@@ -27,6 +28,35 @@ export const HOST_LATENCY_PROBE_TIMEOUT_MS = 30_000;
 /** display-message -p 只写 stdout，不碰状态栏、不产生 %output、不改 pane 状态。 */
 export const HOST_LATENCY_PROBE_COMMAND = 'display-message -p "vibeterm-lat"';
 
+/** 自适应超时：慢宿主上单条命令超时放大到 EWMA 的这么多倍。 */
+export const CONTROL_TIMEOUT_RTT_MULTIPLIER = 8;
+
+/** 单值 EWMA：HostLatencyTracker 与连接层自适应超时共用同一套平滑与样本过滤。 */
+export class HostLatencyEwma {
+  private value: number | null = null;
+
+  get rttMs(): number | null {
+    return this.value === null ? null : Math.max(0, Math.round(this.value));
+  }
+
+  /** 返回平滑后的值；异常样本被丢弃时返回 null。 */
+  record(rawMs: number): number | null {
+    if (!isUsableSample(rawMs)) return null;
+    const raw = Math.max(0, Math.round(rawMs));
+    this.value =
+      this.value === null ? raw : this.value + HOST_LATENCY_EWMA_ALPHA * (raw - this.value);
+    return this.value;
+  }
+}
+
+export function adaptiveControlTimeoutMs(baseMs: number, rttMs: number | null): number {
+  if (rttMs === null) return baseMs;
+  return Math.max(
+    baseMs,
+    Math.min(CONTROL_COMMAND_TIMEOUT_MAX_MS, CONTROL_TIMEOUT_RTT_MULTIPLIER * rttMs)
+  );
+}
+
 const systemClock: InputLaneClock = {
   now: () => performance.now(),
   setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
@@ -51,7 +81,7 @@ export class HostLatencyTracker {
   private readonly idleProbeIntervalMs: number;
   private readonly listeners = new Set<HostLatencyListener>();
 
-  private smoothed: number | null = null;
+  private readonly ewma = new HostLatencyEwma();
   private latest: HostLatencySample | null = null;
   private probeGate: (() => boolean) | null = null;
   private probeInFlight = false;
@@ -90,14 +120,12 @@ export class HostLatencyTracker {
   }
 
   record(rawMs: number, hop: number): void {
-    if (this.disposed || !isUsableSample(rawMs)) return;
+    if (this.disposed) return;
+    const smoothed = this.ewma.record(rawMs);
+    if (smoothed === null) return;
     const raw = Math.max(0, Math.round(rawMs));
-    this.smoothed =
-      this.smoothed === null
-        ? raw
-        : this.smoothed + HOST_LATENCY_EWMA_ALPHA * (raw - this.smoothed);
     this.latest = {
-      rttMs: Math.max(0, Math.round(this.smoothed)),
+      rttMs: Math.max(0, Math.round(smoothed)),
       rawMs: raw,
       hop,
       sampledAt: this.wallClock(),
@@ -173,13 +201,20 @@ function isUsableSample(rawMs: number): boolean {
   return Number.isFinite(rawMs) && rawMs >= 0 && rawMs <= HOST_LATENCY_MAX_SAMPLE_MS;
 }
 
-/** 把连接回调包成控制队列的采样出口；上层没接采样时返回 undefined（队列不计时）。 */
+/** 把连接回调与连接自身的 EWMA 包成控制队列的采样出口；两者都没有时返回 undefined（队列不计时）。 */
 export function hostLatencySampler(
   callbacks: TmuxConnectionOptions,
-  hop: number
+  hop: number,
+  ewma?: HostLatencyEwma
 ): ControlCommandLatencyOptions | undefined {
   const sink = callbacks.onHostLatencySample;
-  return sink ? { onSample: (rttMs) => sink(rttMs, hop) } : undefined;
+  if (!sink && !ewma) return undefined;
+  return {
+    onSample: (rttMs) => {
+      ewma?.record(rttMs);
+      sink?.(rttMs, hop);
+    },
+  };
 }
 
 export type HostLatencyProbeResult = undefined | 'busy';
