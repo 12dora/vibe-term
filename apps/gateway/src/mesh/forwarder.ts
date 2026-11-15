@@ -387,7 +387,7 @@ export class Forwarder {
     if (gated.response) return gated.response;
     const headers = filterRequestHeaders(req);
     const auth = forwardedAuthFor(req, nodeId, rest);
-    stampForwardedAuthHeaders(headers, req, rest, auth);
+    stampForwardedAuthHeaders(headers, req, rest, auth, nodeId);
     const origin = req.headers.get('origin') ?? new URL(req.url).origin;
     const resumeBase = buildForwardResumeCtx({
       nodeId,

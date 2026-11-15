@@ -369,6 +369,7 @@ export async function challengeAndLogin(
     headers?: Record<string, string>;
     trustProxy?: boolean;
     sess?: ReturnType<typeof generateEd25519KeyPair>;
+    pop?: boolean;
   }
 ) {
   const sess = tweak?.sess ?? generateEd25519KeyPair();
@@ -421,6 +422,7 @@ export async function challengeAndLogin(
       delegation_sig: encodeBase64url(del.sig),
       ...(tweak?.totp ? { totp: tweak.totp } : {}),
       ...(passkey ? { passkey } : {}),
+      ...(tweak?.pop ? { pop: true } : {}),
     }),
     via: tweak?.via,
     clientIp: tweak?.clientIp,

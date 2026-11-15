@@ -86,6 +86,34 @@ export function clearNodeSessionCookie(
   headers.append('set-cookie', buildClearCookie(legacyNodeSessionCookieName(nodeId), options));
 }
 
+/** 导航票据 cookie（会话 PoP）：新功能只用新名，本机为 `vibeterm_n_self`。 */
+export const NAV_TICKET_COOKIE_PREFIX = 'vibeterm_n_';
+
+export function navTicketCookieName(nodeId: string): string {
+  return `${NAV_TICKET_COOKIE_PREFIX}${nodeId}`;
+}
+
+export function readNavTicketCookie(cookies: Map<string, string>, nodeId: string): string | null {
+  return cookies.get(navTicketCookieName(nodeId)) || null;
+}
+
+/** 票据为空即清除；远端节点只接受规范 node id，本机用 `self`。 */
+export function appendNavTicketCookie(
+  headers: Headers,
+  nodeId: string,
+  ticket: string,
+  options: { maxAgeSec: number; secure: boolean }
+): void {
+  if (nodeId !== 'self' && !isCanonicalNodeId(nodeId)) return;
+  const name = navTicketCookieName(nodeId);
+  headers.append(
+    'set-cookie',
+    ticket && options.maxAgeSec > 0
+      ? buildSetCookie(name, ticket, options)
+      : buildClearCookie(name, { secure: options.secure })
+  );
+}
+
 export function formatSafeErrorLog(err: unknown): string {
   const e = err instanceof Error ? err : new Error(String(err));
   const code =

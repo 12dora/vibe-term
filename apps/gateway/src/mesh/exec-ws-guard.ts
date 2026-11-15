@@ -17,7 +17,7 @@ export function authenticateExecUpgrade(
     return { uid: auth.userId, tokenId: null, session };
   }
   const principal = localTokenPrincipal(req);
-  if (!principal) return jsonError('UNAUTHORIZED', 401);
+  if (!principal) return jsonError(auth.pop ?? 'UNAUTHORIZED', 401);
   if (!principal.scopes.includes('exec')) return jsonError('TOKEN_SCOPE', 403);
   return { uid: principal.userId, tokenId: principal.tokenId };
 }

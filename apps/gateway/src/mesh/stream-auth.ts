@@ -7,9 +7,10 @@ import {
 } from '@vibeterm/shared/http/mesh-headers';
 import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
 import { isTokenCredential } from '../auth/access-token-auth';
-import type { NodeSessionStore } from '../auth/node-session-store';
+import type { NodeSessionRecord, NodeSessionStore } from '../auth/node-session-store';
+import { type PopEvidence, type PopFailureCode, evaluatePop } from '../auth/session-pop';
 import { isAuthLoginPublicPath, isShareAccessPath } from './auth-public-paths';
-import { SHARE_WS_VERIFY_MS } from './mesh-deps';
+import { SHARE_WS_VERIFY_MS, WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
 import { sessionVerifyDeadline, sessionVerifyDue } from './session-verify-window';
 import {
   type ShareAccessVerification,
@@ -41,6 +42,8 @@ export type StreamAuthOk = {
   clearShare?: boolean;
   /** 访问令牌凭证：uid 为令牌属主，没有会话；只允许作用域表内的接口。 */
   token?: StreamTokenPrincipal;
+  /** `pop_required` 会话凭升级证明打开的 ws 流：续接窗口按这份证明登记。 */
+  popProof?: string;
 };
 
 export type StreamAuthFail = {
@@ -48,6 +51,14 @@ export type StreamAuthFail = {
   reason: string;
   /** ws 流用的终止性关闭码（4401 / 4410），Hub 解码后直接透给浏览器，不再 failover。 */
   wsClose?: string;
+  /** 会话有效但持有证明缺失 / 无效：HTTP 回 401 `{ code }`，ws 以 4401 + 该码关闭。 */
+  pop?: PopFailureCode;
+};
+
+/** 目标节点对 mesh 入站会话的 PoP 判定输入；缺省等于「没带证明」。 */
+export type StreamPopCheck = {
+  evidence: PopEvidence | null;
+  acceptResumed?: (sid: string, proof: string) => boolean;
 };
 
 export type StreamAuthResult = StreamAuthOk | StreamAuthFail;
@@ -71,31 +82,75 @@ function shareAuthFailure(shareId: string | null): StreamAuthFail {
  * `boundShareId` 来自握手的 `?share=<id>`：给了就必须是分享凭证且绑定同一个分享，
  * 常规会话一律不接受（否则浏览器里残留的 sid 会把分享页升级成全权限连接）。
  */
+function popFailure(code: PopFailureCode): StreamAuthFail {
+  return {
+    ok: false,
+    reason: code,
+    pop: code,
+    wsClose: encodeTerminalStreamClose(WS_CLOSE_LOGIN_REQUIRED, code),
+  };
+}
+
+function streamPopOutcome(
+  session: NodeSessionRecord,
+  ctx: StreamAuthContext,
+  now: number,
+  pop: StreamPopCheck | undefined
+): PopFailureCode | null {
+  return evaluatePop(session, pop?.evidence, {
+    now,
+    navKey: () => ctx.sessionStore.navKey(),
+    ...(pop?.acceptResumed ? { acceptResumed: pop.acceptResumed } : {}),
+  });
+}
+
+function verifiedSession(
+  result: { session: NodeSessionRecord; renewedExpiresAt?: number },
+  pop: StreamPopCheck | undefined
+): StreamAuthOk {
+  const proof = pop?.evidence?.upgrade ? pop.evidence.proof : null;
+  return {
+    ok: true,
+    uid: result.session.userId,
+    ...(result.renewedExpiresAt !== undefined ? { renewedExpiresAt: result.renewedExpiresAt } : {}),
+    ...(result.session.popRequired && proof ? { popProof: proof } : {}),
+  };
+}
+
+function verifyShareStream(
+  shareToken: string,
+  boundShareId: string | null | undefined,
+  now: number
+): StreamAuthResult {
+  const share = verifyShareAccessToken(shareToken, now);
+  if (!share) return shareAuthFailure(boundShareId ?? shareIdOfToken(shareToken));
+  if (boundShareId && share.scope.shareId !== boundShareId) return shareAuthFailure(boundShareId);
+  return { ok: true, uid: null, share: { ...share, token: shareToken } };
+}
+
+/**
+ * `pop` 是目标节点实际分发的请求（HTTP 的 `rest` 路径 + 查询串、ws 的升级目标）的持有证明；
+ * `pop_required` 会话缺证明或证明无效即拒绝，公开路径降级为匿名。
+ */
 export function verifyStreamAuth(
   auth: string | null | undefined,
   path: string,
   ctx: StreamAuthContext,
-  boundShareId?: string | null
+  boundShareId?: string | null,
+  pop?: StreamPopCheck
 ): StreamAuthResult {
   const now = ctx.now?.() ?? Date.now();
   const shareToken = parseShareAuth(auth);
   if (boundShareId && !shareToken) return shareAuthFailure(boundShareId);
-  if (shareToken) {
-    const share = verifyShareAccessToken(shareToken, now);
-    if (!share) return shareAuthFailure(boundShareId ?? shareIdOfToken(shareToken));
-    if (boundShareId && share.scope.shareId !== boundShareId) return shareAuthFailure(boundShareId);
-    return { ok: true, uid: null, share: { ...share, token: shareToken } };
-  }
+  if (shareToken) return verifyShareStream(shareToken, boundShareId, now);
   const skipped = isAuthSkippedPath(path);
   // 公开路径无 token 直接匿名放行；带了 token 仍照常校验，让 /api/auth/mode 之类能识别已登录会话。
   if (!auth) return skipped ? { ok: true, uid: null } : { ok: false, reason: 'missing auth' };
   const result = ctx.sessionStore.verify(auth, { viaNodeId: ctx.peerNodeId, now });
   if (!result.ok) return skipped ? { ok: true, uid: null } : { ok: false, reason: result.reason };
-  return {
-    ok: true,
-    uid: result.session.userId,
-    ...(result.renewedExpiresAt !== undefined ? { renewedExpiresAt: result.renewedExpiresAt } : {}),
-  };
+  const popFail = streamPopOutcome(result.session, ctx, now, pop);
+  if (popFail) return skipped ? { ok: true, uid: null } : popFailure(popFail);
+  return verifiedSession(result, pop);
 }
 
 /**
@@ -108,14 +163,14 @@ export function authorizeHttpStream(
   auth: string | null | undefined,
   method: string,
   pathname: string,
-  ctx: StreamAuthContext,
+  ctx: StreamAuthContext & { pop?: StreamPopCheck },
   headers: Record<string, string>
 ): StreamAuthResult {
   if (isTokenCredential(auth)) {
     return authorizeTokenHttpStream(auth, method, pathname, ctx.peerNodeId, headers);
   }
   const publicShare = isShareAccessPath(pathname, method);
-  const verified = verifyStreamAuth(auth, pathname, ctx);
+  const verified = verifyStreamAuth(auth, pathname, ctx, null, ctx.pop);
   if (!verified.ok) {
     if (!publicShare || !parseShareAuth(auth)) return verified;
     return { ok: true, uid: null, clearShare: true };

@@ -1,3 +1,5 @@
+import { POP_QUERY_PARAM, canonicalPopQuery } from '@vibeterm/shared/auth';
+import { POP_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import type { LinkSession } from '@vibeterm/shared/link';
 import { nodeUnreachableResponse } from './forwarder-unreachable';
 import { rejectRemoteWs, remoteWsAuthFor } from './forwarder-ws-auth';
@@ -8,6 +10,7 @@ import {
   type PeerLinkProvider,
   type PeerTransportKind,
   type StreamOpener,
+  type WsStreamPop,
 } from './mesh-deps';
 import { sanitizeCid } from './mesh-session-registry';
 import { transportOfLink } from './pending-measure-hold';
@@ -72,6 +75,16 @@ export class PendingForwardOpen {
 
 type WsDeps = { peers: PeerLinkProvider; streams: StreamOpener; deadlineMs: number };
 
+/**
+ * 浏览器把证明放在 `?pop=`，CLI 放在 `x-vibeterm-pop` 头；入口不验（它没有目标会话的公钥），
+ * 连同去掉 `pop` 的原始查询串交给目标节点，目标按 `GET /ws?<query>` 验签。
+ */
+export function upgradePopOf(req: Request, url: URL): WsStreamPop | undefined {
+  const proof = url.searchParams.get(POP_QUERY_PARAM) || req.headers.get(POP_HEADER);
+  if (!proof) return undefined;
+  return { proof, query: canonicalPopQuery(url.search) };
+}
+
 export async function upgradeRemoteWs(
   req: Request,
   server: MeshUpgradeServer,
@@ -84,8 +97,9 @@ export async function upgradeRemoteWs(
   if (!auth) return rejectRemoteWs(req, server, nodeId, share);
   if (req.signal.aborted) return nodeUnreachableResponse(nodeId, true);
   const cid = sanitizeCid(url.searchParams.get('cid')) || undefined;
+  const pop = upgradePopOf(req, url);
   const pending = new PendingForwardOpen(async (signal) => {
-    const opened = await openForwardLink(nodeId, deps, auth, cid, share ?? undefined, signal);
+    const opened = await openForwardLink(nodeId, deps, { auth, cid, share, pop }, signal);
     const meta = pendingMeta.get(pending);
     if (meta) meta.transport = opened.transport;
     return opened.stream;
@@ -99,6 +113,7 @@ export async function upgradeRemoteWs(
     auth,
     cid,
     ...(share ? { share } : {}),
+    ...(pop ? { pop } : {}),
     transport: deps.peers.transportOf?.(nodeId) ?? null,
   });
   if (!server.upgrade(req, { data: { kind: MESH_FORWARD_WS_KIND, nodeId, auth, token, cid } })) {
@@ -113,14 +128,18 @@ export async function upgradeRemoteWs(
 async function openForwardLink(
   nodeId: string,
   deps: WsDeps,
-  auth: string,
-  cid: string | undefined,
-  share: string | undefined,
+  open: { auth: string; cid?: string; share?: string | null; pop?: WsStreamPop },
   signal: AbortSignal
 ): Promise<{ stream: OpenedWsStream; transport: PeerTransportKind | null }> {
   const link = await raceLink(deps.peers.getLink(nodeId), deps.deadlineMs, signal);
   if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-  const stream = await deps.streams.openWsStream(link, auth, cid, share);
+  const stream = await deps.streams.openWsStream(
+    link,
+    open.auth,
+    open.cid,
+    open.share ?? undefined,
+    open.pop
+  );
   return { stream, transport: transportOfLink(link) ?? deps.peers.transportOf?.(nodeId) ?? null };
 }
 
@@ -171,6 +190,7 @@ export const pendingMeta = new WeakMap<
     auth: string;
     cid?: string;
     share?: string;
+    pop?: WsStreamPop;
     transport: PeerTransportKind | null;
   }
 >();

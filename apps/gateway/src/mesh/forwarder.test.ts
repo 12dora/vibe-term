@@ -47,7 +47,7 @@ import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { createPeerManagerState, resetPeerRttLookupForTests } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { CLEAR_SHARE_HEADER, SET_SHARE_HEADER, SET_SHARE_MAX_AGE_HEADER } from './share-credential';
-import { SHARE_LOGIN_MAX_FAILURES } from './share-login-quota';
+import { SHARE_LOGIN_GRACE_FAILURES, SHARE_LOGIN_SHARE_MAX_FAILURES } from './share-login-quota';
 import { ImmediateScheduler, waitUntil } from './test-support';
 import { type MeshIdentity, NodeUnreachableError, PeerHandshakeError } from './types';
 
@@ -270,7 +270,7 @@ describe('forwarder', () => {
           })(),
           dummyServer
         );
-      for (let i = 0; i < SHARE_LOGIN_MAX_FAILURES; i += 1) {
+      for (let i = 0; i < SHARE_LOGIN_GRACE_FAILURES; i += 1) {
         expect(asResponse(await login('9.9.9.9')).status).toBe(401);
       }
       const opensAfterFailures = streams.httpOpenCount;
@@ -282,6 +282,42 @@ describe('forwarder', () => {
       // 锁定后不再打上游，且别的来源 IP 不受牵连。
       expect(streams.httpOpenCount).toBe(opensAfterFailures);
       expect(asResponse(await login('8.8.8.8')).status).toBe(401);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('分享登录入口预检：其它 IP 失败不 429 干净来源', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.nextResponseFactory = () =>
+      new Response(JSON.stringify({ code: 'SHARE_PASSWORD_INVALID' }), { status: 401 });
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const login = (ip: string) =>
+        mesh.runtime.handleRequest(
+          (() => {
+            const req = new Request(`http://localhost/n/${OTHER}/api/share-access/sh1/login`, {
+              method: 'POST',
+              body: JSON.stringify({ password: 'nope' }),
+              headers: { 'content-type': 'application/json' },
+            });
+            setMeshRequestContext(req, { via: 'self', clientIp: ip });
+            return req;
+          })(),
+          dummyServer
+        );
+      for (let i = 0; i < SHARE_LOGIN_SHARE_MAX_FAILURES; i += 1) {
+        expect(asResponse(await login(`198.51.100.${i}`)).status).toBe(401);
+      }
+      const forwarded = streams.httpOpenCount;
+      const clean = asResponse(await login('203.0.113.9'));
+      expect(clean.status).toBe(401);
+      expect(streams.httpOpenCount).toBe(forwarded + 1);
+      const dirty = asResponse(await login('198.51.100.0'));
+      expect(dirty.status).toBe(429);
+      expect(streams.httpOpenCount).toBe(forwarded + 1);
     } finally {
       mesh.close();
     }

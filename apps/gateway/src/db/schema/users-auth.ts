@@ -89,6 +89,7 @@ export const nodeSessions = sqliteTable(
     hardExpiresAt: integer('hard_expires_at').notNull(),
     renewedAt: integer('renewed_at').notNull(),
     revokedAt: integer('revoked_at'),
+    popRequired: integer('pop_required', { mode: 'boolean' }).notNull().default(false),
   },
   (table) => [
     uniqueIndex('node_sessions_sid_unique').on(table.sid),

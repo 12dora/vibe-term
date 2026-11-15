@@ -1,4 +1,5 @@
 import type { LinkStream } from '@vibeterm/shared/link';
+import { streamUpgradeEvidence } from '../auth/session-pop';
 import { attachExecChannelToLinkStream } from '../exec/channel/link-transport';
 import {
   type ExecCredentialContext,
@@ -6,6 +7,8 @@ import {
   verifyExecCredential,
 } from './exec-credential';
 import { parseOpenPayload } from './peer-protocol';
+
+const EXEC_WS_PATH = '/api/exec/ws';
 
 type AttachExec = typeof attachExecChannelToLinkStream;
 
@@ -16,7 +19,8 @@ export function acceptExecStream(
 ): void {
   const open = parseOpenPayload(stream.openPayload);
   const clientIp = typeof open?.clientIp === 'string' ? open.clientIp : undefined;
-  const verified = safeVerify(open?.credential, clientIp ? { ...ctx, clientIp } : ctx);
+  const pop = streamUpgradeEvidence(EXEC_WS_PATH, open ?? {});
+  const verified = safeVerify(open?.credential, { ...ctx, ...(clientIp ? { clientIp } : {}), pop });
   if (!verified.ok) {
     stream.reset(`auth:${verified.reason}`);
     return;

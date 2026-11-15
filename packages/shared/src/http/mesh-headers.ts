@@ -117,3 +117,9 @@ export function assignHeaderPair<T extends Record<string, string>>(
   (headers as Record<string, string>)[pair.legacy] = value;
   return headers;
 }
+
+/** 会话持有证明（`session-pop.ts`），只用新名。 */
+export const POP_HEADER = 'x-vibeterm-pop';
+/** 导航凭证：浏览器 `<img>`、下载链接等无法带签名头的 GET 请求，凭它代替逐请求证明。 */
+export const NAV_TICKET_HEADER = 'x-vibeterm-nav';
+export const SET_NAV_TICKET_HEADER = 'x-vibeterm-set-nav';

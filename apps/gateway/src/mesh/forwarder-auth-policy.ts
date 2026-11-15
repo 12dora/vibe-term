@@ -1,15 +1,19 @@
 import {
   SESSION_RENEWED_HEADER,
+  SET_NAV_TICKET_HEADER,
   SET_SESSION_HEADER,
   readHeaderPair,
   setHeaderPair,
 } from '@vibeterm/shared/http/mesh-headers';
 import {
+  appendNavTicketCookie,
   appendNodeSessionCookie,
   clearNodeSessionCookie,
   parseCookies,
   readNodeSessionCookie,
 } from '../auth/cookies';
+import { NAV_TICKET_MAX_AGE_SEC, parseSetNavHeader } from '../auth/nav-ticket';
+import { isPopFailureCode } from '../auth/session-pop';
 import { AUTH_LOGIN_PUBLIC_PATHS } from './auth-public-paths';
 import { AUTH_401_BODY_LIMIT, parseSetSessionHeader } from './mesh-deps';
 import { isHttps } from './session-middleware';
@@ -29,12 +33,15 @@ const DROP_ON_401_REWRITE = new Set([
   'content-disposition',
 ]);
 
+/** 持有证明失败（`POP_REQUIRED` / `POP_INVALID`）原样透传：会话仍有效，客户端不能把它当成登出。 */
 function loginRequiredBody(raw: string, nodeId: string): Record<string, unknown> {
   const body: Record<string, unknown> = { code: 'NODE_LOGIN_REQUIRED', nodeId };
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return { ...(parsed as Record<string, unknown>), code: 'NODE_LOGIN_REQUIRED', nodeId };
+      const rec = parsed as Record<string, unknown>;
+      if (isPopFailureCode(rec.code)) return { ...rec, nodeId };
+      return { ...rec, code: 'NODE_LOGIN_REQUIRED', nodeId };
     }
   } catch {
     if (raw) body.message = raw;
@@ -57,6 +64,7 @@ export async function applyAuthPolicy(
   if (parsed) {
     appendNodeSessionCookie(headers, nodeId, parsed.sid, { maxAgeSec: parsed.maxAgeSec, secure });
   }
+  applyNavTicketCookie(headers, upstream, nodeId, secure);
   const renewed = readHeaderPair(upstream.headers, SESSION_RENEWED_HEADER);
   if (renewed) {
     setHeaderPair(headers, SESSION_RENEWED_HEADER, renewed);
@@ -76,6 +84,21 @@ export async function applyAuthPolicy(
     clearNodeSessionCookie(headers, nodeId, { secure });
   }
   return new Response(JSON.stringify(body), { status: 401, headers });
+}
+
+/** 目标节点的 `x-vibeterm-set-nav: <ticket>;<maxAge>` 换成 `vibeterm_n_<nodeId>` cookie；空票据即清除。 */
+function applyNavTicketCookie(
+  headers: Headers,
+  upstream: Response,
+  nodeId: string,
+  secure: boolean
+): void {
+  const nav = parseSetNavHeader(upstream.headers.get(SET_NAV_TICKET_HEADER));
+  if (!nav) return;
+  appendNavTicketCookie(headers, nodeId, nav.ticket, {
+    maxAgeSec: Math.min(nav.maxAgeSec, NAV_TICKET_MAX_AGE_SEC),
+    secure,
+  });
 }
 
 /**

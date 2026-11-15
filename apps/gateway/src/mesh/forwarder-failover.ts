@@ -31,6 +31,7 @@ import {
   STREAM_FAILOVER_MAX_ATTEMPTS,
   STREAM_FAILOVER_RESUME_WAIT_MS,
   type StreamOpener,
+  type WsStreamPop,
 } from './mesh-deps';
 import { PENDING_MEASURE_REASON, emitTransportRefused } from './pending-measure-hold';
 import { type StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
@@ -42,6 +43,8 @@ export type ForwardPump = {
   cid?: string;
   /** 分享页握手的 shareId：failover 重开流时必须原样带上。 */
   share?: string;
+  /** 升级时的会话持有证明：failover 重开流时原样带上，目标节点按续接窗口认它。 */
+  pop?: WsStreamPop;
   stream: OpenedWsStream | null;
   boundTransport: PeerTransportKind | null;
   replay: StreamReplayState;
@@ -256,7 +259,7 @@ async function attachPickedStream(
   }
   const transport = openedLinkTransport(host.peers, pump.nodeId, link);
   const opened = await elapsed(() =>
-    host.streams.openWsStream(link, pump.auth, pump.cid, pump.share).catch(() => null)
+    host.streams.openWsStream(link, pump.auth, pump.cid, pump.share, pump.pop).catch(() => null)
   );
   const stream = opened.value;
   if (!stream) {

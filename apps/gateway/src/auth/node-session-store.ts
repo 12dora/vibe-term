@@ -1,6 +1,7 @@
 import { and, eq, isNull, lte, or } from 'drizzle-orm';
 import { nodeSessions } from '../db/schema';
 import { fromBase64Url, toBase64Url, toBuffer, toBytes } from './binary';
+import { loadOrCreateNavKey } from './nav-ticket';
 import type { AuthDb, DelegationMethod } from './types';
 
 export const NODE_SESSION_TTL_MS = 18 * 60 * 60 * 1000;
@@ -21,6 +22,8 @@ export interface NodeSessionRecord {
   hardExpiresAt: number;
   renewedAt: number;
   revokedAt: number | null;
+  /** 登录时客户端声明能长期持有 sk_sess：此后每个请求都要带会话持有证明（PoP）。 */
+  popRequired: boolean;
 }
 
 type IssueNodeSessionBase = {
@@ -28,6 +31,7 @@ type IssueNodeSessionBase = {
   viaNodeId: string;
   sessPublicKey: Uint8Array;
   now: number;
+  popRequired?: boolean;
 };
 
 export type IssueNodeSessionInput = IssueNodeSessionBase &
@@ -41,7 +45,15 @@ export type NodeSessionVerifyResult =
   | { ok: false; reason: NodeSessionVerifyReason };
 
 export class NodeSessionStore {
+  private navKeyCache: Uint8Array | null = null;
+
   constructor(private readonly db: AuthDb) {}
+
+  /** 导航票据的 HMAC 密钥：本节点首次使用时生成并落库，重启后不变。 */
+  navKey(): Uint8Array {
+    this.navKeyCache ??= loadOrCreateNavKey(this.db);
+    return this.navKeyCache;
+  }
 
   issue(input: IssueNodeSessionInput): {
     sid: string;
@@ -71,6 +83,7 @@ export class NodeSessionStore {
         hardExpiresAt,
         renewedAt: input.now,
         revokedAt: null,
+        popRequired: input.popRequired === true,
       })
       .run();
     return { sid: toBase64Url(sidBytes), expiresAt, hardExpiresAt };
@@ -191,5 +204,6 @@ function toRecord(row: typeof nodeSessions.$inferSelect): NodeSessionRecord {
     hardExpiresAt: row.hardExpiresAt,
     renewedAt: row.renewedAt,
     revokedAt: row.revokedAt,
+    popRequired: row.popRequired === true,
   };
 }

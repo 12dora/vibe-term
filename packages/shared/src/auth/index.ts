@@ -325,3 +325,23 @@ export type {
   NamedLoginPolicyPreset,
 } from './login-policy-record';
 export { applyReadmitNode, buildRootReadmitAuthorization } from './readmit-node-record';
+export {
+  POP_MAX_SKEW_MS,
+  POP_QUERY_PARAM,
+  POP_VERSION,
+  buildPopMessage,
+  canonicalPopPath,
+  canonicalPopQuery,
+  formatPopProof,
+  parsePopProof,
+  popTargetFromUrl,
+  signPop,
+  verifyPop,
+} from './session-pop';
+export type {
+  PopProof,
+  PopSigner,
+  PopTarget,
+  PopVerifyError,
+  PopVerifyResult,
+} from './session-pop';

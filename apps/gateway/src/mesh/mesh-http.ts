@@ -47,6 +47,7 @@ import { MeshRoutes } from './mesh-routes';
 import { isPeerInboundRequest, stripMeshPeerMarkerFromRequest } from './peer-request-marker';
 import { type RelayRoutes, isLocalRelayStatusRequest } from './relay-routes';
 import {
+  type AuthenticateResult,
   type SessionMiddlewareDeps,
   authenticateRequest,
   consumeSetSessionForBrowser,
@@ -55,6 +56,7 @@ import {
 } from './session-middleware';
 import { sessionVerifyDeadline, sessionVerifyDue } from './session-verify-window';
 import {
+  type ShareWsClose,
   readShareCookie,
   shareIdOfToken,
   shareWsCloseFor,
@@ -132,6 +134,11 @@ const SESSION_REVOKE_EFFECTS: ReadonlySet<KeyLogEffect['type']> = new Set([
   'revokeSessionsByCredential',
   'revokeSessionsVia',
 ]);
+
+function gatewayWsRejectClose(auth: AuthenticateResult, token: string | null): ShareWsClose | null {
+  if (!auth.ok && auth.pop) return { code: WS_CLOSE_LOGIN_REQUIRED, reason: auth.pop };
+  return token ? shareWsCloseFor(shareIdOfToken(token)) : null;
+}
 
 function safeLocalAuthEffective(read: () => boolean): () => boolean {
   return () => {
@@ -257,6 +264,7 @@ export class MeshHttpRuntime {
    * 鉴权优先级：`?share=<id>` 存在时只认绑定该分享的凭证（不回退常规会话）；
    * 否则常规会话优先，其次有效的分享 cookie，最后才是 standalone 开放短路——
    * 分享凭证必须在开放短路之前判定，否则免登录部署会把分享连接升级成全权限连接。
+   * 会话有效但缺 / 错持有证明：升级后以 4401 + `POP_REQUIRED` / `POP_INVALID` 关闭。
    */
   guardGatewayWebSocket(req: Request, server: MeshUpgradeServer): Response | null | undefined {
     const url = new URL(req.url);
@@ -282,7 +290,7 @@ export class MeshHttpRuntime {
     if (isStandaloneOpenAuth(auth)) {
       return null;
     }
-    return rejectGatewayWs(req, server, token ? shareWsCloseFor(shareIdOfToken(token)) : null);
+    return rejectGatewayWs(req, server, gatewayWsRejectClose(auth, token));
   }
 
   closeSocketsForUser(uid: string): void {

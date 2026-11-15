@@ -44,12 +44,14 @@ function attachTokenPrincipal(req: Request, principal: TokenPrincipal): void {
 
 /**
  * 本机 `/api/*` 的鉴权：有效会话永远优先（令牌根本不看）；没有有效会话才试令牌。
- * 令牌无效与没带凭证同样回 401；令牌有效但作用域不含该请求回 403 TOKEN_SCOPE。
+ * 令牌无效与没带凭证同样回 401；会话有效但缺 / 错持有证明且没有令牌时回 401 POP_REQUIRED / POP_INVALID；
+ * 令牌有效但作用域不含该请求回 403 TOKEN_SCOPE。
  */
 export function authenticateApiRequest(req: Request, deps: SessionMiddlewareDeps): Response | null {
-  if (authenticateRequest(req, deps).ok) return null;
+  const auth = authenticateRequest(req, deps);
+  if (auth.ok) return null;
   const principal = localTokenPrincipal(req);
-  if (!principal) return jsonError('UNAUTHORIZED', 401);
+  if (!principal) return jsonError(auth.pop ?? 'UNAUTHORIZED', 401);
   attachTokenPrincipal(req, principal);
   return tokenScopeDenied(req);
 }

@@ -130,9 +130,13 @@ export type StreamOpener = {
     link: LinkSession,
     auth: string,
     cid?: string,
-    share?: string
+    share?: string,
+    pop?: WsStreamPop
   ): Promise<OpenedWsStream>;
 };
+
+/** 浏览器升级 URL 上的会话持有证明，入口原样交给目标节点验签（failover 重开流时同样带上）。 */
+export type WsStreamPop = { proof: string; query: string };
 
 export type KeyLogPublishAck = { ok: true; seq: bigint | number } | { ok: false; error: string };
 

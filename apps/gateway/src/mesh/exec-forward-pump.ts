@@ -28,13 +28,19 @@ export function execForwardCloseFor(info: StreamEnd): WsClose {
   const message = info.message ?? '';
   if (info.reason === 'rst') {
     if (message === 'unknown-stream-type') return { code: 4404, reason: 'exec_unsupported' };
-    if (message.startsWith('auth:')) return { code: 4401, reason: 'NODE_LOGIN_REQUIRED' };
+    if (message.startsWith('auth:')) return { code: 4401, reason: execAuthCloseReason(message) };
     const passthrough = /^exec:(\d{4})$/.exec(message);
     const code = passthrough ? Number(passthrough[1]) : 0;
     if (code === 4401) return { code, reason: 'NODE_LOGIN_REQUIRED' };
     if (PASSTHROUGH_EXEC_CLOSE_CODES.has(code)) return { code, reason: 'exec_closed' };
   }
   return { code: 4502, reason: 'NODE_UNREACHABLE' };
+}
+
+/** 持有证明失败与登录失效同为 4401，但 reason 保留 `POP_REQUIRED` / `POP_INVALID`，客户端据此不当成登出。 */
+function execAuthCloseReason(message: string): string {
+  const detail = message.slice('auth:'.length);
+  return detail === 'POP_REQUIRED' || detail === 'POP_INVALID' ? detail : 'NODE_LOGIN_REQUIRED';
 }
 
 function streamEndOf(err: unknown): StreamEnd {

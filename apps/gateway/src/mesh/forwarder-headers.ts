@@ -1,9 +1,13 @@
 import {
   CLIENT_SOURCE_HEADER,
+  NAV_TICKET_HEADER,
+  SET_NAV_TICKET_HEADER,
   addHeaderNames,
   isVibeTermHeaderName,
 } from '@vibeterm/shared/http/mesh-headers';
 import { isTokenCredential } from '../auth/access-token-auth';
+import { parseCookies, readNavTicketCookie } from '../auth/cookies';
+import { POP_ENTRY_PROVEN_HEADER, requestPopProven } from '../auth/session-pop';
 import { applySafeFileHeaders } from '../files/safe-file-headers';
 import { clientIpFromRequest } from './client-ip';
 
@@ -26,7 +30,7 @@ const INTERNAL_CREDENTIAL_HEADERS = addHeaderNames(
   SET_SHARE_HEADER,
   SET_SHARE_MAX_AGE_HEADER,
   CLEAR_SHARE_HEADER
-);
+).add(SET_NAV_TICKET_HEADER);
 
 const RESPONSE_ALLOW = new Set([
   'content-length',
@@ -47,6 +51,9 @@ const DROP_REQUEST_HEADERS = addHeaderNames(
     'cf-access-jwt-assertion',
     'cf-access-authenticated-user-email',
     'cf-ray',
+    NAV_TICKET_HEADER,
+    SET_NAV_TICKET_HEADER,
+    POP_ENTRY_PROVEN_HEADER,
   ]),
   CLIENT_SOURCE_HEADER
 );
@@ -97,18 +104,36 @@ export function stampedAuthorizedHeaders(
 ): Record<string, string> {
   const headers: Record<string, string> = { ...(given ?? {}) };
   deleteHeader(headers, ENTRY_CLIENT_IP_HEADER);
+  deleteHeader(headers, POP_ENTRY_PROVEN_HEADER);
   const ip = isTokenCredential(auth) ? clientIpFromRequest(req) : undefined;
   if (ip) headers[ENTRY_CLIENT_IP_HEADER] = ip;
+  // 服务端代发的调用签不了浏览器的证明：本机已验过这次请求的 PoP，就替它向目标担保。
+  if (auth && !isTokenCredential(auth) && requestPopProven(req)) {
+    headers[POP_ENTRY_PROVEN_HEADER] = '1';
+  }
   return headers;
+}
+
+/** 浏览器的 `vibeterm_n_<nodeId>` cookie 换成流请求头 `x-vibeterm-nav`，由目标节点验票。 */
+export function stampNavTicketHeader(
+  headers: Record<string, string>,
+  req: Request,
+  nodeId: string
+): void {
+  deleteHeader(headers, NAV_TICKET_HEADER);
+  const ticket = readNavTicketCookie(parseCookies(req.headers.get('cookie')), nodeId);
+  if (ticket) headers[NAV_TICKET_HEADER] = ticket;
 }
 
 export function stampForwardedAuthHeaders(
   headers: Record<string, string>,
   req: Request,
   rest: string,
-  auth: string | null = null
+  auth: string | null = null,
+  nodeId?: string
 ): void {
   deleteHeader(headers, ENTRY_CLIENT_IP_HEADER);
+  if (nodeId) stampNavTicketHeader(headers, req, nodeId);
   if (!FORWARDED_AUTH_PATHS.has(rest) && !isTokenCredential(auth)) return;
   const ip = clientIpFromRequest(req);
   if (ip) headers[ENTRY_CLIENT_IP_HEADER] = ip;

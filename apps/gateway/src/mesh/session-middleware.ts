@@ -1,11 +1,13 @@
 import {
   SESSION_RENEWED_HEADER,
+  SET_NAV_TICKET_HEADER,
   SET_SESSION_HEADER,
   deleteHeaderPair,
   readHeaderPair,
   setHeaderPair,
 } from '@vibeterm/shared/http/mesh-headers';
 import {
+  appendNavTicketCookie,
   buildClearCookie,
   buildSetCookie,
   legacyNodeSessionCookieName,
@@ -13,7 +15,9 @@ import {
   parseCookies,
   readNodeSessionCookie,
 } from '../auth/cookies';
+import { NAV_TICKET_MAX_AGE_SEC, parseSetNavHeader } from '../auth/nav-ticket';
 import type { NodeSessionRecord, NodeSessionStore } from '../auth/node-session-store';
+import { type PopFailureCode, enforceRequestPop } from '../auth/session-pop';
 import { isTrustedProxyHop } from './client-ip';
 import {
   MESH_VIA_SELF,
@@ -38,7 +42,8 @@ export type AuthenticateOk = {
   renewedExpiresAt?: number;
 };
 
-export type AuthenticateFail = { ok: false };
+/** `pop` 有值：会话本身有效，但缺少或带了无效的持有证明（不等于登出）。 */
+export type AuthenticateFail = { ok: false; pop?: PopFailureCode };
 
 export type AuthenticateResult = AuthenticateOk | AuthenticateFail;
 
@@ -93,12 +98,9 @@ export function authenticateRequest(
   if (!sid) {
     return { ok: false };
   }
-  const verified = deps.nodeSessionStore.verify(sid, {
-    viaNodeId: via,
-    now: deps.now?.() ?? Date.now(),
-  });
+  const verified = verifyWithPop(req, sid, via, deps);
   if (!verified.ok) {
-    return { ok: false };
+    return verified;
   }
   const result: AuthenticateOk = {
     ok: true,
@@ -111,6 +113,21 @@ export function authenticateRequest(
   };
   attachAuthToRequest(req, result, via);
   return result;
+}
+
+/** 会话校验 + 持有证明：会话有效但证明缺失 / 无效时带 `pop` 失败码返回。 */
+function verifyWithPop(
+  req: Request,
+  sid: string,
+  via: string,
+  deps: SessionMiddlewareDeps
+): { ok: true; session: NodeSessionRecord; renewedExpiresAt?: number } | AuthenticateFail {
+  const now = deps.now?.() ?? Date.now();
+  const verified = deps.nodeSessionStore.verify(sid, { viaNodeId: via, now });
+  if (!verified.ok) return { ok: false };
+  const navKey = () => deps.nodeSessionStore.navKey();
+  const pop = enforceRequestPop(req, verified.session, { now, navKey });
+  return pop ? { ok: false, pop } : verified;
 }
 
 export function attachAuthToRequest(req: Request, auth: AuthenticateOk, via?: string): void {
@@ -189,23 +206,19 @@ export function consumeSetSessionForBrowser(req: Request, response: Response): R
     return response;
   }
   const rawSession = readHeaderPair(response.headers, SET_SESSION_HEADER);
+  const rawNav = response.headers.get(SET_NAV_TICKET_HEADER);
   const share = hasShareCookieHeaders(response);
   const stale = share ? [] : staleShareCookieNames(req, MESH_VIA_SELF);
-  if (!rawSession && !share && stale.length === 0) {
+  if (!rawSession && rawNav === null && !share && stale.length === 0) {
     return response;
   }
   const headers = new Headers(response.headers);
   const secure = isHttps(req);
+  if (rawNav !== null) applySelfNavCookie(headers, rawNav, secure);
   for (const name of stale) {
     headers.append('set-cookie', buildClearCookie(name, { secure }));
   }
-  if (rawSession) {
-    deleteHeaderPair(headers, SET_SESSION_HEADER);
-    const parsed = parseSetSessionHeader(rawSession);
-    if (parsed) {
-      appendSelfSessionCookie(headers, parsed.sid, { maxAgeSec: parsed.maxAgeSec, secure });
-    }
-  }
+  if (rawSession) applySelfSessionHeader(headers, rawSession, secure);
   if (share) {
     applyShareCookieHeaders(headers, response, MESH_VIA_SELF, secure);
   }
@@ -216,6 +229,23 @@ export function consumeSetSessionForBrowser(req: Request, response: Response): R
   });
 }
 
+function applySelfSessionHeader(headers: Headers, raw: string, secure: boolean): void {
+  deleteHeaderPair(headers, SET_SESSION_HEADER);
+  const parsed = parseSetSessionHeader(raw);
+  if (parsed) appendSelfSessionCookie(headers, parsed.sid, { maxAgeSec: parsed.maxAgeSec, secure });
+}
+
+/** 内部头 `x-vibeterm-set-nav` 换成本机导航票据 cookie `vibeterm_n_self`（空票据即清除）。 */
+function applySelfNavCookie(headers: Headers, raw: string, secure: boolean): void {
+  headers.delete(SET_NAV_TICKET_HEADER);
+  const parsed = parseSetNavHeader(raw);
+  if (!parsed) return;
+  appendNavTicketCookie(headers, MESH_VIA_SELF, parsed.ticket, {
+    maxAgeSec: Math.min(parsed.maxAgeSec, NAV_TICKET_MAX_AGE_SEC),
+    secure,
+  });
+}
+
 export function requireSession(
   deps: SessionMiddlewareDeps,
   handler: AuthedHandler
@@ -223,7 +253,7 @@ export function requireSession(
   return async (req: Request) => {
     const auth = authenticateRequest(req, deps);
     if (!auth.ok) {
-      return jsonError('UNAUTHORIZED', 401);
+      return jsonError(auth.pop ?? 'UNAUTHORIZED', 401);
     }
     const response = await handler(req, auth);
     return applySessionHeaders(response, auth, req);

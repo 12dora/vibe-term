@@ -978,7 +978,7 @@ function wireMeshHttp(
   const streams: StreamOpener = {
     openHttpStream: (link, open, body, signal) =>
       openHttpStream(link, { type: 'http', ...open }, body, signal, peerManager.rttForLink(link)),
-    openWsStream: (link, auth, cid, share) => openAdaptedWsStream(link, auth, cid, share),
+    openWsStream: (link, auth, cid, share, pop) => openAdaptedWsStream(link, auth, cid, share, pop),
   };
   const publisher = createKeyLogPublisher(uplink, () =>
     d.peerHolder.manager?.notifyKeyLogHeadChanged()

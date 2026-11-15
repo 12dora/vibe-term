@@ -3,7 +3,7 @@ import { encodeJsonBytes } from './ctl';
 import { ExecForwardPump, type ExecForwardSocket } from './exec-forward-pump';
 import { sessionOrTokenCredential } from './forwarder-credential';
 import { rejectClosedLink } from './forwarder-link-state';
-import { raceLink } from './forwarder-ws-upgrade';
+import { raceLink, upgradePopOf } from './forwarder-ws-upgrade';
 import { MESH_EXEC_FORWARD_KIND, type MeshUpgradeServer, type PeerLinkProvider } from './mesh-deps';
 import { jsonError } from './session-middleware';
 
@@ -37,10 +37,16 @@ export function upgradeExecForward(
   const credential = execForwardCredential(req, nodeId);
   if (!credential) return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId });
   const clientIp = clientIpFromRequest(req);
+  const pop = upgradePopOf(req, new URL(req.url));
   const pump = new ExecForwardPump(async (signal) => {
     const link = await raceLink(deps.peers.getLink(nodeId), deps.deadlineMs, signal);
     await rejectClosedLink(link);
-    const open = { type: 'exec', credential, ...(clientIp ? { clientIp } : {}) };
+    const open = {
+      type: 'exec',
+      credential,
+      ...(clientIp ? { clientIp } : {}),
+      ...(pop ? { pop: pop.proof, popQuery: pop.query } : {}),
+    };
     return link.openStream(encodeJsonBytes(open));
   });
   const data: ExecForwardSocketData = { kind: MESH_EXEC_FORWARD_KIND, nodeId, credential, pump };

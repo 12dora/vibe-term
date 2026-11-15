@@ -109,6 +109,8 @@ export type HttpStreamOpenPayload = {
   headers?: Record<string, string>;
   origin: string;
   auth?: string | null;
+  /** 入口已替这次服务端发起的调用验过浏览器会话的 PoP（只由入口写入，浏览器碰不到 OPEN）。 */
+  popEntry?: boolean;
 };
 
 export type WsStreamOpenPayload = {
@@ -118,6 +120,9 @@ export type WsStreamOpenPayload = {
   connectionId?: string;
   /** 分享页握手的 `?share=<shareId>`：节点端据此强制凭证与页面同一个分享。 */
   share?: string;
+  /** 浏览器升级 URL 上的会话持有证明（`?pop=`）与去掉 `pop` 的原始查询串，目标节点据此验签。 */
+  pop?: string;
+  popQuery?: string;
 };
 
 export type TcpStreamOpenPayload = {

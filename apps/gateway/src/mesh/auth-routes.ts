@@ -14,6 +14,7 @@ import { SET_SESSION_HEADER, setHeaderPair } from '@vibeterm/shared/http/mesh-he
 import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
 import type { ChallengeStore } from '../auth/challenge-store';
+import { clearNavTicket, navTicketResponse } from '../auth/nav-ticket';
 import { NODE_SESSION_TTL_MS, type NodeSessionStore } from '../auth/node-session-store';
 import {
   createAuthenticationOptions,
@@ -254,6 +255,8 @@ export class AuthRoutes {
       'POST /api/auth/challenge': () => this.handleChallenge(req),
       'POST /api/auth/login': () => this.handleLogin(req),
       'POST /api/auth/logout': () => session((r, uid) => this.handleLogout(r, uid)),
+      'POST /api/auth/nav': () =>
+        requireSession(this.sessionDeps, (_r, a) => navTicketResponse(this.deps, a.sid))(req),
       'POST /api/auth/passkey/register/options': () =>
         session((r, uid) => this.handlePasskeyRegisterOptions(r, uid)),
       'POST /api/auth/passkey/register/verify': () =>
@@ -418,7 +421,7 @@ export class AuthRoutes {
         user.id,
         challenge.entryNodeId,
         envelope.delegation,
-        now,
+        { now, popRequired: rec.pop === true },
         fail
       );
       logAuthLoginSuccessIfOk(issued, {
@@ -448,6 +451,7 @@ export class AuthRoutes {
     }
     const headers = new Headers({ 'content-type': 'application/json' });
     setHeaderPair(headers, SET_SESSION_HEADER, ';0');
+    clearNavTicket(headers);
     return jsonBody({ ok: true }, 200, headers);
   }
 
@@ -664,30 +668,20 @@ export class AuthRoutes {
     userId: string,
     viaNodeId: string,
     delegation: Delegation,
-    now: number,
+    at: { now: number; popRequired: boolean },
     fail: (code: string, status?: number) => Response
   ): Response {
-    let issued: { sid: string; expiresAt: number };
-    if (delegation.method === 'passkey') {
-      const credentialId = credentialIdBytes(delegation.credential_id);
-      if (!credentialId || credentialId.byteLength === 0) return fail('DELEGATION_BAD_SIGNATURE');
-      issued = this.deps.nodeSessionStore.issue({
-        userId,
-        viaNodeId,
-        sessPublicKey: delegation.sess_pk,
-        delegationMethod: 'passkey',
-        credentialId,
-        now,
-      });
-    } else {
-      issued = this.deps.nodeSessionStore.issue({
-        userId,
-        viaNodeId,
-        sessPublicKey: delegation.sess_pk,
-        delegationMethod: 'root',
-        now,
-      });
+    const { now, popRequired } = at;
+    const base = { userId, viaNodeId, sessPublicKey: delegation.sess_pk, now, popRequired };
+    const credentialId = credentialIdBytes(delegation.credential_id);
+    if (delegation.method === 'passkey' && !credentialId?.byteLength) {
+      return fail('DELEGATION_BAD_SIGNATURE');
     }
+    const issued = this.deps.nodeSessionStore.issue(
+      delegation.method === 'passkey' && credentialId
+        ? { ...base, delegationMethod: 'passkey', credentialId }
+        : { ...base, delegationMethod: 'root' }
+    );
     const maxAgeSec = Math.max(0, Math.floor((issued.expiresAt - now) / 1000));
     const headers = new Headers({ 'content-type': 'application/json' });
     setHeaderPair(

@@ -282,7 +282,7 @@ export class MeshRoutes {
   private handleUninstallStart(req: Request, nodeId: string): Promise<Response> {
     const auth = authenticateRequest(req, this.sessionDeps);
     if (!auth.ok || !auth.userId) {
-      return Promise.resolve(jsonError('UNAUTHORIZED', 401));
+      return Promise.resolve(jsonError((!auth.ok && auth.pop) || 'UNAUTHORIZED', 401));
     }
     return handleMeshNodeUninstall({
       req,
@@ -456,8 +456,12 @@ export class MeshRoutes {
   private handleMeshWsUpgrade(req: Request, server: MeshUpgradeServer): Response | undefined {
     const result = authenticateRequest(req, this.sessionDeps);
     if (!result.ok || !result.sid || !result.userId) {
-      const upgraded = server.upgrade(req, { data: { kind: MESH_REJECT_4401_KIND } });
-      return upgraded ? undefined : jsonError('UNAUTHORIZED', 401);
+      const pop = result.ok ? undefined : result.pop;
+      const data = pop
+        ? { kind: MESH_REJECT_4401_KIND, closeCode: WS_CLOSE_LOGIN_REQUIRED, closeReason: pop }
+        : { kind: MESH_REJECT_4401_KIND };
+      const upgraded = server.upgrade(req, { data });
+      return upgraded ? undefined : jsonError(pop ?? 'UNAUTHORIZED', 401);
     }
     const ok = server.upgrade(req, {
       data: { kind: MESH_WS_KIND, sid: result.sid, uid: result.userId, via: MESH_VIA_SELF },

@@ -5,7 +5,8 @@
 ## 1. 现有机制（比常规密码登录强）
 
 - **密码不出浏览器**：浏览器用 argon2id（64 MiB / 3 轮 / 1 lane）把密码派生成 Ed25519 根钥，签 challenge 登录；网关只存根公钥与 KDF 参数，没有密码哈希（`apps/fe/src/auth/session-login.ts`、`packages/shared/src/auth/root-key.ts`、`apps/gateway/src/mesh/auth-routes.ts`）。
-- **会话**：256-bit 随机不透明 SID，DB 记录，18 h 滑动 / 7 d 硬上限，可撤销，按节点绑定 `viaNodeId`；cookie `HttpOnly` + `SameSite=Lax`，HTTPS 下 `Secure`；WS 复用 cookie，URL 不带 token；改密/登出即失效全部会话。
+- **会话**：256-bit 随机不透明 SID，DB 记录，18 h 滑动 / 7 d 硬上限，可撤销，按节点绑定 `viaNodeId`；cookie `HttpOnly` + `SameSite=Lax`，HTTPS 下 `Secure`；WS 复用 cookie，URL 不带 sid；改密/登出即失效全部会话。
+- **会话持有证明（PoP）**：登录时声明 `pop: true` 的会话（`node_sessions.pop_required`），每个请求还要由会话私钥 `sk_sess` 签名（`x-vibeterm-pop`；WS 升级可用 `?pop=`；GET 也可用 10 分钟的导航票据 cookie `vibeterm_n_<nodeId>`），非安全方法的 nonce 120 s 内只认一次。只偷到 cookie / sid 无法使用会话；失败回 401 `POP_REQUIRED` / `POP_INVALID`（WS 4401 同名 reason），不等于登出。协议与入口转发规则见 [多节点架构 §2「会话持有证明（PoP）」](../architecture/mesh-architecture.md)。未声明的旧会话与访问令牌、分享凭证仍是 bearer 凭证。
 - **限流**：密码登录失败走 mesh 签名的 `login-policy`（缺省预设 `standard`：同一 IP 在 15 min 内 10 次失败则锁定，账号在滚动 1 小时内超过 50 次则暂停密码登录）。计数只在内存里，重启即清。TOTP 错码另有按 uid 的 5 次 / 15 min 桶，连续窗口指数锁定（最长 8 h）；已消费验证码按 `(uid, code, sess_pk)` 缓存 90 s，防止同一码换会话钥重放。挑战与 passkey options 仍是每 IP 60 次 / 60 s。细则见 §7。
 - **passkey**：严格 origin/RP 绑定；**mesh peer 端口（39001）**用节点证书 + 握手签名鉴权，与用户密码无关。
 - **文件 API**：目录根限定、路径穿越与符号链接逃逸有检查；Telegram/微信为轮询，无入站 webhook。
@@ -46,15 +47,17 @@
 
 经 Cloudflare Tunnel 或反向代理时，所有访客共享隧道 agent 的 socket IP：不解析转发头会让一人打满误伤全站，分布式撞库则绕过 IP 桶。
 
-`client-ip.ts` 的 `resolveClientIp({ socketIp, headers, trustProxy, clientIpHeader })` 是全进程唯一的「客户端是谁」解析：
+`client-ip.ts` 的 `resolveClientIp({ socketIp, headers, trustProxy, clientIpHeader, trustedProxyCidrs })` 是全进程唯一的「客户端是谁」解析：
 
-- `VIBETERM_TRUST_PROXY` 未开启，或套接字对端不是回环 / 内网（不是代理那一跳）：始终用 socket IP，忽略转发头。
-- 已开启且对端是回环 / 内网时，**只读一个头**，由 `VIBETERM_CLIENT_IP_HEADER` 决定（`x-forwarded-for` | `x-real-ip` | `cf-connecting-ip`，缺省 `x-forwarded-for`，其它值启动即报错）。其余转发头一律不看，不存在跨头回退。
-  - `x-forwarded-for` 取**最右一项**（受信代理追加的那一项；左侧由客户端自带、可伪造）。最右一项为空或不是合法字面量时不回退到更早的条目。
+- `VIBETERM_TRUST_PROXY` 未开启，或套接字对端既不是回环 / 内网 / CGNAT、也不在 `VIBETERM_TRUSTED_PROXY_CIDRS`（不是代理那一跳）：始终用 socket IP，忽略转发头。
+- 已开启且对端是受信代理那一跳时，**只读一个头**，由 `VIBETERM_CLIENT_IP_HEADER` 决定（`x-forwarded-for` | `x-real-ip` | `cf-connecting-ip`，缺省 `x-forwarded-for`，其它值启动即报错）。其余转发头一律不看，不存在跨头回退。
+  - `x-forwarded-for` 从**右往左**走，跳过本身也是受信跳（回环 / 内网 / CGNAT ∪ 配置 CIDR）的项，取第一个非受信合法字面量作为客户端。最右一项为空或不是合法字面量时不回退到更早的条目。
+  - `x-real-ip` / `cf-connecting-ip` 仍整段使用，不按逗号拆。
   - 配置的头缺失、但请求带了其它转发头，或值不合法：结果为未知（`undefined`），不退回代理自己的套接字地址。请求不带任何转发头（本机直连）时才用 socket IP。配置的头缺失而其它转发头存在时，进程对每种头组合打一行 `[client-ip]` 告警：这类访客共用 `unknown` 限流桶，应把 `VIBETERM_CLIENT_IP_HEADER` 改成代理实际发送的头。
+- `VIBETERM_TRUSTED_PROXY_CIDRS` 在配置加载时解析（逗号或空白分隔的 IPv4 / IPv6 CIDR，裸地址视为 `/32` 或 `/128`），非法项启动失败并点名该条目；缺省为空。它只扩大「谁是代理那一跳」，**不**让 `localClientClass` / bootstrap / 通行密钥豁免开始信任这些网段——那些判定永远只看套接字、永不读转发头。`X-Forwarded-Host` / `X-Forwarded-Proto` 只在同一受信跳上取**最右**一项。
 - `VIBETERM_TRUST_PROXY` 与 `VIBETERM_CLIENT_IP_HEADER` 由同一套写入规则维护（`apps/gateway/src/tunnel/trust-proxy-env.ts` `patchTrustProxyEnv`），隧道开关与 TLS 外部模式共用：隧道打开「信任代理」时写 `VIBETERM_CLIENT_IP_HEADER=cf-connecting-ip`（Cloudflare 边缘会覆写该头）；隧道关闭信任、或切到 TLS 外部模式（本机反代）时，只在该键等于 `cf-connecting-ip` 时删掉它回到缺省，用户自己设的其它值保留。隧道状态的「需要重启」同时比较这两个键。自建 nginx / Caddy 用缺省的 `x-forwarded-for` 即可；只在代理确实覆写 `X-Real-IP` 时才配 `x-real-ip`。同一实例既走隧道又走本机反代时两者都从回环进来、无法区分，`cf-connecting-ip` 会采信反代透传的同名头，这种组合应只保留一种入口。
 
-解析结果用于挑战限速、登录 IP 阶梯、分享登录限速、域名访问策略、审计和直连登录记录；缺失时限流桶键为 `unknown`。限流桶键统一经 `limiterIpKey`：IPv6 按 /64 归桶（同一前缀内轮换源地址不换桶），v4-mapped 还原成点分 IPv4。Cloudflare Tunnel / 反代后面**必须**打开 `VIBETERM_TRUST_PROXY`；不要在不可信跳数前开启。未开启时，登录 IP 阶梯不把经本机 / 内网反代来的访客挤进同一个套接字桶：带转发头的请求进 `proxied:<配置头里声称的地址>` 桶（可伪造，只做隔离；配置头缺失即 `proxied:unknown`）；公网套接字无论带什么头都按套接字计。写进登录记录和审计日志的仍是套接字地址。
+解析结果用于挑战限速、登录 IP 阶梯、分享登录限速、域名访问策略、审计和直连登录记录；缺失时限流桶键为 `unknown`。分享口令登录把 `unknown` 永远当作脏来源（见 [分享口令登录限流](./share-login.md)）。限流桶键统一经 `limiterIpKey`：IPv6 按 /64 归桶（同一前缀内轮换源地址不换桶），v4-mapped 还原成点分 IPv4。Cloudflare Tunnel / 反代后面**必须**打开 `VIBETERM_TRUST_PROXY`；不要在不可信跳数前开启。未开启时，登录 IP 阶梯不把经本机 / 内网反代来的访客挤进同一个套接字桶：带转发头的请求进 `proxied:<配置头里声称的地址>` 桶（可伪造，只做隔离；配置头缺失即 `proxied:unknown`）；公网套接字无论带什么头都按套接字计。写进登录记录和审计日志的仍是套接字地址。
 
 **转发登录**：入口 `forwarder` 会丢掉 `x-forwarded-*` / `CF-Connecting-IP`。入口只按真实客户端 IP 计登录阶梯，不计账号桶。目标节点看到的是 `peer:<入口>`，登录阶梯不按 IP 计，只按规范 uid 计账号软顶（用户名与 uid 共用这只桶）。TOTP 错码桶同样只按 uid（每节点一份内存表）。登录记录用的入口 IP 头见 §8，与这里的限流桶不是同一条规则。
 
@@ -127,7 +130,7 @@ WebAuthn 不允许 IP 字面量 origin（`http://127.0.0.1:9883`、`http://192.1
 - 请求不带任何经代理的迹象（§3 列出的九个头，空值也算）；
 - 请求 `Host` 是本机认得的名字（§3）。
 
-判定只看套接字，**永远不采信转发头里的地址**，与 `VIBETERM_TRUST_PROXY` 无关（`client-ip.ts` `localClientClass`，`isTrustedLocalClient`、`requestIsLoopback`、`loginIpExempt`、中继状态免密、setup 路由共用）。代价：经本机 / 局域网反代访问的浏览器不再享受豁免，需在反代域名上注册通行密钥。
+判定只看套接字，**永远不采信转发头里的地址**，与 `VIBETERM_TRUST_PROXY` / `VIBETERM_TRUSTED_PROXY_CIDRS` 无关（`client-ip.ts` `localClientClass`，`isTrustedLocalClient`、`requestIsLoopback`、`loginIpExempt`、中继状态免密、setup 路由共用）。额外 CIDR 不会把 CDN 对端当成本机。代价：经本机 / 局域网反代访问的浏览器不再享受豁免，需在反代域名上注册通行密钥。
 
 可信本地来源的密码登录不要求通行密钥断言；`GET /api/auth/mode` 返回 `passkeySecondFactor=false`、`passkeySecondFactorWaived=true`，`secondFactorPolicy` 在未开 TOTP 时为 `none`、开了 TOTP 时为 `totp`。密码、TOTP、限速照旧。通行密钥直接登录不受影响。
 

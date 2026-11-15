@@ -1,5 +1,5 @@
 import type { LinkSession, LinkStream, StreamCloseInfo } from '@vibeterm/shared/link';
-import type { OpenedWsStream } from './mesh-deps';
+import type { OpenedWsStream, WsStreamPop } from './mesh-deps';
 import { decodeTerminalStreamClose } from './stream-close-code';
 import { openWsStream } from './stream-targets';
 
@@ -107,7 +107,8 @@ export async function openAdaptedWsStream(
   link: LinkSession,
   auth: string,
   cid?: string,
-  share?: string
+  share?: string,
+  pop?: WsStreamPop
 ): Promise<OpenedWsStream> {
-  return adaptWsStream(await openWsStream(link, auth, cid, share));
+  return adaptWsStream(await openWsStream(link, auth, cid, share, pop));
 }

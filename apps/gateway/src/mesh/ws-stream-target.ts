@@ -1,14 +1,20 @@
 import { wsBorsh } from '@vibeterm/shared';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
+import { type WsPopResume, streamUpgradeEvidence, wsPopResume } from '../auth/session-pop';
 import type { WebSocketServer } from '../ws';
 import type { GatewaySession } from '../ws/gateway-session';
 import { encodeJsonBytes } from './ctl';
 import { LinkStreamCarrier } from './link-stream-carrier';
-import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
+import { WS_CLOSE_LOGIN_REQUIRED, type WsStreamPop } from './mesh-deps';
 import { debugLine, warnLine } from './mesh-log';
 import { sanitizeCid } from './mesh-session-registry';
 import { parseOpenPayload } from './peer-protocol';
-import { type StreamAuthContext, createStreamRecheck, verifyStreamAuth } from './stream-auth';
+import {
+  type StreamAuthContext,
+  type StreamPopCheck,
+  createStreamRecheck,
+  verifyStreamAuth,
+} from './stream-auth';
 import { decodeTerminalStreamClose, encodeTerminalStreamClose } from './stream-close-code';
 import type { WsStreamOpenPayload } from './types';
 
@@ -27,6 +33,8 @@ export type AcceptWsStreamOptions = StreamAuthContext & {
     auth: { sid: string; uid: string; via: string; cid?: string }
   ) => boolean | undefined;
   onGatewaySessionClose?: (session: GatewaySession, close?: GatewaySessionClose) => void;
+  /** 测试注入；缺省用进程级续接表。 */
+  popResume?: WsPopResume;
 };
 
 type AttachedStreamSession = ReturnType<WebSocketServer['attachStreamSession']>;
@@ -76,7 +84,8 @@ export async function acceptWsStream(
   const boundShareId = str(open.share).trim() || null;
   // cid 是浏览器给的：进日志与注册表键之前先净化，避免注入日志行或撑爆键空间。
   const cid = sanitizeCid(str(open.cid) || str(open.connectionId));
-  const verified = verifyStreamAuth(auth, '/ws', opts, boundShareId);
+  const pop = wsStreamPop(open, opts);
+  const verified = verifyStreamAuth(auth, '/ws', opts, boundShareId, pop.check);
   if (!verified.ok) {
     logAuthRejected(opts.peerNodeId, cid, verified.reason);
     stream.reset(authTeardownClose(verified.wsClose ?? verified.reason).reset);
@@ -105,7 +114,27 @@ export async function acceptWsStream(
     }
   }
   stream.onAbort(() => teardown('rst', 'peer-rst'));
-  await pumpWsStreamFrames(stream, attached, teardown, createStreamRecheck(auth, share, opts));
+  const releasePop = pop.attach(auth, verified.popProof);
+  try {
+    await pumpWsStreamFrames(stream, attached, teardown, createStreamRecheck(auth, share, opts));
+  } finally {
+    releasePop();
+  }
+}
+
+/** 升级证明的判定输入 + 流挂上后按这份证明登记续接窗口（入口 failover 重开流时复用）。 */
+function wsStreamPop(
+  open: Record<string, unknown>,
+  opts: AcceptWsStreamOptions
+): { check: StreamPopCheck; attach: (sid: string, proof?: string) => () => void } {
+  const resume: WsPopResume = opts.popResume ?? wsPopResume;
+  return {
+    check: {
+      evidence: streamUpgradeEvidence('/ws', open),
+      acceptResumed: (sid, proof) => resume.accepts(sid, proof, opts.now?.() ?? Date.now()),
+    },
+    attach: (sid, proof) => (proof ? resume.attach(sid, proof) : () => {}),
+  };
 }
 
 /**
@@ -188,7 +217,8 @@ export async function openWsStream(
   link: LinkSession,
   auth: string,
   cid?: string,
-  share?: string
+  share?: string,
+  pop?: WsStreamPop
 ): Promise<{
   stream: LinkStream;
   send: (bytes: Uint8Array) => Promise<void>;
@@ -200,6 +230,7 @@ export async function openWsStream(
     auth,
     ...(cid ? { cid } : {}),
     ...(share ? { share } : {}),
+    ...(pop ? { pop: pop.proof, popQuery: pop.query } : {}),
   };
   const stream = await link.openStream(encodeJsonBytes(payload));
   return {

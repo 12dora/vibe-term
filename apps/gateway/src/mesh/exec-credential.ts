@@ -4,6 +4,7 @@ import {
   readTokenCredentialSecret,
 } from '../auth/access-token-auth';
 import type { NodeSessionStore } from '../auth/node-session-store';
+import { type PopEvidence, evaluatePop } from '../auth/session-pop';
 import type { ExecSessionRef } from '../exec/channel/transport-types';
 import { parseShareAuth } from './share-credential';
 import { tokenClientIp } from './stream-token-auth';
@@ -16,6 +17,8 @@ export type ExecCredentialContext = {
   now?: () => number;
   /** 入口随 OPEN 带来的真实客户端 IP（令牌使用记录用）；缺省记为对端节点。 */
   clientIp?: string;
+  /** 浏览器 / CLI 升级时的会话持有证明（`pop_required` 会话必需）。 */
+  pop?: PopEvidence | null;
 };
 
 export type ExecCredentialResult =
@@ -35,11 +38,14 @@ export function verifyExecCredential(
     return verifyTokenCredential(credential, ctx);
   }
   if (parseShareAuth(credential)) return { ok: false, reason: 'share_forbidden' };
-  const result = ctx.sessionStore.verify(credential, {
-    viaNodeId: ctx.peerNodeId,
-    now: ctx.now?.() ?? Date.now(),
-  });
+  const now = ctx.now?.() ?? Date.now();
+  const result = ctx.sessionStore.verify(credential, { viaNodeId: ctx.peerNodeId, now });
   if (!result.ok) return { ok: false, reason: result.reason };
+  const pop = evaluatePop(result.session, ctx.pop, {
+    now,
+    navKey: () => ctx.sessionStore.navKey(),
+  });
+  if (pop) return { ok: false, reason: pop };
   return {
     ok: true,
     uid: result.session.userId,

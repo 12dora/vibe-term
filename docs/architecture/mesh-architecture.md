@@ -108,7 +108,7 @@ peer link 传输选择（自动，按序）：
 
 - **根钥（password key）**：`sk_root = Ed25519(seed)`。私钥只在内存，不落盘，不发送。所有机器存 `users.root_public_key` 与 `root_epoch`。存公钥与存密码哈希一样可被离线爆破弱口令，argon2id 参数取高；与常规密码哈希方案等价，不更差。
 - **passkey**：WebAuthn 凭证。RP ID 必须是域名（`localhost` 或 DNS 名），IP 地址 origin 不可用；每个 credential 绑定注册时的**精确 origin**（scheme+host+port）。注册仪式：entry 生成 registration options（challenge 随机 32 字节、`rpId` = 当前 host、`userHandle` = uid、要求 UV）→ `@simplewebauthn/browser` `startRegistration()` → entry 用 `@simplewebauthn/server` `verifyRegistrationResponse()`（`expectedOrigin` = 当前请求 origin，`expectedRPID` = host）→ 提取 `credentialId / publicKey(COSE) / counter / transports / backupEligible / backupState / deviceType` → 前端签 `add-passkey` 记录（payload = 上述提取结果 + `rp_id` + `origin`，由根钥签，或由**另一把已有 passkey** 对该条记录做专用 assertion）→ 广播。registration challenge 由 entry 落库、60 秒有效、原子消费。删除 passkey 同理签 `remove-passkey`。passkey 登录不需 TOTP。assertion 验证按 WebAuthn 完整流程（challenge、RP ID hash、origin、UP/UV、签名、credential 状态）；counter：记录值非零且新值不大于记录值时拒绝，记录值为零的 authenticator 不做 counter 判断。
-- **浏览器临时钥（session key）**：登录时浏览器生成一把内存 Ed25519 `sk_sess`，由根钥或 passkey 签发**授权**：`delegation = {domain:'tmex/delegation/v1', uid, sess_pk, issued_at, exp = issued_at + 18h, method:'root'|'passkey', credential_id?}`；根钥直接签；passkey 路径：entry 先给出 authentication options（`challenge = sha256(borsh(delegation))`、`rpId`、`allowCredentials`、`userVerification:'required'`），浏览器 `startAuthentication({optionsJSON})`，得到的 assertion（`clientDataJSON / authenticatorData / signature`）整体作为 `delegation_sig`。之后对每台 node 的登录挑战都由 `sk_sess` 签，只需**一次**密码输入或一次 passkey 交互。**`sk_sess` 只能用于登录，不能签任何 `user_key_log` 记录**；持久变更（加/删 passkey、TOTP、admit/revoke node、改密）一律要求根钥或 passkey 对该条记录做一次专用 assertion（UI 在这些操作时再要一次密码或 passkey）。`sk_sess` 的**私钥字节**在任何形态下都不出浏览器密钥库：环境支持 WebCrypto Ed25519 时它是一把不可导出的 `CryptoKey`，连同 `delegation` 存进 IndexedDB，在 18 小时 TTL 内跨 document 有效（见「会话钥的跨文档持久化（PWA 冷启动）」）；不支持时退回 `@noble` 原始私钥并只留内存、页面关闭即失。cookie 中的 `node-session` 让刷新页面不必重新登录。
+- **浏览器临时钥（session key）**：登录时浏览器生成一把内存 Ed25519 `sk_sess`，由根钥或 passkey 签发**授权**：`delegation = {domain:'tmex/delegation/v1', uid, sess_pk, issued_at, exp = issued_at + 18h, method:'root'|'passkey', credential_id?}`；根钥直接签；passkey 路径：entry 先给出 authentication options（`challenge = sha256(borsh(delegation))`、`rpId`、`allowCredentials`、`userVerification:'required'`），浏览器 `startAuthentication({optionsJSON})`，得到的 assertion（`clientDataJSON / authenticatorData / signature`）整体作为 `delegation_sig`。之后对每台 node 的登录挑战都由 `sk_sess` 签，只需**一次**密码输入或一次 passkey 交互。**`sk_sess` 只用于登录与会话持有证明（每个 HTTP / WS 请求的 PoP 签名，见「会话持有证明（PoP）」），不能签任何 `user_key_log` 记录**；持久变更（加/删 passkey、TOTP、admit/revoke node、改密）一律要求根钥或 passkey 对该条记录做一次专用 assertion（UI 在这些操作时再要一次密码或 passkey）。`sk_sess` 的**私钥字节**在任何形态下都不出浏览器密钥库：环境支持 WebCrypto Ed25519 时它是一把不可导出的 `CryptoKey`，连同 `delegation` 存进 IndexedDB，在 18 小时 TTL 内跨 document 有效（见「会话钥的跨文档持久化（PWA 冷启动）」）；不支持时退回 `@noble` 原始私钥并只留内存、页面关闭即失。cookie 中的 `node-session` 让刷新页面不必重新登录。
 - **密钥变更日志 `user_key_log`**：记录 = Borsh 编码的 `{domain:'tmex/keylog/v1', uid, seq: u64, prev_hash: [u8;32], root_epoch: u32, type, payload, signer:'root'|'passkey', credential_id?}`，`sig` 覆盖整条编码字节；`hash = sha256(记录字节 ‖ sig)`；数据库保存**原始 Borsh 字节与 sig**（`record_bytes`、`sig`），JSON 仅作只读投影。type 含 `add-passkey | remove-passkey | rotate-root | set-totp | clear-totp | admit-node | revoke-node | set-relays | meta-key | rename-node | readmit-node` 等。验签规则：记录外层 `root_epoch` = 应用它时的当前 epoch；`signer = root` 用当前 `root_public_key` 验，`signer = passkey` 用 `user_keys` 中该 credential 的公钥验 assertion（challenge = sha256(记录字节)）；`rotate-root` 由当前（即将成为旧）根钥签，payload 含新 `root_public_key`、新 `kdf_params`，应用后 `root_epoch += 1` 并切换验签钥，之后到达的记录必须带新 epoch。node 只接受 `seq = 本地 head + 1 && prev_hash = 本地 head hash` 的记录；遇到同一 `seq/prev_hash` 的两个不同后继即**硬失败**并在 UI 报「密钥日志分叉」，不由中继选胜者。中继只存 **K_log 密封后的日志块**（见 [公共中继角色](./relay.md)），不解、不验链；node 落后时向中继拉密封块或向任一 peer 拉取明文记录。
 - **根轮换 = 新安全 epoch**：`rotate-root` 应用后，各 node 撤销该 uid 全部 `node_sessions`，删除全部 `user_keys`（passkey 需重新注册），清空 TOTP（需重新设置）。密码改密流程在 UI 中明确提示「将注销所有设备上的 passkey 与 TOTP」。
 - **不依赖旧根钥的恢复（密码在失陷 entry 上泄露、攻击者抢先 `rotate-root` 时）**：在每台机器**本地**执行 `vibeterm mesh reset-root`（输入新密码 → 新根公钥、`root_epoch += 1`、清空 `user_keys` / TOTP / `node_sessions`、`user_key_log` 从一条本地生成的 `reset-root` 记录重新开始，并把本机证书重新自签 `admit-node`）；该命令只信任本机 root 权限（拥有机器 = 拥有该点，与威胁模型一致），不接受任何远程触发。恢复后各机器需重新 `relay join` 建立成员关系。这是灾难恢复路径，不是日常流程。
@@ -182,6 +182,37 @@ mesh_secrets        PK(kind, epoch), kind CHECK in ('log','meta'), key_enc, crea
 - 本 origin 的 XSS：能在页面存活期间用它签 login——这与现有 HttpOnly `vibeterm_s_*` cookie 属于同一暴露等级（XSS 本来就能带着 cookie 直接调 API），没有新增攻击面；它依然签不了任何 `user_key_log` 记录（那要根钥或 passkey 的专用 assertion）。
 - 设备失窃：攻击者拿到的是同一把 18 小时后自动失效的钥，与已签发的 `node-session` 上限一致。
 - node 侧验证完全不变：登录签名仍绑定 `target_pk` 与一次性 challenge，`node-session` 仍绑定 `via`，被偷的会话在别处依旧无法重放。
+
+### 会话持有证明（PoP）
+
+**目标**：只偷到 sid（浏览器 cookie `vibeterm_s_<nodeId>`、CLI `session.json` 里的 sid）而没有会话私钥时，会话不可用。复用登录时的 `sk_sess`，公钥就是 `node_sessions.sess_public_key`，不引入新密钥。访问令牌（`vtk_…`）与分享 cookie 不在范围内。
+
+**开启**：登录体带 `pop: true`（客户端能在会话全程持有私钥时才发）→ 该行 `pop_required = 1`（迁移 `0064_session_pop`）。未声明的会话行为与以前完全一致，旧客户端不受影响。
+
+**证明格式**：`x-vibeterm-pop: v1.<tsMs>.<nonce16>.<sig>`，签名覆盖 `vibeterm/pop/v1`、方法、目标路径、去掉 `pop` 参数的原始查询串、时间戳、nonce（`packages/shared/src/auth/session-pop.ts`）。目标路径是目标节点实际分发的路径：浏览器侧的 `/n/<nodeId>` / `/n/self` 前缀不参与签名。时间窗 ±60 s。
+
+**服务端判定**（`apps/gateway/src/auth/session-pop.ts`，本机 HTTP 中间件、令牌守卫的会话分支、`/ws`、`/mesh/ws`、exec WS 与 mesh 入站流共用一个判定）：
+
+| 请求 | 要求 |
+| --- | --- |
+| 非 GET / HEAD / OPTIONS | PoP 头有效；nonce 按 sid 在 120 s 内只认一次（进程内 LRU，上限 50 000 条） |
+| GET / HEAD | PoP 头有效（nonce 不记，入口的幂等重试能通过）或导航票据有效 |
+| WebSocket 升级 | `?pop=`（浏览器）或 PoP 头（CLI），目标为 `GET` + 升级路径 + 去掉 `pop` 的查询串；只在升级时证明，之后的周期复验只查 sid |
+
+失败统一 401 JSON：缺证明 `{ code: 'POP_REQUIRED' }`，证明无效 / 过期 / 重放 `{ code: 'POP_INVALID' }`；WS 以 4401 关闭，reason 为同名码。两者都不是登出：会话仍有效，客户端应重新签名（私钥丢失时才走重新登录）。登录 / challenge 等公开面、分享公开面、`/api/mesh-internal/*`、令牌请求与 standalone 开放模式不要求证明；公开面上证明失败按匿名处理。
+
+**导航票据**：`<img>`、`<video>`、下载链接、`window.open` 带不了请求头，改用票据。`POST /api/auth/nav`（需会话 + PoP 头）签发绑定 sid、10 分钟有效的票据：`b64url(exp_ms 8 字节大端 || HMAC-SHA256(navKey, sid || exp_ms))`；`navKey` 是每节点 32 字节随机数，首次使用时生成，存 `gateway_kv.session_nav_key`。本机响应 `Set-Cookie: vibeterm_n_self=…; HttpOnly; Path=/; SameSite=Lax; Max-Age=600`（https 加 `Secure`）；登出连同会话 cookie 一起清除。
+
+**经入口 A 访问节点 B**：
+
+- B 不读 cookie：B 的响应带内部头 `x-vibeterm-set-nav: <ticket>;<maxAgeSec>`，A 像 `x-vibeterm-set-session` 一样换成 `Set-Cookie: vibeterm_n_<B>` 并去掉该头；之后 A 把 `vibeterm_n_<B>` cookie 填进流请求头 `x-vibeterm-nav`。浏览器自带的 `x-vibeterm-nav` / `x-vibeterm-set-nav` 一律丢弃。
+- `x-vibeterm-pop` 原样转发，A 不验（没有 B 会话的公钥），B 在流入口 `authorizeHttpStream` / `verifyStreamAuth` 处、分发之前按 `rest` 路径验证。B 的 POP 401 原样透传给浏览器，不改写成 `NODE_LOGIN_REQUIRED`，也不清 cookie。
+- WS：A 把 `?pop=`（或 CLI 的头）与去掉 `pop` 的查询串放进 ws 流 OPEN（`pop` / `popQuery`），B 验签。入口切链路重开流时沿用这份证明：B 只在原流仍挂着或断开后 10 分钟内认它（`WsPopResume`）。exec 流同样带 `pop` / `popQuery`。
+- 服务端代发（升级、卸载、窗格授权等 `forwardAuthorizedHttp`）签不了浏览器的证明：A 只在本次请求的本机会话已验过 PoP 时，在流 OPEN 上标 `popEntry`，B 据此放行。该字段只由入口写入，浏览器碰不到；B 的会话又绑定了入口 `via`，其它节点无法冒用。
+
+**浏览器**：私钥是不可导出的 WebCrypto `CryptoKey`，存 IndexedDB 库 `vibeterm-auth-pop`（私钥 + 每节点 7 天硬过期），与 18 小时的 delegation 记录分开——delegation 过期只影响登录新节点，已签发的会话在硬过期前都能继续签名。只有私钥能持久化时才发 `pop: true`（`@noble` 内存回退不发）。每个 API 请求签一次（重试重签），WS 在打开前把证明写进 `pop` 查询参数；每 4 分钟（及登录、启动、标签页隐藏超过 4 分钟后回到前台）为每个 PoP 节点刷新导航票据，404 视为节点不支持并停止。登出或已无任何节点会话时删除私钥。
+
+**CLI**：`session.json`（0600）同时保存 `sessSk` / `sessPk`，HTTP 请求带 PoP 头，WS / exec 升级带 PoP 头；会话文件因此等同于完整凭证。
 
 ### node 注册（enrollment）与节点证书
 

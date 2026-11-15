@@ -1,5 +1,8 @@
+import { canonicalPopQuery } from '@vibeterm/shared/auth';
+import { NAV_TICKET_HEADER, POP_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import { DEFAULT_DIAL_RTT_MS } from '@vibeterm/shared/net';
+import { POP_ENTRY_PROVEN_HEADER, headerValue } from '../auth/session-pop';
 import { encodeJsonBytes } from './ctl';
 import {
   UploadStallError,
@@ -12,6 +15,7 @@ import { attachMeshPeerMarker } from './peer-request-marker';
 import {
   type StreamAuthContext,
   type StreamAuthOk,
+  type StreamPopCheck,
   authResponseHeaders,
   authorizeHttpStream,
 } from './stream-auth';
@@ -96,6 +100,55 @@ function httpDispatchContext(
   };
 }
 
+/** 目标节点按自己实际分发的路径与查询串验 PoP；导航票据由入口从 `vibeterm_n_<本节点>` cookie 换成头。 */
+function httpStreamPop(
+  open: Record<string, unknown>,
+  method: string,
+  url: URL,
+  headers: Record<string, string>
+): StreamPopCheck {
+  return {
+    evidence: {
+      target: {
+        method: method.toUpperCase(),
+        path: url.pathname,
+        query: canonicalPopQuery(url.search),
+      },
+      proof: headerValue(headers, POP_HEADER),
+      nav: headerValue(headers, NAV_TICKET_HEADER),
+      upgrade: false,
+      entryProven: open.popEntry === true,
+    },
+  };
+}
+
+/** 持有证明失败带 `code`（客户端据此区分「需重新签名」与「会话失效」），其余沿用 `{ error }`。 */
+function writeAuthFailure(stream: LinkStream, verified: { reason: string; pop?: string }) {
+  const body = verified.pop
+    ? { code: verified.pop, error: verified.pop }
+    : { error: verified.reason };
+  return writeHttpResponse(
+    stream,
+    401,
+    { 'content-type': 'application/json' },
+    JSON.stringify(body)
+  );
+}
+
+/** 入口出站：进程内的「已验 PoP」标记换成 OPEN 字段，不作为头上线路。 */
+function splitEntryProof(headers: Record<string, string> | undefined): {
+  headers: Record<string, string>;
+  popEntry: boolean;
+} {
+  const out: Record<string, string> = {};
+  let popEntry = false;
+  for (const [key, value] of Object.entries(headers ?? {})) {
+    if (key.toLowerCase() === POP_ENTRY_PROVEN_HEADER) popEntry = value === '1';
+    else out[key] = value;
+  }
+  return { headers: out, popEntry };
+}
+
 export async function acceptHttpStream(
   stream: LinkStream,
   opts: StreamAuthContext & { dispatchHttp: DispatchHttp }
@@ -122,16 +175,9 @@ export async function acceptHttpStream(
     );
     return;
   }
-  const verified = authorizeHttpStream(auth, method, url.pathname, opts, headers);
-  if (!verified.ok) {
-    await writeHttpResponse(
-      stream,
-      401,
-      { 'content-type': 'application/json' },
-      JSON.stringify({ error: verified.reason })
-    );
-    return;
-  }
+  const pop = httpStreamPop(open, method, url, headers);
+  const verified = authorizeHttpStream(auth, method, url.pathname, { ...opts, pop }, headers);
+  if (!verified.ok) return writeAuthFailure(stream, verified);
 
   const abort = new AbortController();
   const hasBody = method !== 'GET' && method !== 'HEAD';
@@ -289,10 +335,12 @@ export async function openHttpStream(
   signal?: AbortSignal,
   rttMs: number = DEFAULT_DIAL_RTT_MS
 ): Promise<Response> {
+  const split = splitEntryProof(openPayload.headers);
   const payload: HttpStreamOpenPayload = {
     type: 'http',
     ...openPayload,
-    headers: stripForwardedRequestHeaders(openPayload.headers),
+    headers: stripForwardedRequestHeaders(split.headers),
+    ...(split.popEntry ? { popEntry: true } : {}),
   };
   const stream = await link.openStream(encodeJsonBytes(payload));
   const rst = () => {

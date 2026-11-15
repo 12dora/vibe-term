@@ -89,6 +89,7 @@ export class ForwardWsPumps {
       auth: meta?.auth ?? ws.data.auth ?? '',
       cid: meta?.cid ?? ws.data.cid,
       ...(meta?.share ? { share: meta.share } : {}),
+      ...(meta?.pop ? { pop: meta.pop } : {}),
       stream: null,
       boundTransport: meta?.transport ?? null,
       replay: new StreamReplayState(),
