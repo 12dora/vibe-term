@@ -21,6 +21,7 @@ import {
   createPrivilegedRun,
   defaultResolveBin,
   isSudoAuthFailure,
+  probeNopasswd,
 } from './service-openrc-privilege';
 import type { ServiceDeps } from './service-types';
 
@@ -244,7 +245,8 @@ async function fixture(options: FixtureOptions = {}) {
     }
     if (name === 'rc-service') {
       const [svc, action] = args;
-      if (action === 'status') return running.has(svc) ? ok(' * status: started') : fail('', 3);
+      if (action === 'status')
+        return running.has(svc) ? ok(' * status: started') : fail(' * status: stopped', 3);
       if (action === 'stop') running.delete(svc);
       else running.add(svc);
       return ok();
@@ -609,7 +611,10 @@ describe('uninstallOpenrcService', () => {
   test('non-root with nothing left: no sudo prompt', async () => {
     const f = await fixture({ sudo: 'password' });
     await uninstallOpenrcService('vibeterm', f.installDir, f.deps);
-    expect(f.calls).toEqual(['/sbin/rc-update show default']);
+    expect(f.calls).toEqual([
+      '/sbin/rc-update show default',
+      'sudo -n -k /sbin/rc-service vibeterm status',
+    ]);
   });
 
   test('refuses to remove a script VibeTerm did not write', async () => {
@@ -667,5 +672,26 @@ describe('stop / restart / status', () => {
       autostartEnabled: true,
       detail: '* status: started',
     });
+  });
+});
+
+describe('probeNopasswd', () => {
+  const runWith = (result: RunCommandResult) => (async () => result) as unknown as Run;
+
+  test('rejects sudo refusals that are not password prompts', async () => {
+    const refused = fail('alice is not in the sudoers file.  This incident will be reported.');
+    expect(await probeNopasswd(runWith(refused), ['/sbin/rc-service', 'vibeterm', 'status'])).toBe(
+      false
+    );
+    expect(await probeNopasswd(runWith(fail('')), ['/sbin/rc-service', 'vibeterm', 'status'])).toBe(
+      false
+    );
+  });
+
+  test('accepts rc-service output, including a stopped service', async () => {
+    const stopped = fail(' * status: stopped', 3);
+    expect(await probeNopasswd(runWith(stopped), ['/sbin/rc-service', 'vibeterm', 'status'])).toBe(
+      true
+    );
   });
 });

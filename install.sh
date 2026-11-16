@@ -123,8 +123,12 @@ vibeterm_http_get_code() {
       hdr="${dest}.hdr"
       rc=0
       wget -S -O "$dest" --header "$VIBETERM_INSTALL_UA" -T 15 "$url" >"$hdr" 2>&1 || rc=$?
-      [ "$rc" -eq 0 ] || [ "$rc" -eq 8 ] || return 1
+      # GNU wget 对 HTTP 错误退出 8，busybox wget 退出 1；以响应头里的状态码为准，
+      # 只有 2xx 才要求 wget 本身成功（拦截响应体传输中断）。
       code="$(vibeterm_http_status_from_headers "$(cat "$hdr")")" || return 1
+      case "$code" in
+        2*) [ "$rc" -eq 0 ] || return 1 ;;
+      esac
       printf '%s' "$code"
       ;;
     *) return 1 ;;
@@ -209,6 +213,7 @@ vibeterm_install_bun_zip() {
   mv "${dest_dir}/bun-${target}/bun" "${dest_dir}/bun"
   chmod +x "${dest_dir}/bun"
   rm -rf "${dest_dir}/bun-${target}"
+  rm -f "$zip" "$sums"
   if [ "$own_tmp" -eq 1 ]; then
     rm -rf "$work"
   fi

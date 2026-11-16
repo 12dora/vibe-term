@@ -62,13 +62,23 @@ Linux 上进程 RSS 拆成两类页：
 
 ### 256 MB 主机
 
-本轮验收：Alpine 容器 `memory=256m`、无 swap，mesh node + 浏览器使用 + 登录 + 文件传输 + 升级不 OOM；空闲 gateway RSS 目标 ≤ 70 MB。small 档收的是峰值上限，不是启动常驻块。file-backed bun 页计入 RSS，但不随 JS 启动图膨胀。下列数字由实测回填：
+验收环境：Alpine 3.24 容器，`memory=256m`、无 swap，OpenRC 系统服务，musl 版 Bun 1.4。覆盖安装、终端大流量输出、300 MB 文件上传与下载、创建账号（Argon2id）、服务重启与网页重启，全程无 OOM。RSS 含约 46 MB 的 bun 二进制文件页（只读、可回收，与 JS 启动图无关），容量规划以 anon 为准。
 
-| 场景 | 读数 |
-|---|---|
-| 空闲 RSS / anon | <!-- MEASURE: idle RSS / RssAnon --> |
-| 登录峰值 | <!-- MEASURE: login peak --> |
-| 容器峰值 | <!-- MEASURE: container peak --> |
+| 场景 | gateway RSS / anon | 容器内存峰值 |
+|---|---:|---:|
+| 空闲（启动 30 秒后） | 83 / 36 MB | anon 37 MB |
+| 终端连续输出约 50 MB | 116 MB | anon 77 MB |
+| 上传 / 下载 300 MB 文件 | 141 MB | anon 99 MB（另有可回收页缓存） |
+| `vibeterm user add`（CLI 子进程 Argon2id 64 MiB） | 116 MB | anon 186 MB |
+| `vibeterm init` | — | anon 26 MB（CLI 进程约 70 MB） |
+
+同条件下改造前的空闲读数为 RSS 108 / anon 63 MB；`init` 曾因原生库解包时 `Uint8Array.from` 逐字节复制峰值达 270 MB，在 256 MB 主机上被 OOM 终止。
+
+注意事项：
+
+- 真实 256 MB VPS 还要扣除内核与系统服务（通常 30–50 MB）。创建账号、改密码这类一次性操作峰值最高，建议预留 zram 或小 swap。
+- 不要在启动路径新增大依赖的静态 import：常驻内存约为启动时求值 JS 体积的 6–9 倍，新代码请走按需加载并补 `packages/app/src/runtime/boot-graph.test.ts` 的守卫。
+- 字节拷贝一律用 `new Uint8Array(src)`，不要用 `Uint8Array.from(src)`：后者在 JSC 上逐元素迭代，9 MB 拷贝额外占用约 166 MB、耗时约 700 ms。
 
 2.4.2 当时（懒加载 + 分包、单台本地设备、无浏览器，`process.memoryUsage`）空闲 RSS 约为 standalone 153 / node 154 / relay 105 MB，堆约 17–29 MB。本轮启动图又砍掉 WebAuthn / X.509 / 全量 i18n / 未配置子系统 / zod，应以本表实测为准，不要再用那组数字做容量规划。
 

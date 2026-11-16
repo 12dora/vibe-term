@@ -215,7 +215,9 @@ async function removeRegistration(
   }
   const sudoers = sudoersPath(serviceName, options.deps);
   // 非 root 读不了 0750 的 sudoers.d；只在本次确实有注册残留时才去删，避免无谓的 sudo 提示。
-  const removeSudoers = runtime.isRoot ? await pathExists(sudoers) : content !== null || enabled;
+  const removeSudoers = runtime.isRoot
+    ? await pathExists(sudoers)
+    : content !== null || enabled || (await openrcControlReady(serviceName, options.deps));
   if (removeSudoers) await expectSuccess(runtime, [runtime.bin('rm'), '-f', sudoers]);
   if (content !== null) await expectSuccess(runtime, [runtime.bin('rm'), '-f', scriptPath]);
 }
@@ -235,6 +237,17 @@ async function removeLegacyRegistration(
     if (err instanceof OpenrcPrivilegeError) throw err;
     runtime.warn(`[service] ${errorMessage(err)}`);
   });
+}
+
+/** root 接管同名服务时，之前普通用户安装留下的免密规则不能继续生效。 */
+async function dropStaleSudoersAsRoot(
+  runtime: OpenrcRuntime,
+  serviceName: string,
+  deps?: ServiceDeps
+): Promise<void> {
+  if (!runtime.isRoot) return;
+  const sudoers = sudoersPath(serviceName, deps);
+  if (await pathExists(sudoers)) await expectSuccess(runtime, [runtime.bin('rm'), '-f', sudoers]);
 }
 
 /**
@@ -259,6 +272,7 @@ export async function installOpenrcService(
     await removeLegacyRegistration(runtime, options, deps);
     await writeInitScript(runtime, scriptPath, script, existing);
     if (!controlReady) await installSudoersRule(runtime, options.serviceName, deps);
+    await dropStaleSudoersAsRoot(runtime, options.serviceName, deps);
     await syncRunlevel(runtime, options.serviceName, options.autostart);
   } catch (err) {
     if (!(err instanceof OpenrcPrivilegeError) || existing === null) throw err;

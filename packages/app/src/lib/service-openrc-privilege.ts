@@ -10,8 +10,12 @@ export class OpenrcPrivilegeError extends Error {}
 // 固定 LC_ALL=C 后 sudo / sudo-rs 的认证失败文案（含 sudo-rs 的拒绝用语）。
 const SUDO_AUTH_FAILURES = [
   /(?:a password|interactive authentication|a terminal) is required|no tty present/i,
-  /is not allowed to (?:execute|run)|may not run sudo|I'm afraid I can't do that/i,
+  /is not allowed to (?:execute|run|authenticate)|is not in the sudoers file|may not run sudo/i,
+  /I'm afraid I can't do that|no new privileges|effective uid is not 0/i,
 ];
+
+// sudo 放行后 rc-service 自己的输出：status 对已停服务返回 3，不存在的服务报 does not exist。
+const RC_SERVICE_RAN = /\bstatus:|rc-service|does not exist/i;
 
 export function isSudoAuthFailure(result: RunCommandResult): boolean {
   return result.code !== 0 && SUDO_AUTH_FAILURES.some((pattern) => pattern.test(result.stderr));
@@ -55,14 +59,15 @@ async function runSudo(run: OpenrcRuntime['run'], argv: string[]): Promise<RunCo
 
 /**
  * 免密规则是否就绪：`-k` 忽略缓存的 sudo 凭据，避免刚交互输过密码时误判；
- * 只要不是认证失败（status 对已停服务返回 3 也算）即视为可用。
+ * 只有 rc-service 真正执行了（退出 0，或输出里能看到 rc-service 自己的状态文案）才算可用。
  */
 export async function probeNopasswd(run: OpenrcRuntime['run'], argv: string[]): Promise<boolean> {
   try {
     const result = await run('sudo', ['-n', '-k', ...argv], {
       env: { ...process.env, ...SUDO_ENV },
     });
-    return !isSudoAuthFailure(result);
+    if (isSudoAuthFailure(result)) return false;
+    return result.code === 0 || RC_SERVICE_RAN.test(`${result.stdout}\n${result.stderr}`);
   } catch {
     return false;
   }

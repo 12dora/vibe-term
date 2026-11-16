@@ -752,7 +752,7 @@ if [ -n "\${FAKE_WGET_CODE:-}" ]; then
     cp "\$FAKE_WGET_BODY" "\$out"
   fi
   [ "\$FAKE_WGET_CODE" = 200 ] && exit 0
-  exit 8
+  exit "\${FAKE_WGET_ERR_RC:-8}"
 fi
 echo "fake-wget: unexpected url \$url" >&2
 exit 1
@@ -820,7 +820,7 @@ exit 1
     expect(result.stdout).toBe('404');
   });
 
-  test('wget get_code uses -T 15 and only parses status when wget exits 0 or 8', () => {
+  test('wget get_code uses -T 15, trusts the header status and requires exit 0 only for 2xx', () => {
     const root = mkdtempSync(join(tmpdir(), 'vibeterm-http-code-rc-'));
     sandboxDirs.push(root);
     const bin = isolatedBin(root, ['sh', 'awk', 'cat', 'tr', 'cp']);
@@ -854,6 +854,17 @@ exit 1
     );
     expect(httpErr.status).toBe(0);
     expect(httpErr.stdout).toBe('503');
+
+    const busyboxErr = sourceEval(
+      `vibeterm_http_get_code https://example.test/SHA256SUMS ${JSON.stringify(dest)}`,
+      '',
+      {
+        ...eu,
+        env: { PATH: bin, FAKE_WGET_CODE: '404', FAKE_WGET_ERR_RC: '1', FAKE_WGET_BODY: body },
+      }
+    );
+    expect(busyboxErr.status).toBe(0);
+    expect(busyboxErr.stdout).toBe('404');
 
     const ok = sourceEval(
       `vibeterm_http_get_code https://example.test/SHA256SUMS ${JSON.stringify(dest)}`,

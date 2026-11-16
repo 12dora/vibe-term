@@ -33,47 +33,77 @@ function usable(value: string | null | undefined): value is string {
   return !!value && value !== 'unknown';
 }
 
-export function passwdEntryForUid(
-  content: string | null,
-  uid: number
-): { username: string; homedir: string; shell: string } | null {
-  if (!content || uid < 0) return null;
-  for (const line of content.split('\n')) {
-    const fields = line.split(':');
-    if (fields.length < 7 || Number(fields[2]) !== uid || !fields[0]) continue;
-    return { username: fields[0], homedir: fields[5] ?? '', shell: fields[6] ?? '' };
-  }
-  return null;
-}
+type PasswdEntry = { username: string; homedir: string; shell: string };
 
-/**
- * Bun 的 os.userInfo() 只从 $USER / $SHELL 取用户名与 shell，缺失时返回 "unknown"
- *（docker exec、cron、部分 sudo 场景）；此时按 uid 查 /etc/passwd 兜底。
- */
-function fillFromPasswd(account: OsAccount, readPasswd: () => string | null): OsAccount {
-  if (usable(account.username) && usable(account.shell)) return account;
-  const entry = passwdEntryForUid(readPasswd(), account.uid);
-  if (!entry) return account;
+function parsePasswdLine(raw: string): (PasswdEntry & { uid: number }) | null {
+  const line = raw.replace(/\r$/, '');
+  if (!line || line.startsWith('#')) return null;
+  const fields = line.split(':');
+  if (fields.length < 7 || !fields[0] || !/^\d+$/.test(fields[2] ?? '')) return null;
   return {
-    ...account,
-    username: usable(account.username) ? account.username : entry.username,
-    shell: usable(account.shell) ? account.shell : entry.shell || null,
-    homedir: account.homedir || entry.homedir,
+    username: fields[0],
+    uid: Number(fields[2]),
+    homedir: fields[5] ?? '',
+    shell: fields[6] ?? '',
   };
 }
 
-export function currentOsAccount(deps: OsAccountDeps = {}): OsAccount {
-  const info = (deps.userInfo ?? userInfo)();
-  const account = fillFromPasswd(
-    {
+export function passwdEntriesForUid(content: string | null, uid: number): PasswdEntry[] {
+  if (!content || uid < 0) return [];
+  const entries: PasswdEntry[] = [];
+  for (const raw of content.split('\n')) {
+    const parsed = parsePasswdLine(raw);
+    if (!parsed || parsed.uid !== uid) continue;
+    entries.push({ username: parsed.username, homedir: parsed.homedir, shell: parsed.shell });
+  }
+  return entries;
+}
+
+export function passwdEntryForUid(content: string | null, uid: number): PasswdEntry | null {
+  return passwdEntriesForUid(content, uid)[0] ?? null;
+}
+
+function safeUserInfo(deps: OsAccountDeps): OsAccount {
+  try {
+    const info = (deps.userInfo ?? userInfo)();
+    return {
       username: info.username,
       homedir: info.homedir,
       shell: info.shell,
       uid: info.uid,
       gid: info.gid,
-    },
-    deps.readPasswd ?? readEtcPasswd
-  );
+    };
+  } catch {
+    const env = deps.env ?? process.env;
+    return {
+      username: 'unknown',
+      homedir: env.HOME ?? '',
+      shell: env.SHELL ?? null,
+      uid: process.getuid?.() ?? -1,
+      gid: process.getgid?.() ?? -1,
+    };
+  }
+}
+
+/**
+ * Bun 的 os.userInfo() 只读 $USER / $SHELL：缺失时是 "unknown"，`su`（不带 -）或 `sudo -E`
+ * 后又是切换前的旧用户名。/etc/passwd 里有该 uid 的条目时以它为准（同 uid 别名保留原名）。
+ */
+function reconcileWithPasswd(account: OsAccount, readPasswd: () => string | null): OsAccount {
+  const entries = passwdEntriesForUid(readPasswd(), account.uid);
+  const primary = entries[0];
+  if (!primary) return account;
+  const nameMatches = entries.some((entry) => entry.username === account.username);
+  return {
+    ...account,
+    username: nameMatches ? account.username : primary.username,
+    shell: usable(account.shell) ? account.shell : primary.shell || null,
+    homedir: account.homedir || primary.homedir,
+  };
+}
+
+export function currentOsAccount(deps: OsAccountDeps = {}): OsAccount {
+  const account = reconcileWithPasswd(safeUserInfo(deps), deps.readPasswd ?? readEtcPasswd);
   const env = deps.env ?? process.env;
   const username = usable(account.username)
     ? account.username
