@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,10 +29,11 @@ function sourceEval(
   options?: { env?: NodeJS.ProcessEnv }
 ): { status: number; stdout: string; stderr: string } {
   const script = `${extra}
-source ${JSON.stringify(installSh)}
+VIBETERM_INSTALL_LIB=1
+. ${JSON.stringify(installSh)}
 ${fnCall}
 `;
-  const result = spawnSync('bash', ['-c', script], {
+  const result = spawnSync('sh', ['-c', script], {
     encoding: 'utf8',
     env: options?.env ? { ...process.env, ...options.env } : process.env,
   });
@@ -40,6 +42,30 @@ ${fnCall}
     stdout: result.stdout,
     stderr: result.stderr,
   };
+}
+
+function hostCmd(name: string): string | null {
+  const result = spawnSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' });
+  const resolved = (result.stdout ?? '').trim().split('\n').pop() ?? '';
+  return resolved && existsSync(resolved) ? resolved : null;
+}
+
+function isolatedBin(root: string, hostNames: string[]): string {
+  const bin = join(root, 'bin');
+  mkdirSync(bin, { recursive: true });
+  for (const name of hostNames) {
+    const dest = join(bin, name);
+    if (existsSync(dest)) continue;
+    const src = hostCmd(name);
+    if (src) {
+      try {
+        symlinkSync(src, dest);
+      } catch {
+        /* ignore colliding names */
+      }
+    }
+  }
+  return bin;
 }
 
 function sha256Hex(bytes: Uint8Array): string {
@@ -160,10 +186,11 @@ exit "\${FAKE_NODE_EXIT:-0}"
   );
 
   const script = `
-source ${JSON.stringify(installSh)}
+VIBETERM_INSTALL_LIB=1
+. ${JSON.stringify(installSh)}
 vibeterm_install "$@"
 `;
-  const result = spawnSync('bash', ['-c', script, '--', ...(opts.args ?? [])], {
+  const result = spawnSync('sh', ['-c', script, '--', ...(opts.args ?? [])], {
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -197,9 +224,17 @@ vibeterm_install "$@"
   };
 }
 
+const hasBusybox = spawnSync('sh', ['-c', 'command -v busybox'], { encoding: 'utf8' }).status === 0;
+
 describe('install.sh helpers', () => {
-  test('bash -n passes', () => {
-    const result = spawnSync('bash', ['-n', installSh], { encoding: 'utf8' });
+  test('sh -n passes', () => {
+    const result = spawnSync('sh', ['-n', installSh], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+  });
+
+  test.skipIf(!hasBusybox)('busybox sh -n passes', () => {
+    const result = spawnSync('busybox', ['sh', '-n', installSh], { encoding: 'utf8' });
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
   });
@@ -223,6 +258,15 @@ describe('install.sh helpers', () => {
     const empty = sourceEval('vibeterm_print_relay_turn_firewall_hint');
     expect(empty.status).toBe(0);
     expect(empty.stdout.trim()).toBe('');
+  });
+
+  test('running the script (not sourcing it) reaches the installer', () => {
+    const result = spawnSync('/bin/sh', [installSh], {
+      encoding: 'utf8',
+      env: { PATH: '/nonexistent', HOME: '/nonexistent' },
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('missing required command');
   });
 
   test('install.sh no longer references the GitHub REST API', () => {
@@ -569,5 +613,192 @@ describe('install.sh download checksum policy', () => {
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(/does not list|missing an entry/i);
     expect(result.tarCalled).toBe(false);
+  });
+});
+
+describe('vibeterm_bun_release_target', () => {
+  function target(
+    arch: string,
+    cpuinfo: string,
+    alpine: string,
+    muslGlob: string,
+    lddFile: string
+  ): { status: number; stdout: string } {
+    const args = [arch, cpuinfo, alpine, muslGlob, lddFile].map((value) => JSON.stringify(value));
+    const result = sourceEval(`vibeterm_bun_release_target ${args.join(' ')}`);
+    return { status: result.status, stdout: result.stdout.trim() };
+  }
+
+  test('selects musl and baseline suffixes from injectable paths', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-bun-target-'));
+    sandboxDirs.push(root);
+    const alpine = join(root, 'alpine-release');
+    const missing = join(root, 'missing');
+    const avx2 = join(root, 'cpu-avx2');
+    const noAvx = join(root, 'cpu-no-avx');
+    const gnu = join(root, 'ldd-gnu');
+    const muslLdd = join(root, 'ldd-musl');
+    const noGlob = join(root, 'no-ld-musl-*');
+    writeFileSync(alpine, '3.20.3\n');
+    writeFileSync(avx2, 'flags : fpu sse sse2 avx avx2\n');
+    writeFileSync(noAvx, 'flags : fpu sse sse2\n');
+    writeFileSync(gnu, 'ldd (GNU libc) 2.39\n');
+    writeFileSync(muslLdd, 'musl libc (x86_64)\nVersion 1.2.5\n');
+    writeFileSync(join(root, 'ld-musl-x86_64.so.1'), '');
+
+    expect(target('x86_64', noAvx, alpine, noGlob, gnu)).toEqual({
+      status: 0,
+      stdout: 'linux-x64-musl-baseline',
+    });
+    expect(target('x86_64', avx2, alpine, noGlob, gnu)).toEqual({
+      status: 0,
+      stdout: 'linux-x64-musl',
+    });
+    expect(target('x86_64', noAvx, missing, noGlob, gnu)).toEqual({
+      status: 0,
+      stdout: 'linux-x64-baseline',
+    });
+    expect(target('x86_64', avx2, missing, noGlob, gnu)).toEqual({
+      status: 0,
+      stdout: 'linux-x64',
+    });
+    expect(target('amd64', avx2, missing, noGlob, gnu).stdout).toBe('linux-x64');
+    expect(target('aarch64', avx2, alpine, noGlob, gnu)).toEqual({
+      status: 0,
+      stdout: 'linux-aarch64-musl',
+    });
+    expect(target('arm64', noAvx, missing, noGlob, gnu)).toEqual({
+      status: 0,
+      stdout: 'linux-aarch64',
+    });
+    expect(target('x86_64', avx2, missing, noGlob, muslLdd).stdout).toBe('linux-x64-musl');
+    expect(target('x86_64', avx2, missing, join(root, 'ld-musl-*'), gnu).stdout).toBe(
+      'linux-x64-musl'
+    );
+  });
+});
+
+describe('http client selection', () => {
+  const wgetStub = `#!/bin/sh
+out=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -O) out="$2"; shift 2 ;;
+    --header|-T|-H) shift 2 ;;
+    -q|-S|--spider|-s|-L|-f) shift ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if [ -n "\${FAKE_WGET_LOCATION:-}" ]; then
+  printf '  HTTP/1.1 302 Found\\n  Location: %s\\n' "\$FAKE_WGET_LOCATION" >&2
+  exit 0
+fi
+if [ -n "\${FAKE_WGET_CODE:-}" ]; then
+  printf '  HTTP/1.1 %s x\\n' "\$FAKE_WGET_CODE" >&2
+  if [ -n "\$out" ] && [ "\$out" != /dev/null ] && [ -n "\${FAKE_WGET_BODY:-}" ]; then
+    cp "\$FAKE_WGET_BODY" "\$out"
+  fi
+  [ "\$FAKE_WGET_CODE" = 200 ] && exit 0
+  exit 8
+fi
+echo "fake-wget: unexpected url \$url" >&2
+exit 1
+`;
+
+  test('prefers curl when both curl and wget exist', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-http-curl-'));
+    sandboxDirs.push(root);
+    const bin = isolatedBin(root, ['sh']);
+    writeExec(join(bin, 'curl'), '#!/bin/sh\nexit 0\n');
+    writeExec(join(bin, 'wget'), '#!/bin/sh\nexit 0\n');
+    const result = sourceEval('vibeterm_http_client', '', { env: { PATH: bin } });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('curl');
+  });
+
+  test('falls back to wget when curl is absent', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-http-wget-'));
+    sandboxDirs.push(root);
+    const bin = isolatedBin(root, ['sh']);
+    writeExec(join(bin, 'wget'), '#!/bin/sh\nexit 0\n');
+    const result = sourceEval('vibeterm_http_client', '', { env: { PATH: bin } });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('wget');
+  });
+
+  test('fails with a clear message when neither curl nor wget exists', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-http-none-'));
+    sandboxDirs.push(root);
+    const bin = isolatedBin(root, ['sh']);
+    const result = sourceEval('vibeterm_http_client', '', { env: { PATH: bin } });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/curl or wget/i);
+  });
+
+  test('wget latest-redirect reads the first Location from -S headers', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-http-loc-'));
+    sandboxDirs.push(root);
+    const bin = isolatedBin(root, ['sh', 'grep', 'head', 'tr']);
+    writeExec(join(bin, 'wget'), wgetStub);
+    const result = sourceEval('vibeterm_tag_from_latest_redirect', '', {
+      env: {
+        PATH: bin,
+        FAKE_WGET_LOCATION: 'https://github.com/12dora/vibe-term/releases/tag/v2.14.0',
+      },
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('v2.14.0');
+  });
+
+  test('wget get_code reads the last HTTP status from -S output', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-http-code-'));
+    sandboxDirs.push(root);
+    const bin = isolatedBin(root, ['sh', 'awk', 'cat', 'tr', 'cp']);
+    writeExec(join(bin, 'wget'), wgetStub);
+    const dest = join(root, 'body');
+    const body = join(root, 'sums');
+    writeFileSync(body, 'unused\n');
+    const result = sourceEval(
+      `vibeterm_http_get_code https://example.test/SHA256SUMS ${JSON.stringify(dest)}`,
+      '',
+      { env: { PATH: bin, FAKE_WGET_CODE: '404', FAKE_WGET_BODY: body } }
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('404');
+  });
+});
+
+describe('init tee path', () => {
+  test('preserves a non-zero init exit code without pipefail', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-init-tee-'));
+    sandboxDirs.push(root);
+    const bin = isolatedBin(root, ['sh', 'tee', 'cat', 'rm']);
+    writeExec(
+      join(bin, 'node'),
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo v22.11.0
+  exit 0
+fi
+echo init-output
+exit 7
+`
+    );
+    const pkg = join(root, 'pkg');
+    mkdirSync(join(pkg, 'bin'), { recursive: true });
+    writeFileSync(join(pkg, 'bin', 'vibeterm.js'), 'placeholder\n');
+    const log = join(root, 'init.log');
+    const result = sourceEval(`vibeterm_run_init ${JSON.stringify(pkg)}`, '', {
+      env: {
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        VIBETERM_INIT_LOG: log,
+        VIBETERM_INSTALL_TMP: root,
+      },
+    });
+    expect(result.status).toBe(7);
+    expect(result.stdout).toContain('init-output');
+    expect(readFileSync(log, 'utf8')).toContain('init-output');
   });
 });
