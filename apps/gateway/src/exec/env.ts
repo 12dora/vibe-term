@@ -1,4 +1,4 @@
-import { userInfo } from 'node:os';
+import { currentOsAccount } from '../../../../packages/shared/src/env/os-account';
 import { applyUtf8LocaleFallback, isVibeTermInjectedEnvKey } from '../tmux/local-shell-path';
 
 export function scrubbedBaseEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
@@ -37,7 +37,7 @@ export function buildChannelEnv(input: ChannelEnvInput): Record<string, string> 
 
 function applyUserIdentity(env: Record<string, string>): void {
   try {
-    const info = userInfo();
+    const info = currentOsAccount();
     env.HOME = info.homedir;
     env.USER = info.username;
     env.LOGNAME = info.username;

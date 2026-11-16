@@ -530,16 +530,16 @@ describe('WindowMemoryTracker', () => {
     const { clock, tracker, scripts, samples } = setup({ settings: { enabled: false } });
     tracker.start();
     await flush();
-    expect(scripts.filter((script) => script.includes('VTMEM'))).toHaveLength(1);
+    expect(scripts.filter((script) => script.includes('VTMEM_PANES'))).toHaveLength(1);
     expect(scripts.filter((script) => isOrphanSweepScript(script))).toHaveLength(1);
     expect(scripts.some((script) => script.includes('set-property'))).toBe(false);
     expect(samples).toHaveLength(1);
     const firstAt = tracker.getWindows()[0]?.sampledAt;
     await clock.advance(5_000);
-    expect(scripts.filter((script) => script.includes('VTMEM'))).toHaveLength(2);
+    expect(scripts.filter((script) => script.includes('VTMEM_PANES'))).toHaveLength(2);
     expect(tracker.getWindows()[0]?.sampledAt).toBeGreaterThan(firstAt ?? 0);
     await clock.advance(55_000);
-    expect(scripts.filter((script) => script.includes('VTMEM')).length).toBeGreaterThan(2);
+    expect(scripts.filter((script) => script.includes('VTMEM_PANES')).length).toBeGreaterThan(2);
   });
 
   test('enabled=false releases a matching triple once, then waits instead of rewriting every tick', async () => {

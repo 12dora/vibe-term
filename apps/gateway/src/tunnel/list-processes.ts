@@ -3,8 +3,10 @@ import { join } from 'node:path';
 
 export type ExternalProcess = { pid: number; command: string };
 
+export type SpawnPsResult = { text: string; exitCode: number };
+
 export type ListProcessesDeps = {
-  spawnPs?: (args: readonly string[]) => Promise<string>;
+  spawnPs?: (args: readonly string[]) => Promise<SpawnPsResult>;
   platform?: NodeJS.Platform;
   procRoot?: string;
 };
@@ -12,10 +14,9 @@ export type ListProcessesDeps = {
 const PS_TIMEOUT_MS = 2_000;
 
 export const PS_LIST_COMMANDS: readonly (readonly string[])[] = [
-  ['ps', '-Ao', 'pid=,command='],
-  ['ps', '-eo', 'pid=,command='],
-  ['ps', 'ax', '-o', 'pid=,command='],
-  ['ps', '-o', 'pid=,command='],
+  ['ps', '-Ao', 'pid=,args='],
+  ['ps', '-eo', 'pid=,args='],
+  ['ps', 'ax', '-o', 'pid=,args='],
 ];
 
 export function parsePsOutput(text: string): ExternalProcess[] {
@@ -40,15 +41,20 @@ export function psTableLooksValid(text: string): boolean {
   return parsePsOutput(text).some((row) => row.command.length > 0);
 }
 
-async function spawnPsText(args: readonly string[]): Promise<string> {
+function tableText(result: SpawnPsResult): string {
+  return result.exitCode === 0 ? result.text : '';
+}
+
+async function spawnPsText(args: readonly string[]): Promise<SpawnPsResult> {
   const proc = Bun.spawn([...args], { stdout: 'pipe', stderr: 'pipe' });
   const timer = setTimeout(() => proc.kill(), PS_TIMEOUT_MS);
   try {
     const text = await new Response(proc.stdout).text();
-    await proc.exited;
-    return text;
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) return { text: '', exitCode };
+    return { text, exitCode };
   } catch {
-    return '';
+    return { text: '', exitCode: 1 };
   } finally {
     clearTimeout(timer);
   }
@@ -81,16 +87,21 @@ async function listProcCmdlines(procRoot: string): Promise<ExternalProcess[]> {
   return out;
 }
 
+async function listLinuxProc(deps: ListProcessesDeps): Promise<ExternalProcess[] | null> {
+  if ((deps.platform ?? process.platform) !== 'linux') return null;
+  const procs = await listProcCmdlines(deps.procRoot ?? '/proc');
+  return procs.length > 0 ? procs : null;
+}
+
 export async function defaultListProcesses(
   deps: ListProcessesDeps = {}
 ): Promise<ExternalProcess[]> {
+  const fromProc = await listLinuxProc(deps);
+  if (fromProc) return fromProc;
   const spawn = deps.spawnPs ?? spawnPsText;
   for (const args of PS_LIST_COMMANDS) {
-    const text = await spawn(args);
+    const text = tableText(await spawn(args));
     if (psTableLooksValid(text)) return parsePsOutput(text);
-  }
-  if ((deps.platform ?? process.platform) === 'linux') {
-    return listProcCmdlines(deps.procRoot ?? '/proc');
   }
   return [];
 }

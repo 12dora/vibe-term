@@ -1,5 +1,6 @@
 import { constants, accessSync, statSync } from 'node:fs';
-import { homedir, userInfo } from 'node:os';
+import { homedir } from 'node:os';
+import { currentOsAccount } from '../../../../../packages/shared/src/env/os-account';
 import { resolveLocalDefaultShell } from '../../tmux/local-shell-path';
 import { ExecChannelError } from './errors';
 
@@ -16,7 +17,7 @@ const SFTP_SERVER_CANDIDATES = [
 export const shellProbe = {
   accountShell: (): string | null => {
     try {
-      return userInfo().shell || null;
+      return currentOsAccount().shell;
     } catch {
       return null;
     }

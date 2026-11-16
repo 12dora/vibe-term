@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { closeSync, openSync, readSync } from 'node:fs';
 
 declare global {
   namespace NodeJS {
@@ -111,21 +111,30 @@ export interface LibcDetectDeps {
   execLibcCommand?: () => string | null;
 }
 
-function defaultReadLdd(): string | null {
+const HEAD_BYTES = 2048;
+
+/** 只读文件头：/proc/self/exe 是整个 bun（约 80 MB），不能 readFileSync 全量读入。 */
+function readHead(path: string): Uint8Array | null {
+  let fd: number | null = null;
   try {
-    return readFileSync('/usr/bin/ldd', 'utf8').slice(0, 2048);
+    fd = openSync(path, 'r');
+    const buf = new Uint8Array(HEAD_BYTES);
+    const n = readSync(fd, buf, 0, HEAD_BYTES, 0);
+    return buf.subarray(0, n);
   } catch {
     return null;
+  } finally {
+    if (fd !== null) closeSync(fd);
   }
 }
 
+function defaultReadLdd(): string | null {
+  const head = readHead('/usr/bin/ldd');
+  return head ? new TextDecoder().decode(head) : null;
+}
+
 function defaultReadSelfExe(): Uint8Array | null {
-  try {
-    const fd = readFileSync('/proc/self/exe');
-    return fd.subarray(0, 2048);
-  } catch {
-    return null;
-  }
+  return readHead('/proc/self/exe');
 }
 
 function interpreterPath(elf: Uint8Array): string | null {
@@ -190,32 +199,48 @@ function familyFromLdd(content: string): 'gnu' | 'musl' | null {
   return null;
 }
 
+let cachedHostLibc: { value: 'gnu' | 'musl' | null } | null = null;
+
 export function detectLibcFamily(deps: LibcDetectDeps = {}): 'gnu' | 'musl' | null {
   const platform = deps.platform ?? process.platform;
   if (platform !== 'linux') return null;
+  const usesHostProbes =
+    !deps.readLdd && !deps.readSelfExe && !deps.getReport && !deps.execLibcCommand;
+  if (usesHostProbes && platform === process.platform) {
+    cachedHostLibc ??= { value: probeLibcFamily(deps) };
+    return cachedHostLibc.value;
+  }
+  return probeLibcFamily(deps);
+}
 
-  const readLdd = deps.readLdd ?? defaultReadLdd;
-  const fromLdd = familyFromLdd(readLdd() ?? '');
+function libcFromBinaries(deps: LibcDetectDeps): 'gnu' | 'musl' | null {
+  const fromLdd = familyFromLdd((deps.readLdd ?? defaultReadLdd)() ?? '');
   if (fromLdd) return fromLdd;
-
-  const readSelfExe = deps.readSelfExe ?? defaultReadSelfExe;
-  const interp = interpreterPath(readSelfExe() ?? new Uint8Array());
+  const interp = interpreterPath((deps.readSelfExe ?? defaultReadSelfExe)() ?? new Uint8Array());
   if (interp?.includes('/ld-musl-')) return 'musl';
   if (interp?.includes('/ld-linux-')) return 'gnu';
+  return null;
+}
 
+function libcFromReport(deps: LibcDetectDeps): 'gnu' | 'musl' | null {
   const report = (deps.getReport ?? defaultGetReport)();
   if (report?.header?.glibcVersionRuntime) return 'gnu';
-  if (
-    report?.sharedObjects?.some((item) => item.includes('libc.musl-') || item.includes('ld-musl-'))
-  ) {
-    return 'musl';
-  }
+  const objects = report?.sharedObjects ?? [];
+  return objects.some((item) => item.includes('libc.musl-') || item.includes('ld-musl-'))
+    ? 'musl'
+    : null;
+}
 
+function libcFromCommands(deps: LibcDetectDeps): 'gnu' | 'musl' | null {
   const commandOut = (deps.execLibcCommand ?? defaultExecLibcCommand)() ?? '';
   const [getconf, ldd1] = commandOut.split(/[\r\n]+/);
   if (getconf?.includes('glibc')) return 'gnu';
   if (ldd1?.includes('musl')) return 'musl';
   return null;
+}
+
+function probeLibcFamily(deps: LibcDetectDeps): 'gnu' | 'musl' | null {
+  return libcFromBinaries(deps) ?? libcFromReport(deps) ?? libcFromCommands(deps);
 }
 
 export function detectCurrentNativePin(
