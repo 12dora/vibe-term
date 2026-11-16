@@ -15,6 +15,7 @@ import {
   NATIVE_ADDON_FILENAME,
   NATIVE_DATACHANNEL_VERSION,
   type NativePin,
+  type NativePlatformId,
 } from '../lib/native-manifest';
 import { integrityOf, packNpmTarball } from '../lib/native-tarball';
 import type { ParsedArgs } from '../types';
@@ -40,10 +41,14 @@ async function makeInstallDir(): Promise<string> {
   return dir;
 }
 
-function fakePin(tarballUrl: string, integrity: string): NativePin {
+function fakePin(
+  tarballUrl: string,
+  integrity: string,
+  platformId: NativePlatformId = 'darwin-arm64'
+): NativePin {
   return {
-    platformId: 'darwin-arm64',
-    npmPackage: '@node-datachannel/darwin-arm64',
+    platformId,
+    npmPackage: `@node-datachannel/${platformId}`,
     version: NATIVE_DATACHANNEL_VERSION,
     tarballUrl,
     addonPath: `package/${NATIVE_ADDON_FILENAME}`,
@@ -189,6 +194,47 @@ describe('enableDirect / disableDirect', () => {
     }
     const layout = createInstallLayout(installDir);
     expect(await pathExists(nativeAddonPath(layout.nativeDir))).toBe(false);
+  });
+
+  test('skips with unsupported when linux libc cannot be detected', async () => {
+    const installDir = await makeInstallDir();
+    const result = await enableDirect({
+      installDir,
+      platform: 'linux',
+      arch: 'x64',
+      libc: null,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe('unsupported');
+      expect(result.unsupported).toBe(true);
+    }
+    expect(await pathExists(nativeAddonPath(createInstallLayout(installDir).nativeDir))).toBe(
+      false
+    );
+  });
+
+  test('linux musl pin writes addon under the shared .node name', async () => {
+    const installDir = await makeInstallDir();
+    const addon = Buffer.from('musl-addon-bytes');
+    const tarball = packNpmTarball({
+      'package/package.json': Buffer.from('{"name":"@node-datachannel/linux-x64-musl"}'),
+      [`package/${NATIVE_ADDON_FILENAME}`]: addon,
+    });
+    const result = await enableDirect({
+      installDir,
+      pin: fakePin('https://example.test/musl.tgz', integrityOf(tarball), 'linux-x64-musl'),
+      fetchImpl: async () => new Response(new Uint8Array(tarball)),
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.platformId).toBe('linux-x64-musl');
+    const layout = createInstallLayout(installDir);
+    const written = await readFile(nativeAddonPath(layout.nativeDir));
+    expect(Buffer.from(written).equals(addon)).toBe(true);
+    const manifest = JSON.parse(
+      await readFile(nativeManifestPath(layout.nativeDir), 'utf8')
+    ) as InstalledNativeManifest;
+    expect(manifest.platform).toBe('linux-x64-musl');
   });
 
   test('HTTP download failure is kind download and leaves no native/', async () => {

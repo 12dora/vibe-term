@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256Hex } from './artifacts-manifest';
 import { loadNodeDatachannel, nativeAddonPath, nativeManifestPath } from './native-datachannel';
+import { NATIVE_ADDON_FILENAME } from './native-manifest';
 
 const tempDirs: string[] = [];
 
@@ -19,6 +20,11 @@ async function makeNativeDir(): Promise<string> {
 }
 
 describe('loadNodeDatachannel', () => {
+  test('addon path uses the shared node_datachannel.node name', () => {
+    expect(NATIVE_ADDON_FILENAME).toBe('node_datachannel.node');
+    expect(nativeAddonPath('/tmp/native')).toBe(join('/tmp/native', NATIVE_ADDON_FILENAME));
+  });
+
   test('returns null when addon is missing', async () => {
     const nativeDir = await makeNativeDir();
     const reasons: string[] = [];

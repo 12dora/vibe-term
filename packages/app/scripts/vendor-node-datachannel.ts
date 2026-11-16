@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 /**
  * Regenerate packages/app/src/vendor/node-datachannel from the pinned
  * node-datachannel version (devDependency). The native loader is rewritten so
@@ -9,6 +9,12 @@ import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
  */
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
+import {
+  NATIVE_ADDON_FILENAME,
+  NATIVE_DATACHANNEL_VERSION,
+  NATIVE_PINS,
+  type NativePlatformId,
+} from '../src/lib/native-manifest';
 
 const PINNED_VERSION = '0.33.1';
 const pkgRoot = resolve(import.meta.dir, '..');
@@ -18,10 +24,40 @@ const appRequire = createRequire(join(pkgRoot, 'package.json'));
 
 const ndcPkgJsonPath = appRequire.resolve('node-datachannel/package.json');
 const ndcRoot = dirname(ndcPkgJsonPath);
-const ndcPkg = JSON.parse(readFileSync(ndcPkgJsonPath, 'utf8')) as { version?: string };
+const ndcPkg = JSON.parse(readFileSync(ndcPkgJsonPath, 'utf8')) as {
+  version?: string;
+  optionalDependencies?: Record<string, string>;
+};
 if (ndcPkg.version !== PINNED_VERSION) {
   throw new Error(`expected node-datachannel@${PINNED_VERSION}, found ${ndcPkg.version}`);
 }
+if (PINNED_VERSION !== NATIVE_DATACHANNEL_VERSION) {
+  throw new Error(
+    `[vendor-node-datachannel] pin ${PINNED_VERSION} != manifest ${NATIVE_DATACHANNEL_VERSION}`
+  );
+}
+
+function assertPinnedOptionalPlatforms(optionalDeps: Record<string, string> | undefined): void {
+  if (!optionalDeps) {
+    throw new Error('[vendor-node-datachannel] missing optionalDependencies');
+  }
+  const ids = Object.keys(NATIVE_PINS) as NativePlatformId[];
+  for (const id of ids) {
+    const pkg = NATIVE_PINS[id].npmPackage;
+    if (optionalDeps[pkg] !== PINNED_VERSION) {
+      throw new Error(
+        `[vendor-node-datachannel] missing optionalDependency ${pkg}@${PINNED_VERSION}`
+      );
+    }
+    const addon = join(ndcRoot, 'npm-artifacts', `package-${id}`, NATIVE_ADDON_FILENAME);
+    if (!existsSync(addon)) {
+      throw new Error(`[vendor-node-datachannel] missing prebuild ${addon}`);
+    }
+  }
+  console.log(`[vendor-node-datachannel] verified platforms: ${ids.join(', ')}`);
+}
+
+assertPinnedOptionalPlatforms(ndcPkg.optionalDependencies);
 
 const rewrittenLoader = `import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -244,7 +280,7 @@ writeFileSync(
 Apache License 2.0. Upstream: https://github.com/lovell/detect-libc
 
 VibeTerm vendors the family-detection logic (glibc vs musl) in
-\`packages/app/src/lib/native-manifest.ts\`. musl is unsupported in v1.
+\`packages/app/src/lib/native-manifest.ts\`, including linux-*-musl pins.
 `
 );
 

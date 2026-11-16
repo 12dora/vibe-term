@@ -15,7 +15,13 @@ export const NATIVE_DATACHANNEL_VERSION = '0.33.1';
 export const NATIVE_NAPI_VERSION = 8;
 export const NATIVE_ADDON_FILENAME = 'node_datachannel.node';
 
-export type NativePlatformId = 'darwin-arm64' | 'darwin-x64' | 'linux-x64-gnu' | 'linux-arm64-gnu';
+export type NativePlatformId =
+  | 'darwin-arm64'
+  | 'darwin-x64'
+  | 'linux-x64-gnu'
+  | 'linux-arm64-gnu'
+  | 'linux-x64-musl'
+  | 'linux-arm64-musl';
 export type NativeLibc = 'gnu' | 'glibc' | 'musl' | null;
 
 export interface NativePin {
@@ -57,12 +63,26 @@ export const NATIVE_PINS: Record<NativePlatformId, NativePin> = {
     'linux-arm64-gnu',
     'sha512-FriA+y9cKnr9shQaNz4AdqkaNb7yqBcj1U/OgAlLvJtY/mJLvRX7R3iic18aUA5BkMMK+wwqBI/0Al3brxdRAw=='
   ),
+  'linux-x64-musl': pin(
+    'linux-x64-musl',
+    'sha512-LSIdM/tpdwy8d+pN7Vj5Dd4kU3vtdh1PKzz8MYPEPKpv2If5gBydA9pvmGDldiyn07Ijj1TrIQhV+1ozGBm0dw=='
+  ),
+  'linux-arm64-musl': pin(
+    'linux-arm64-musl',
+    'sha512-MGtNFlIZ5b9sRBDFD3xS3oAhmAxJyEDrrhuUUEtR4Z4boSGOIzg0IiE5YQalmG7XgpMe0cxigBBTJitDczYyNQ=='
+  ),
 };
 
 export interface LookupNativePinInput {
   platform: NodeJS.Platform | string;
   arch: string;
   libc: NativeLibc;
+}
+
+function linuxLibcFamily(libc: NativeLibc): 'gnu' | 'musl' | null {
+  if (libc === 'gnu' || libc === 'glibc') return 'gnu';
+  if (libc === 'musl') return 'musl';
+  return null;
 }
 
 export function lookupNativePin(input: LookupNativePinInput): NativePin | null {
@@ -72,12 +92,11 @@ export function lookupNativePin(input: LookupNativePinInput): NativePin | null {
     if (arch === 'x64') return NATIVE_PINS['darwin-x64'];
     return null;
   }
-  if (platform === 'linux') {
-    if (input.libc === 'musl') return null;
-    if (arch === 'x64') return NATIVE_PINS['linux-x64-gnu'];
-    if (arch === 'arm64') return NATIVE_PINS['linux-arm64-gnu'];
-    return null;
-  }
+  if (platform !== 'linux') return null;
+  const family = linuxLibcFamily(input.libc);
+  if (!family) return null;
+  if (arch === 'x64') return NATIVE_PINS[`linux-x64-${family}`];
+  if (arch === 'arm64') return NATIVE_PINS[`linux-arm64-${family}`];
   return null;
 }
 

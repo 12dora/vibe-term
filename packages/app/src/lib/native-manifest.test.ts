@@ -6,6 +6,7 @@ import {
   NATIVE_NAPI_VERSION,
   NATIVE_PINS,
   type NativePlatformId,
+  detectCurrentNativePin,
   detectLibcFamily,
   lookupNativePin,
   verifyNpmIntegrity,
@@ -17,6 +18,8 @@ describe('NATIVE_PINS', () => {
     'darwin-x64',
     'linux-x64-gnu',
     'linux-arm64-gnu',
+    'linux-x64-musl',
+    'linux-arm64-musl',
   ];
 
   test('pins v1 platforms to node-datachannel 0.33.1 with N-API 8', () => {
@@ -35,6 +38,15 @@ describe('NATIVE_PINS', () => {
       );
     }
   });
+
+  test('linux musl pins use bun.lock sha512 integrity', () => {
+    expect(NATIVE_PINS['linux-x64-musl'].integrity).toBe(
+      'sha512-LSIdM/tpdwy8d+pN7Vj5Dd4kU3vtdh1PKzz8MYPEPKpv2If5gBydA9pvmGDldiyn07Ijj1TrIQhV+1ozGBm0dw=='
+    );
+    expect(NATIVE_PINS['linux-arm64-musl'].integrity).toBe(
+      'sha512-MGtNFlIZ5b9sRBDFD3xS3oAhmAxJyEDrrhuUUEtR4Z4boSGOIzg0IiE5YQalmG7XgpMe0cxigBBTJitDczYyNQ=='
+    );
+  });
 });
 
 describe('lookupNativePin', () => {
@@ -51,14 +63,24 @@ describe('lookupNativePin', () => {
     expect(lookupNativePin({ platform: 'linux', arch: 'arm64', libc: 'glibc' })?.platformId).toBe(
       'linux-arm64-gnu'
     );
-    expect(lookupNativePin({ platform: 'linux', arch: 'x64', libc: null })?.platformId).toBe(
-      'linux-x64-gnu'
-    );
   });
 
-  test('rejects musl and unsupported platforms', () => {
-    expect(lookupNativePin({ platform: 'linux', arch: 'x64', libc: 'musl' })).toBeNull();
-    expect(lookupNativePin({ platform: 'linux', arch: 'arm64', libc: 'musl' })).toBeNull();
+  test('resolves linux musl platforms', () => {
+    expect(lookupNativePin({ platform: 'linux', arch: 'x64', libc: 'musl' })?.platformId).toBe(
+      'linux-x64-musl'
+    );
+    expect(lookupNativePin({ platform: 'linux', arch: 'arm64', libc: 'musl' })?.platformId).toBe(
+      'linux-arm64-musl'
+    );
+    expect(
+      detectCurrentNativePin({ platform: 'linux', arch: 'x64', libc: 'musl' })?.platformId
+    ).toBe('linux-x64-musl');
+  });
+
+  test('rejects undetected linux libc and unsupported platforms', () => {
+    expect(lookupNativePin({ platform: 'linux', arch: 'x64', libc: null })).toBeNull();
+    expect(lookupNativePin({ platform: 'linux', arch: 'arm64', libc: null })).toBeNull();
+    expect(detectCurrentNativePin({ platform: 'linux', arch: 'x64', libc: null })).toBeNull();
     expect(lookupNativePin({ platform: 'win32', arch: 'x64', libc: null })).toBeNull();
     expect(lookupNativePin({ platform: 'linux', arch: 'ia32', libc: 'gnu' })).toBeNull();
     expect(lookupNativePin({ platform: 'android', arch: 'arm64', libc: null })).toBeNull();
