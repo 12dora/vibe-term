@@ -119,6 +119,14 @@ describe('「关于」卡的运行状态一句话', () => {
     );
     expect(render({ info: INFO })).not.toContain('当前为');
   });
+
+  test('服务管理器名称按类型显示，OpenRC 有专属文案，未知类型原样回退', () => {
+    const withDeployment = (deployment: string) =>
+      runtime(render({ info: { ...INFO, deployment: deployment as SystemInfo['deployment'] } }));
+    expect(withDeployment('systemd')).toContain('systemd（Linux）');
+    expect(withDeployment('openrc')).toContain('OpenRC（Linux）');
+    expect(withDeployment('runit')).toContain('runit');
+  });
 });
 
 describe('「关于」卡的出处', () => {

@@ -448,7 +448,7 @@
       "nodes": {
         "memory": {
           "title": "内存限额",
-          "description": "限制每个窗口内进程可用的内存。需要 Linux + systemd（tmux 3.6 及以上），其他宿主自动忽略。",
+          "description": "限制每个窗口内进程可用的内存。需要 systemd 用户会话（tmux 3.6 及以上），其他宿主自动忽略。",
           "modeLabel": "限额方式",
           "mode": {
             "unlimited": {
@@ -475,7 +475,7 @@
           "saveFailed": "内存限额保存失败：{{message}}",
           "saved": "内存限额已保存",
           "limitsUnsupported": "限额在这些设备上不会生效：{{devices}}",
-          "limitsUnsupportedHint": "按窗口限额需 Linux + systemd，且 tmux 3.6 及以上。",
+          "limitsUnsupportedHint": "按窗口限额需 systemd 用户会话（tmux 3.6 及以上）。",
           "notReleased": "设置为不限制，但仍有 {{count}} 个窗口带限额：{{windows}}",
           "staleSample": "{{count}} 个窗口的读数已过期（最后采样于 {{ago}}），无法确认限额是否已解除。"
         },
@@ -1203,6 +1203,7 @@
         "projectLine": "项目地址：<project>{{host}}</project>",
         "deploymentLaunchd": "launchd（macOS）",
         "deploymentSystemd": "systemd（Linux）",
+        "deploymentOpenrc": "OpenRC（Linux）",
         "checkUpdate": "检查更新",
         "checking": "检查中…",
         "upToDate": "已是最新版本。",
@@ -2774,7 +2775,7 @@
           "renewNow": "立即续期",
           "hints": {
             "http01": "公网 80 端口必须能访问到本机。NAT 时，请在路由器上设置端口转发。",
-            "http01Linux": "Linux 用户级 systemd 服务无法绑定 80 端口。请在路由器上设置转发，或改用 DNS-01。",
+            "http01Linux": "以普通用户运行的服务无法绑定 80 端口。请在路由器上设置转发，或改用 DNS-01。",
             "dns01": "域名的 DNS 必须托管在所选服务商，并提供可修改其记录的 API 密钥。"
           }
         },
@@ -2955,7 +2956,7 @@
         "selectionNone": "所选节点均不能改内存限额。",
         "bulkTitle": "批量设置内存限额",
         "bulkDescription": "把同一份设置写入所选节点。",
-        "bulkEffectHint": "写入的只是设置；限额是否生效取决于宿主（需 Linux + systemd，tmux 3.6 及以上）。",
+        "bulkEffectHint": "写入的只是设置；限额是否生效取决于宿主（需 systemd 用户会话，tmux 3.6 及以上）。",
         "chooseMode": "须先选择「不限制」或「自定义限额」。",
         "keepInterval": "各节点的采样周期保持不变。",
         "targets": "将写入（{{count}}）",

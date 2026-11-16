@@ -448,7 +448,7 @@
       "nodes": {
         "memory": {
           "title": "Memory limits",
-          "description": "Caps how much memory the processes in each window may use. Requires Linux with systemd (tmux 3.6 or newer); other hosts ignore it.",
+          "description": "Caps how much memory the processes in each window may use. Requires a systemd user session (tmux 3.6 or newer); other hosts ignore it.",
           "modeLabel": "Limit mode",
           "mode": {
             "unlimited": {
@@ -475,7 +475,7 @@
           "saveFailed": "Failed to save memory limits: {{message}}",
           "saved": "Memory limits saved",
           "limitsUnsupported": "Memory limits will not take effect on these devices: {{devices}}",
-          "limitsUnsupportedHint": "Per-window limits need Linux with systemd and tmux 3.6 or newer.",
+          "limitsUnsupportedHint": "Per-window limits need a systemd user session (tmux 3.6 or newer).",
           "notReleased": "Set to no limit, but {{count}} window(s) still have limits: {{windows}}",
           "staleSample": "Readings for {{count}} window(s) are out of date (last sampled {{ago}}); cannot confirm the limits were removed."
         },
@@ -1203,6 +1203,7 @@
         "projectLine": "Project: <project>{{host}}</project>",
         "deploymentLaunchd": "launchd (macOS)",
         "deploymentSystemd": "systemd (Linux)",
+        "deploymentOpenrc": "OpenRC (Linux)",
         "checkUpdate": "Check for updates",
         "checking": "Checking…",
         "upToDate": "You are on the latest version.",
@@ -2782,7 +2783,7 @@
           "renewNow": "Renew now",
           "hints": {
             "http01": "Public port 80 has to reach this machine. Behind NAT, set up port forwarding on your router.",
-            "http01Linux": "A user-level systemd service cannot bind port 80. Set up forwarding on the router, or use DNS-01.",
+            "http01Linux": "A service running as a regular user cannot bind port 80. Set up forwarding on the router, or use DNS-01.",
             "dns01": "The domain's DNS has to be hosted by the selected provider, with an API key that can edit its records."
           }
         },
@@ -2963,7 +2964,7 @@
         "selectionNone": "None of the selected nodes accept memory limits.",
         "bulkTitle": "Set Memory Limits",
         "bulkDescription": "Writes the same setting to the selected nodes.",
-        "bulkEffectHint": "This only writes the setting; whether the limits take effect depends on the host (Linux with systemd, tmux 3.6 or newer).",
+        "bulkEffectHint": "This only writes the setting; whether the limits take effect depends on the host (systemd user session, tmux 3.6 or newer).",
         "chooseMode": "Choose \"No Limit\" or \"Custom Limits\" first.",
         "keepInterval": "Each node keeps its current sampling interval.",
         "targets": "Will be written ({{count}})",

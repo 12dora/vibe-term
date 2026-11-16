@@ -30,6 +30,21 @@ export interface VersionTabModel {
   confirmUpgrade: () => void;
 }
 
+const DEPLOYMENT_LABEL_KEYS: Record<string, string> = {
+  launchd: 'settings.version.deploymentLaunchd',
+  systemd: 'settings.version.deploymentSystemd',
+  openrc: 'settings.version.deploymentOpenrc',
+};
+
+function formatDeployment(
+  deployment: SystemInfo['deployment'],
+  t: (key: string) => string
+): string | null {
+  if (deployment === 'none') return null;
+  const key = DEPLOYMENT_LABEL_KEYS[deployment];
+  return key ? t(key) : deployment;
+}
+
 export function useVersionTab(): VersionTabModel {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -122,11 +137,7 @@ export function useVersionTab(): VersionTabModel {
   const info = infoQuery.data;
   const update = updateQuery.data;
 
-  const deploymentLabel = (deployment: SystemInfo['deployment']): string | null => {
-    if (deployment === 'launchd') return t('settings.version.deploymentLaunchd');
-    if (deployment === 'systemd') return t('settings.version.deploymentSystemd');
-    return null;
-  };
+  const deploymentLabel = (deployment: SystemInfo['deployment']) => formatDeployment(deployment, t);
 
   const upgradeStateText =
     upgradeStatus?.state === 'downloading'
