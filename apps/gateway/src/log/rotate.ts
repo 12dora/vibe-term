@@ -7,9 +7,9 @@ import {
   unlinkSync,
   writeSync,
 } from 'node:fs';
-import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { format } from 'node:util';
+import { openLibc } from '../portmap/libc';
 
 export const DEFAULT_LOG_MAX_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_LOG_GENERATIONS = 3;
@@ -217,25 +217,12 @@ function posixDup2(fromFd: number, toFd: number): void {
 }
 
 function loadDup2(): ((fromFd: number, toFd: number) => void) | null {
-  try {
-    const require = createRequire(import.meta.url);
-    const { dlopen, FFIType } = require('bun:ffi') as {
-      dlopen: (
-        path: string,
-        symbols: Record<string, { args: unknown[]; returns: unknown }>
-      ) => { symbols: { dup2: (a: number, b: number) => number } };
-      FFIType: { i32: unknown };
-    };
-    const libPath = process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6';
-    const lib = dlopen(libPath, {
-      dup2: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
-    });
-    return (fromFd, toFd) => {
-      lib.symbols.dup2(fromFd, toFd);
-    };
-  } catch {
-    return null;
-  }
+  const libc = openLibc((t) => ({ dup2: { args: [t.i32, t.i32], returns: t.i32 } }));
+  const symbol = libc?.symbols.dup2;
+  if (!symbol) return null;
+  return (fromFd, toFd) => {
+    symbol(fromFd as never, toFd as never);
+  };
 }
 
 function chunkToString(chunk: unknown): string {

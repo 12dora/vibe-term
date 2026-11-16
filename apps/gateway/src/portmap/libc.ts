@@ -17,10 +17,14 @@ type FfiModule = {
   ptr: (view: ArrayBufferView) => number;
 };
 
-const CANDIDATES =
-  process.platform === 'darwin'
-    ? ['/usr/lib/libSystem.B.dylib']
-    : ['libc.so.6', 'libc.so', `libc.musl-${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}.so.1`];
+export function libcDlopenCandidates(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch
+): readonly string[] {
+  if (platform === 'darwin') return ['/usr/lib/libSystem.B.dylib'];
+  const muslArch = arch === 'arm64' ? 'aarch64' : 'x86_64';
+  return ['libc.so.6', 'libc.so', `libc.musl-${muslArch}.so.1`];
+}
 
 let ffi: FfiModule | null | undefined;
 
@@ -39,7 +43,7 @@ export function openLibc(build: (types: Record<string, unknown>) => LibcSignatur
   const mod = ffiModule();
   if (!mod) return null;
   const signature = build(mod.FFIType);
-  for (const path of CANDIDATES) {
+  for (const path of libcDlopenCandidates()) {
     try {
       return { symbols: mod.dlopen(path, signature).symbols, ptr: mod.ptr };
     } catch {

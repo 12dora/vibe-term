@@ -12,6 +12,34 @@ if ! command -v systemctl >/dev/null 2>&1; then
   printf '%s\\n' 'VTORPHAN 0 no-systemctl'
   exit 0
 fi
+PROC_FS="\${VTMEM_PROC_FS:-/proc}"
+read_ppid() {
+  _pid=$1
+  _stat=
+  if [ -r "$PROC_FS/$_pid/stat" ]; then
+    _stat=$(cat "$PROC_FS/$_pid/stat" 2>/dev/null) || _stat=
+  fi
+  if [ -n "$_stat" ]; then
+    _rest=\${_stat##*)}
+    set -- $_rest
+    printf '%s' "$2"
+    return
+  fi
+  ps -o ppid= -p "$_pid" 2>/dev/null | tr -d '[:space:]'
+}
+read_comm() {
+  _pid=$1
+  _stat=
+  if [ -r "$PROC_FS/$_pid/stat" ]; then
+    _stat=$(cat "$PROC_FS/$_pid/stat" 2>/dev/null) || _stat=
+  fi
+  if [ -n "$_stat" ]; then
+    _comm=\${_stat#*(}
+    printf '%s' "\${_comm%)*}"
+    return
+  fi
+  ps -o comm= -p "$_pid" 2>/dev/null | tr -d '[:space:]'
+}
 server_pid=
 while IFS= read -r pane_pid || [ -n "$pane_pid" ]; do
   [ -n "$pane_pid" ] || continue
@@ -19,9 +47,9 @@ while IFS= read -r pane_pid || [ -n "$pane_pid" ]; do
     *[!0-9]*) continue ;;
   esac
   [ "$pane_pid" -gt 0 ] || continue
-  ppid=$(ps -o ppid= -p "$pane_pid" 2>/dev/null | tr -d '[:space:]')
+  ppid=$(read_ppid "$pane_pid")
   [ -n "$ppid" ] || continue
-  comm=$(ps -o comm= -p "$ppid" 2>/dev/null | tr -d '[:space:]')
+  comm=$(read_comm "$ppid")
   case "$comm" in
     tmux|tmux:*|*/tmux) ;;
     *) continue ;;
@@ -86,7 +114,7 @@ tree_owns() {
     while [ "$_d" -lt 32 ]; do
       [ "$_walk" = "$server_pid" ] && return 0
       [ -z "$_walk" ] || [ "$_walk" = 0 ] || [ "$_walk" = 1 ] && break
-      _walk=$(ps -o ppid= -p "$_walk" 2>/dev/null | tr -d '[:space:]')
+      _walk=$(read_ppid "$_walk")
       _d=$((_d + 1))
     done
   done < "$_procs"

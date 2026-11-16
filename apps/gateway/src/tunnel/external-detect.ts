@@ -4,8 +4,10 @@ import { join } from 'node:path';
 import type { TunnelExternalAccessProbe, TunnelExternalStatus } from '@vibeterm/shared';
 import { errorMessage } from '@vibeterm/shared';
 import { normalizeTunnelHostname } from './hostname';
+import { type ExternalProcess, defaultListProcesses, parsePsOutput } from './list-processes';
 
-export type ExternalProcess = { pid: number; command: string };
+export type { ExternalProcess };
+export { defaultListProcesses, parsePsOutput };
 
 export type DetectedTunnel = TunnelExternalStatus & {
   pid: number | null;
@@ -87,30 +89,6 @@ export type ExternalDetectDeps = {
 const CACHE_MS = 30_000;
 const FIRST_WAIT_MS = 1_500;
 const MAX_LOG_SCAN_BYTES = 256 * 1024;
-export async function defaultListProcesses(): Promise<ExternalProcess[]> {
-  const proc = Bun.spawn(['ps', '-axo', 'pid=,command='], { stdout: 'pipe', stderr: 'pipe' });
-  const timer = setTimeout(() => proc.kill(), 2_000);
-  try {
-    const text = await new Response(proc.stdout).text();
-    await proc.exited;
-    return parsePsOutput(text);
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
-  }
-}
-export function parsePsOutput(text: string): ExternalProcess[] {
-  const out: ExternalProcess[] = [];
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const match = trimmed.match(/^(\d+)\s+(.*)$/);
-    if (!match) continue;
-    out.push({ pid: Number(match[1]), command: match[2] ?? '' });
-  }
-  return out;
-}
 
 type Candidate = {
   source: 'process' | 'launchd' | 'systemd' | 'config';

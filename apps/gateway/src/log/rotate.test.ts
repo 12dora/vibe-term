@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { libcDlopenCandidates, openLibc } from '../portmap/libc';
 import {
   DEFAULT_LOG_GENERATIONS,
   DEFAULT_LOG_MAX_BYTES,
@@ -232,5 +233,17 @@ describe('process log rotation config', () => {
   test('shared stdout/stderr path dup2s both fd 1 and fd 2 on rotate', () => {
     expect(processLogStdoutDupTargets(false)).toEqual([1]);
     expect(processLogStdoutDupTargets(true)).toEqual([1, 2]);
+  });
+
+  test('dup2 loading reuses musl-aware libc candidates and survives a failed dlopen', () => {
+    expect(libcDlopenCandidates('linux', 'x64')).toEqual([
+      'libc.so.6',
+      'libc.so',
+      'libc.musl-x86_64.so.1',
+    ]);
+    expect(libcDlopenCandidates('linux', 'arm64')).toContain('libc.musl-aarch64.so.1');
+    expect(() =>
+      openLibc((t) => ({ dup2: { args: [t.i32, t.i32], returns: t.i32 } }))
+    ).not.toThrow();
   });
 });

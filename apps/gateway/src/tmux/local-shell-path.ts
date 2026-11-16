@@ -98,9 +98,12 @@ function resolveDefaultShell(deps: LocalShellPathCacheDeps): string | null {
     return dsclShell;
   }
 
-  const fallbackShell = deps.platform === 'darwin' ? '/bin/zsh' : '/bin/bash';
-  if (deps.fileExists(fallbackShell)) {
-    return fallbackShell;
+  const fallbacks =
+    deps.platform === 'darwin' ? ['/bin/zsh'] : ['/bin/bash', '/bin/ash', '/bin/sh'];
+  for (const fallbackShell of fallbacks) {
+    if (deps.fileExists(fallbackShell)) {
+      return fallbackShell;
+    }
   }
 
   return null;

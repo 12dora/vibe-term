@@ -135,6 +135,121 @@ describe('local shell PATH cache', () => {
     ]);
   });
 
+  test('Linux uses $SHELL when the file exists', () => {
+    const probed: string[] = [];
+    const cache = createLocalShellPathCache({
+      platform: 'linux',
+      env: { SHELL: '/bin/ash', PATH: '/usr/bin:/bin' },
+      fileExists: (path) => path === '/bin/ash' || path === '/bin/bash',
+      runSync: (cmd) => {
+        probed.push(cmd[0] ?? '');
+        return {
+          exitCode: 0,
+          stdout: [
+            '__VIBETERM_SHELL_ENV_BEGIN__',
+            'PATH=/usr/bin:/bin',
+            '__VIBETERM_SHELL_ENV_END__',
+          ].join('\n'),
+          stderr: '',
+        };
+      },
+    });
+    expect(cache.prime()).toBe('/usr/bin:/bin');
+    expect([...new Set(probed)]).toEqual(['/bin/ash']);
+  });
+
+  test('Linux prefers /bin/bash over ash and sh', () => {
+    const probed: string[] = [];
+    const cache = createLocalShellPathCache({
+      platform: 'linux',
+      env: { PATH: '/usr/bin:/bin' },
+      fileExists: (path) => path === '/bin/bash' || path === '/bin/ash' || path === '/bin/sh',
+      runSync: (cmd) => {
+        probed.push(cmd[0] ?? '');
+        return {
+          exitCode: 0,
+          stdout: [
+            '__VIBETERM_SHELL_ENV_BEGIN__',
+            'PATH=/usr/bin:/bin',
+            '__VIBETERM_SHELL_ENV_END__',
+          ].join('\n'),
+          stderr: '',
+        };
+      },
+    });
+    expect(cache.prime()).toBe('/usr/bin:/bin');
+    expect([...new Set(probed)]).toEqual(['/bin/bash']);
+  });
+
+  test('Linux falls back through bash, ash, then sh', () => {
+    const probed: string[] = [];
+    const cache = createLocalShellPathCache({
+      platform: 'linux',
+      env: { PATH: '/usr/bin:/bin' },
+      fileExists: (path) => path === '/bin/ash',
+      runSync: (cmd) => {
+        probed.push(cmd[0] ?? '');
+        return {
+          exitCode: 0,
+          stdout: [
+            '__VIBETERM_SHELL_ENV_BEGIN__',
+            'PATH=/usr/bin:/bin',
+            '__VIBETERM_SHELL_ENV_END__',
+          ].join('\n'),
+          stderr: '',
+        };
+      },
+    });
+    expect(cache.prime()).toBe('/usr/bin:/bin');
+    expect([...new Set(probed)]).toEqual(['/bin/ash']);
+  });
+
+  test('Linux uses /bin/sh when bash and ash are missing', () => {
+    const probed: string[] = [];
+    const cache = createLocalShellPathCache({
+      platform: 'linux',
+      env: { PATH: '/usr/bin:/bin' },
+      fileExists: (path) => path === '/bin/sh',
+      runSync: (cmd) => {
+        probed.push(cmd[0] ?? '');
+        return {
+          exitCode: 0,
+          stdout: [
+            '__VIBETERM_SHELL_ENV_BEGIN__',
+            'PATH=/usr/bin:/bin',
+            '__VIBETERM_SHELL_ENV_END__',
+          ].join('\n'),
+          stderr: '',
+        };
+      },
+    });
+    expect(cache.prime()).toBe('/usr/bin:/bin');
+    expect([...new Set(probed)]).toEqual(['/bin/sh']);
+  });
+
+  test('macOS still falls back to /bin/zsh rather than ash', () => {
+    const probed: string[] = [];
+    const cache = createLocalShellPathCache({
+      platform: 'darwin',
+      env: { PATH: '/usr/bin:/bin' },
+      fileExists: (path) => path === '/bin/zsh' || path === '/bin/ash' || path === '/bin/sh',
+      runSync: (cmd) => {
+        probed.push(cmd[0] ?? '');
+        return {
+          exitCode: 0,
+          stdout: [
+            '__VIBETERM_SHELL_ENV_BEGIN__',
+            'PATH=/usr/bin:/bin',
+            '__VIBETERM_SHELL_ENV_END__',
+          ].join('\n'),
+          stderr: '',
+        };
+      },
+    });
+    expect(cache.prime()).toBe('/usr/bin:/bin');
+    expect([...new Set(probed)]).toEqual(['/bin/zsh']);
+  });
+
   test('Windows preserves the inherited PATH without starting a POSIX shell probe', () => {
     let runCount = 0;
     const cache = createLocalShellPathCache({
