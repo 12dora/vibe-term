@@ -100,10 +100,13 @@ export async function resolveInstallPlan(
   if (!command) {
     return reportMissingCommands(plan, resolved);
   }
-  if (!(await ensureSudoReady(command, options, resolved))) {
+  const sudoCommand = plan.commands.find((item) => item.requiresSudo) ?? command;
+  if (!(await ensureSudoReady(sudoCommand, options, resolved))) {
     return { ok: false };
   }
-  const fullCommand = resolveInstallCommand(command, resolved.uid);
+  const fullCommand = plan.commands
+    .map((item) => resolveInstallCommand(item, resolved.uid))
+    .join(' && ');
   vibeTermLog(resolved.log, t('deps.install.hint', { command: fullCommand }));
   return { ok: true, command, fullCommand };
 }

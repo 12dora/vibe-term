@@ -3,6 +3,7 @@ import {
   type DepName,
   type InstallCommand,
   isRootUid,
+  resolveInstallCommand,
 } from './dep-install-types';
 import {
   type DependencyInstallRunnerDeps,
@@ -28,15 +29,42 @@ export type {
 } from './dep-install-types';
 export { isRootUid, isSudoAvailable, resolveInstallCommand } from './dep-install-types';
 
-export function planBunInstall(): InstallCommand[] {
-  return [
-    {
-      label: 'Official installer',
-      command: 'curl -fsSL https://bun.sh/install | bash',
-      requiresSudo: false,
-      packageManager: 'curl',
-    },
-  ];
+const BUN_OFFICIAL_INSTALLER: InstallCommand = {
+  label: 'Official installer',
+  command: 'curl -fsSL https://bun.sh/install | bash',
+  requiresSudo: false,
+  packageManager: 'curl',
+};
+
+const BUN_APK_PREREQS: InstallCommand = {
+  label: 'apk',
+  command: 'apk add bash curl unzip libstdc++ libgcc',
+  requiresSudo: true,
+  packageManager: 'apk',
+};
+
+export interface PlanBunInstallDeps {
+  distro?: LinuxDistroInfo | null;
+  packageManager?: PackageManagerFamily;
+}
+
+export function planBunInstall(
+  platform: NodeJS.Platform = process.platform,
+  deps: PlanBunInstallDeps = {}
+): InstallCommand[] {
+  const family = deps.packageManager ?? detectPackageManager(deps.distro ?? null, platform);
+  if (family === 'apk') {
+    return [BUN_APK_PREREQS, BUN_OFFICIAL_INSTALLER];
+  }
+  return [BUN_OFFICIAL_INSTALLER];
+}
+
+export async function planBunInstallForHost(
+  platform: NodeJS.Platform = process.platform,
+  detectDistro: () => Promise<LinuxDistroInfo | null> = detectLinuxDistroDefault
+): Promise<InstallCommand[]> {
+  const distro = platform === 'linux' ? await detectDistro() : null;
+  return planBunInstall(platform, { distro });
 }
 
 const TMUX_INSTALL_COMMANDS: Record<PackageManagerFamily, InstallCommand | null> = {
@@ -94,9 +122,15 @@ export async function planTmuxInstall(
   return [];
 }
 
+function formatHint(commands: InstallCommand[]): string {
+  return commands
+    .map((command) => (command.requiresSudo ? `sudo ${command.command}` : command.command))
+    .join(' && ');
+}
+
 export function getInstallHint(dep: DepName, platform: NodeJS.Platform = process.platform): string {
   if (dep === 'bun') {
-    return 'curl -fsSL https://bun.sh/install | bash';
+    return BUN_OFFICIAL_INSTALLER.command;
   }
 
   if (platform === 'darwin') {
@@ -108,10 +142,15 @@ export function getInstallHint(dep: DepName, platform: NodeJS.Platform = process
 
 export async function getInstallHintAsync(
   dep: DepName,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  detectLinuxDistro: () => Promise<LinuxDistroInfo | null> = detectLinuxDistroDefault
 ): Promise<string> {
   if (dep === 'bun') {
-    return 'curl -fsSL https://bun.sh/install | bash';
+    if (platform === 'linux') {
+      const distro = await detectLinuxDistro();
+      return formatHint(planBunInstall(platform, { distro }));
+    }
+    return BUN_OFFICIAL_INSTALLER.command;
   }
 
   if (platform === 'darwin') {
@@ -119,12 +158,10 @@ export async function getInstallHintAsync(
   }
 
   if (platform === 'linux') {
-    const distro = await detectLinuxDistroDefault();
-    const pm = detectPackageManager(distro, platform);
-    const cmd = TMUX_INSTALL_COMMANDS[pm];
+    const distro = await detectLinuxDistro();
+    const cmd = TMUX_INSTALL_COMMANDS[detectPackageManager(distro, platform)];
     if (cmd) {
-      const prefix = cmd.requiresSudo ? 'sudo ' : '';
-      return `${prefix}${cmd.command}`;
+      return formatHint([cmd]);
     }
   }
 
@@ -143,6 +180,21 @@ export function isRoot(): boolean {
   return isRootUid(process.getuid?.());
 }
 
+async function runInstallCommands(
+  dep: DepName,
+  commands: InstallCommand[],
+  uid: number | undefined,
+  deps: DependencyInstallRunnerDeps
+): Promise<boolean> {
+  for (const command of commands) {
+    const fullCommand = resolveInstallCommand(command, uid);
+    if (!(await runInstallCommand(dep, fullCommand, deps))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export async function executeDependencyInstall(
   plan: DepInstallPlan,
   options: { nonInteractive: boolean; autoConfirm: boolean },
@@ -151,6 +203,7 @@ export async function executeDependencyInstall(
   const resolved = await resolveInstallPlan(plan, options, deps);
   if (!resolved.ok) return false;
   if (!(await confirmInstall(plan, options, deps))) return false;
-  if (!(await runInstallCommand(plan.dep, resolved.fullCommand, deps))) return false;
+  const uid = deps.uid ?? process.getuid?.();
+  if (!(await runInstallCommands(plan.dep, plan.commands, uid, deps))) return false;
   return verifyInstalledDependency(plan.dep, deps);
 }

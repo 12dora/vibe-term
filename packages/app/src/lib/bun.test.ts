@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   checkBunVersion,
   extractSanitizedLines,
+  hardCandidatePaths,
+  loginShellCandidates,
   sanitizeBunPath,
   selectPreferredBunPath,
   stripAnsiEscapes,
@@ -120,6 +122,36 @@ describe('selectPreferredBunPath', () => {
 
   test('falls back to the last line when none are absolute paths', () => {
     expect(selectPreferredBunPath(['1.3.11', '1.3.12'])).toBe('1.3.12');
+  });
+});
+
+describe('loginShellCandidates', () => {
+  test('tries zsh, bash, sh, and ash when SHELL is unset', () => {
+    expect(loginShellCandidates(undefined)).toEqual(['zsh', 'bash', 'sh', 'ash']);
+    expect(loginShellCandidates('')).toEqual(['zsh', 'bash', 'sh', 'ash']);
+  });
+
+  test('puts $SHELL first and still falls back to sh and ash', () => {
+    expect(loginShellCandidates('/bin/ash')).toEqual(['/bin/ash', 'zsh', 'bash', 'sh', 'ash']);
+    expect(loginShellCandidates('bash')).toEqual(['bash', 'zsh', 'sh', 'ash']);
+  });
+});
+
+describe('hardCandidatePaths', () => {
+  test('keeps existing install paths and adds the apk bun path', () => {
+    const paths = hardCandidatePaths('/home/alpine');
+    expect(paths).toEqual([
+      '/home/alpine/.bun/bin/bun',
+      '/opt/homebrew/bin/bun',
+      '/usr/local/bin/bun',
+      '/home/linuxbrew/.linuxbrew/bin/bun',
+      '/usr/bin/bun',
+    ]);
+  });
+
+  test('does not duplicate /usr/bin/bun', () => {
+    const paths = hardCandidatePaths('/usr');
+    expect(paths.filter((path) => path === '/usr/bin/bun')).toHaveLength(1);
   });
 });
 

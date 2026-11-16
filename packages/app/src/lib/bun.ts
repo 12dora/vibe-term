@@ -145,13 +145,34 @@ function isBunRuntime(): boolean {
   return typeof bunVersion === 'string' && bunVersion.length > 0;
 }
 
-function hardCandidatePaths(): string[] {
-  return [
-    join(homedir(), '.bun', 'bin', 'bun'),
+const LOGIN_SHELL_FALLBACKS = ['zsh', 'bash', 'sh', 'ash'] as const;
+const APK_BUN_PATH = '/usr/bin/bun';
+
+export function loginShellCandidates(envShell: string | undefined): string[] {
+  const shells: string[] = [];
+  const trimmed = envShell?.trim();
+  if (trimmed) {
+    shells.push(trimmed);
+  }
+  for (const fallback of LOGIN_SHELL_FALLBACKS) {
+    if (!shells.includes(fallback)) {
+      shells.push(fallback);
+    }
+  }
+  return shells;
+}
+
+export function hardCandidatePaths(home: string = homedir()): string[] {
+  const candidates = [
+    join(home, '.bun', 'bin', 'bun'),
     '/opt/homebrew/bin/bun',
     '/usr/local/bin/bun',
     '/home/linuxbrew/.linuxbrew/bin/bun',
   ];
+  if (!candidates.includes(APK_BUN_PATH)) {
+    candidates.push(APK_BUN_PATH);
+  }
+  return candidates;
 }
 
 async function locateBunFromShellWith(shell: string): Promise<string | null> {
@@ -171,22 +192,11 @@ async function locateBunFromShellWith(shell: string): Promise<string | null> {
 }
 
 /**
- * 通过登录交互式 shell 解析 bun 路径。依次尝试 $SHELL / zsh / bash，
- * 不再硬依赖 zsh（Linux 默认 bash 且常无 zsh）。输出经 sanitizeBunPath 净化并校验存在性。
+ * 通过登录交互式 shell 解析 bun 路径。依次尝试 $SHELL / zsh / bash / sh / ash，
+ * 覆盖 Alpine 默认 ash。输出经 sanitizeBunPath 净化并校验存在性。
  */
 async function locateBunFromShell(): Promise<string | null> {
-  const shells: string[] = [];
-  const envShell = process.env.SHELL?.trim();
-  if (envShell) {
-    shells.push(envShell);
-  }
-  for (const fallbackShell of ['zsh', 'bash']) {
-    if (!shells.includes(fallbackShell)) {
-      shells.push(fallbackShell);
-    }
-  }
-
-  for (const shell of shells) {
+  for (const shell of loginShellCandidates(process.env.SHELL)) {
     const found = await locateBunFromShellWith(shell);
     if (found) {
       return found;
@@ -199,7 +209,7 @@ async function locateBunFromShell(): Promise<string | null> {
  * 按优先级收集 bun 候选路径（不含显式路径，显式路径单独处理）：
  * #2 process.execPath（cli 被 bun 拉起，自更新链路）→ #3 meta →
  * #4 动态探测（登录 shell 解析 → 当前进程 PATH，反映用户实际环境）→
- * #5 硬编码常见安装路径（homebrew / linuxbrew / ~/.bun，仅作 fallback 兜底）。
+ * #5 硬编码常见安装路径（homebrew / linuxbrew / ~/.bun / apk，仅作 fallback 兜底）。
  * 所有候选统一过 sanitizeBunPath（对干净的系统路径幂等无害，统一防御外部来源污染）。
  */
 async function probeBunCandidates(metaBunPath?: string): Promise<string[]> {

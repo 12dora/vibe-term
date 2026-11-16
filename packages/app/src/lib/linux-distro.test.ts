@@ -60,6 +60,21 @@ VERSION_ID=3.19.0
     });
   });
 
+  test('parses postmarketOS os-release with ID_LIKE=alpine', () => {
+    const content = `NAME="postmarketOS"
+ID=postmarketos
+ID_LIKE=alpine
+VERSION_ID="24.12"
+`;
+    const result = parseOsRelease(content);
+    expect(result).toEqual({
+      id: 'postmarketos',
+      idLike: ['alpine'],
+      versionId: '24.12',
+      name: 'postmarketOS',
+    });
+  });
+
   test('parses openSUSE os-release', () => {
     const content = `NAME="openSUSE Tumbleweed"
 ID="opensuse-tumbleweed"
@@ -170,6 +185,11 @@ describe('detectPackageManager', () => {
 
   test('returns apk for alpine', () => {
     const distro: LinuxDistroInfo = { id: 'alpine', idLike: [] };
+    expect(detectPackageManager(distro, 'linux')).toBe('apk');
+  });
+
+  test('returns apk for alpine derivatives via ID_LIKE', () => {
+    const distro: LinuxDistroInfo = { id: 'postmarketos', idLike: ['alpine'] };
     expect(detectPackageManager(distro, 'linux')).toBe('apk');
   });
 
