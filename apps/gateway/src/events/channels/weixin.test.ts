@@ -2,12 +2,14 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import type { WebhookEvent } from '@vibeterm/shared';
 import { ensureSiteSettingsInitialized, updateSiteSettings } from '../../db';
 import { runMigrations } from '../../db/migrate';
+import { loadWeixinService } from '../../weixin/lazy';
 import { weixinService } from '../../weixin/service';
 import { weixinChannel } from './weixin';
 
-beforeAll(() => {
+beforeAll(async () => {
   runMigrations();
   ensureSiteSettingsInitialized();
+  await loadWeixinService();
 });
 
 function makeEvent(overrides: Partial<WebhookEvent> = {}): WebhookEvent {

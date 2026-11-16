@@ -29,9 +29,8 @@ import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import { guardEntryAccess } from '../../../../apps/gateway/src/tunnel/access-guard';
-import { tunnelManager } from '../../../../apps/gateway/src/tunnel/manager';
+import { configureTunnelManager } from '../../../../apps/gateway/src/tunnel/lazy';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
-import { disableDirect, enableDirect } from '../commands/direct';
 import { readEnvFileIfExists, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import type { LocalAuthContext } from '../lib/local-auth';
@@ -40,11 +39,11 @@ import { type VibeTermRoles, servesGatewayApp } from '../lib/roles';
 import { AcmeHttp01Challenge } from '../tls/acme-challenge';
 import { HttpsListener } from '../tls/https-listener';
 import { TlsService } from '../tls/tls-service';
+import { lazyDisableDirect, lazyEnableDirect, lazySetupRequest } from './assemble-lazy-handlers';
 import { relayHttp, relayOnlyGatewayHttp, relayOnlyNotFound } from './assemble-relay-http';
 import { type GatewayWsAuth, routeWebsocket } from './assemble-websocket';
 import { authFailure } from './http';
 import { type LocalRouteDeps, handleLocalRequest } from './local-routes';
-import { handleSetupRequest } from './setup-routes';
 import { resolveSetupEnvPath } from './setup-service';
 import { createTlsRoutes } from './tls-routes';
 
@@ -261,13 +260,15 @@ function buildTlsLifecycle(
     onStatusChange: hooks?.onStatusChange,
   });
   tlsSlot.service = tls;
-  tunnelManager.setPatchHostEnv(async (update) => {
-    const envPath = resolveSetupEnvPath();
-    await withEnvLock(async () => {
-      await writeEnvFile(envPath, update((await readEnvFileIfExists(envPath)) ?? {}));
+  configureTunnelManager(({ tunnelManager }) => {
+    tunnelManager.setPatchHostEnv(async (update) => {
+      const envPath = resolveSetupEnvPath();
+      await withEnvLock(async () => {
+        await writeEnvFile(envPath, update((await readEnvFileIfExists(envPath)) ?? {}));
+      });
     });
+    tunnelManager.setReadHostEnv(() => readEnvFileIfExists(resolveSetupEnvPath()));
   });
-  tunnelManager.setReadHostEnv(() => readEnvFileIfExists(resolveSetupEnvPath()));
   return {
     tls,
     httpsListener,
@@ -311,8 +312,8 @@ export function buildLocalRouteDeps(input: {
     precheckCaPem: async () => (await input.tlsSlot.service?.caPem()) ?? null,
     envPath: input.auth.envPath,
     installDir: input.auth.installDir,
-    enableDirect,
-    disableDirect,
+    enableDirect: lazyEnableDirect,
+    disableDirect: lazyDisableDirect,
     isDirectSupported: () => detectCurrentNativePin() != null,
     get rtcCapable() {
       return Boolean(input.mesh?.rtc?.available);
@@ -356,7 +357,7 @@ export function buildHttpAndWs(input: {
   const common: HttpHandler[] = [
     (req) => tlsHandler(req),
     (req) => handleLocalRequest(req, input.routeDeps),
-    (req) => handleSetupRequest(req, input.routeDeps),
+    (req) => lazySetupRequest(req, input.routeDeps),
     (req, server) => relayHttp(relay, req, server),
   ];
   const fetch = createHttpDispatch(

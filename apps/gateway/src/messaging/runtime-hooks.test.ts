@@ -3,7 +3,7 @@ import type { StateSnapshotPayload } from '@vibeterm/shared';
 import {
   AgentConfirmationAlreadyDecidedError,
   AgentConfirmationNotFoundError,
-} from '../agent/supervisor';
+} from '../agent/supervisor-errors';
 import { resetNodePauseForTests, setNodePaused } from '../mesh/node-pause';
 import {
   type MeshPresenceSource,

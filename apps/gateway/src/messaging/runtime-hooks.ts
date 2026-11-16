@@ -1,10 +1,11 @@
 import { type StateSnapshotPayload, isStandaloneRoles } from '@vibeterm/shared';
+import { peekAgentRuntime } from '../agent/lazy';
 import {
   AgentConfirmationAlreadyDecidedError,
   AgentConfirmationNotFoundError,
-  agentSupervisor,
-} from '../agent/supervisor';
+} from '../agent/supervisor-errors';
 import { config } from '../config';
+import { decideAgentConfirmation, getAgentConfirmationById } from '../db/agent';
 import { getSiteSettings } from '../db/site-settings';
 import { isPeerReachable } from '../mesh/address-class';
 import { pickMeshNodeName } from '../mesh/node-list-projection';
@@ -212,6 +213,24 @@ async function withDeviceRuntime<T>(
   }
 }
 
+/**
+ * supervisor 仅在有 running / waiting_confirmation 会话时开机加载，未加载即不存在待决确认；
+ * 此时只做与 supervisor 相同的落库判定（含错误类型），不为一条必然失败的决定拉起整个 agent 运行时。
+ */
+function resolveAgentConfirmation(confirmationId: string, approved: boolean, reason?: string) {
+  const loaded = peekAgentRuntime();
+  if (loaded) {
+    loaded.agentSupervisor.resolveConfirmation(confirmationId, approved, reason);
+    return;
+  }
+  if (!getAgentConfirmationById(confirmationId)) throw new AgentConfirmationNotFoundError();
+  const decided = decideAgentConfirmation(confirmationId, {
+    status: approved ? 'approved' : 'denied',
+    reason: reason ?? null,
+  });
+  if (!decided) throw new AgentConfirmationAlreadyDecidedError();
+}
+
 function mapConfirmationError(error: unknown): DecideConfirmationResult {
   if (error instanceof AgentConfirmationNotFoundError) return { ok: false, code: 'notFound' };
   if (error instanceof AgentConfirmationAlreadyDecidedError) {
@@ -305,7 +324,7 @@ export function createMessagingRuntimeHooks(
   const resolveConfirmation =
     overrides.resolveConfirmation ??
     ((confirmationId, approved, reason) => {
-      agentSupervisor.resolveConfirmation(confirmationId, approved, reason);
+      resolveAgentConfirmation(confirmationId, approved, reason);
     });
   const isStandalone = overrides.isStandalone ?? (() => isStandaloneRoles(config.roles));
   const loadIdentity = overrides.loadIdentity ?? loadLocalIdentity;

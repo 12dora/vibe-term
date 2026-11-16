@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { toBCP47 } from '@vibeterm/shared';
+import { toBCP47 } from '@vibeterm/shared/i18n/meta';
 import { encrypt } from '../crypto';
 import {
   approveTelegramChat,
@@ -14,7 +14,7 @@ import {
 } from '../db';
 import { t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
-import { telegramService } from '../telegram/service';
+import { loadTelegramService } from '../telegram/lazy';
 import type { ConfigFieldSpec, FieldParseResult } from './config-field';
 import { json } from './http';
 import {
@@ -23,6 +23,10 @@ import {
   parseRequiredTrimmed,
 } from './messaging-channel-routes';
 import { type ApiRoute, route } from './route';
+
+async function telegramService() {
+  return (await loadTelegramService()).telegramService;
+}
 
 function parseBotName(raw: unknown): FieldParseResult<string> {
   return parseRequiredTrimmed(raw, t('apiError.botNameRequired'));
@@ -90,7 +94,7 @@ async function persistTelegramCreate(
     updatedAt: now,
   });
   broadcastSettingsUpdate('telegram');
-  await telegramService.refresh();
+  await (await telegramService()).refresh();
   return {};
 }
 
@@ -101,13 +105,13 @@ async function persistTelegramUpdate(botId: string, draft: TelegramBotUpdateDraf
     ...(token !== undefined ? { tokenEnc: await encrypt(token) } : {}),
   });
   broadcastSettingsUpdate('telegram');
-  await telegramService.refresh();
+  await (await telegramService()).refresh();
 }
 
 async function persistTelegramDelete(botId: string): Promise<void> {
   deleteTelegramBot(botId);
   broadcastSettingsUpdate('telegram');
-  await telegramService.refresh();
+  await (await telegramService()).refresh();
 }
 
 async function afterApproveTelegram(
@@ -116,7 +120,7 @@ async function afterApproveTelegram(
 ): Promise<void> {
   broadcastSettingsUpdate('telegram');
   const settings = getSiteSettings();
-  await telegramService.sendTestMessage(
+  await (await telegramService()).sendTestMessage(
     parent.id,
     chatId,
     t('telegram.approveMessageTemplate', {
@@ -142,7 +146,7 @@ async function handleTestTelegramChat(botId: string, chatId: string): Promise<Re
     return json({ error: t('apiError.botNotFound') }, 404);
   }
   const settings = getSiteSettings();
-  await telegramService.sendTestMessage(
+  await (await telegramService()).sendTestMessage(
     botId,
     chatId,
     t('telegram.testMessageTemplate', {

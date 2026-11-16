@@ -28,7 +28,8 @@ import { loadAiSdk } from '../llm/ai-sdk-lazy';
 import { resolveLanguageModel } from '../llm/provider-registry';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { compileWatchPattern } from '../watch/evaluator';
-import { type WatchService, watchService } from '../watch/service';
+import { getWatchSamples, refreshWatchRule, removeWatchRule } from '../watch/lazy';
+import type { WatchService } from '../watch/service';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
 import { buildEffectiveWatchRule } from './watch-rule-config';
@@ -59,8 +60,14 @@ async function defaultCaptureScreen(deviceId: string, paneId: string): Promise<s
   }
 }
 
+const lazyWatchService: WatchApiDeps['service'] = {
+  refreshRule: refreshWatchRule,
+  removeRule: removeWatchRule,
+  getSamples: getWatchSamples,
+};
+
 const defaultDeps: WatchApiDeps = {
-  service: watchService,
+  service: lazyWatchService,
   captureScreen: defaultCaptureScreen,
   resolveModel: resolveLanguageModel,
   llmMaxRetries: 2,

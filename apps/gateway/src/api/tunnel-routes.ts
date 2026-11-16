@@ -4,7 +4,8 @@ import { isPeerInboundRequest } from '../mesh/peer-request-marker';
 import { parseAccessRules } from '../tunnel/access-rules';
 import { TunnelError, tunnelErrorFrom, tunnelHttpStatus } from '../tunnel/errors';
 import { normalizeTunnelHostname, normalizeTunnelName } from '../tunnel/hostname';
-import { type TunnelManager, tunnelManager } from '../tunnel/manager';
+import { ensureTunnelManager } from '../tunnel/lazy';
+import type { TunnelManager } from '../tunnel/manager';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, type ApiRouteContext, route } from './route';
 
@@ -171,7 +172,8 @@ function parseAction(body: Record<string, unknown>): TunnelActionRequest {
   }
 }
 
-export function createTunnelRoutes(manager: TunnelManager = tunnelManager): ApiRoute[] {
+export function createTunnelRoutes(injected?: TunnelManager): ApiRoute[] {
+  const resolve = async (): Promise<TunnelManager> => injected ?? ensureTunnelManager();
   return [
     route({
       method: 'GET',
@@ -179,6 +181,7 @@ export function createTunnelRoutes(manager: TunnelManager = tunnelManager): ApiR
       handler: async (req, _params, ctx) => {
         const blocked = rejectIfForwarded(req, ctx);
         if (blocked) return blocked;
+        const manager = await resolve();
         await manager.refreshExternal();
         await manager.ensureFreshConnector({ maxWaitMs: 800 });
         return json(manager.status());
@@ -199,6 +202,7 @@ export function createTunnelRoutes(manager: TunnelManager = tunnelManager): ApiR
         }
         try {
           const parsed = parseAction(raw);
+          const manager = await resolve();
           const result = await manager.handleAction(parsed);
           return json(result.payload, result.httpStatus);
         } catch (error) {

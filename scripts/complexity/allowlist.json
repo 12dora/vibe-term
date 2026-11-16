@@ -1379,10 +1379,6 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 15
   },
-  "apps/gateway/src/runtime.ts:startLiveGatewayServices": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13
-  },
   "apps/gateway/src/tunnel/external-detect.ts:probeExternalAccess": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 13

@@ -2,12 +2,14 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import type { WebhookEvent } from '@vibeterm/shared';
 import { ensureSiteSettingsInitialized, updateSiteSettings } from '../../db';
 import { runMigrations } from '../../db/migrate';
+import { loadTelegramService, resetTelegramLoadersForTests } from '../../telegram/lazy';
 import { telegramService } from '../../telegram/service';
 import { telegramChannel } from './telegram';
 
-beforeAll(() => {
+beforeAll(async () => {
   runMigrations();
   ensureSiteSettingsInitialized();
+  await loadTelegramService();
 });
 
 function makeEvent(overrides: Partial<WebhookEvent> = {}): WebhookEvent {
@@ -127,5 +129,21 @@ describe('TelegramChannel lifecycle event gating', () => {
       );
       expect(calls).toHaveLength(1);
     });
+  });
+});
+
+describe('TelegramChannel without a loaded service', () => {
+  test('sends nothing until the telegram service has been loaded', async () => {
+    resetTelegramLoadersForTests();
+    try {
+      await withMockSend(async (calls) => {
+        updateSiteSettings({ enableNotificationPush: true });
+        const event = makeEvent({ eventType: 'watch_triggered' });
+        await telegramChannel.notify('watch_triggered', event);
+        expect(calls).toHaveLength(0);
+      });
+    } finally {
+      await loadTelegramService();
+    }
   });
 });

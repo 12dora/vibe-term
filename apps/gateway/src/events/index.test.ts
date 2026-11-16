@@ -4,15 +4,19 @@ import type { Server } from 'bun';
 import { handleApiRequest } from '../api/index';
 import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
+import { loadTelegramService } from '../telegram/lazy';
 import { telegramService } from '../telegram/service';
+import { loadWeixinService } from '../weixin/lazy';
 import { weixinService } from '../weixin/service';
 import { registerEventNotifyBroadcaster } from './broadcaster';
 import type { NotificationChannel } from './channels/types';
 import { EventNotifier, THROTTLE_TTL_MS, eventNotifier } from './index';
 
-beforeAll(() => {
+beforeAll(async () => {
   runMigrations();
   ensureSiteSettingsInitialized();
+  await loadTelegramService();
+  await loadWeixinService();
 });
 
 function recordingChannel(id: string): {

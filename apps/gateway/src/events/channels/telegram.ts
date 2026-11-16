@@ -1,6 +1,6 @@
 import type { EventType, WebhookEvent } from '@vibeterm/shared';
 import { getSiteSettings } from '../../db';
-import { telegramService } from '../../telegram/service';
+import { peekTelegramService } from '../../telegram/lazy';
 import {
   buildBellRawView,
   buildConnectionErrorText,
@@ -30,6 +30,9 @@ export class TelegramChannel implements NotificationChannel {
     if (PUSH_CHANNEL_SKIPPED_LIFECYCLE_EVENTS.has(eventType)) {
       return;
     }
+    // 服务未加载即没有在跑的 bot / 账号，原本的发送也是空操作
+    const service = peekTelegramService()?.telegramService;
+    if (!service) return;
     const settings = getSiteSettings();
 
     if (eventType === 'terminal_bell') {
@@ -37,7 +40,7 @@ export class TelegramChannel implements NotificationChannel {
         return;
       }
       const bellMessage = this.formatTelegramBellMessage(event);
-      await telegramService.sendToAuthorizedChats({ text: bellMessage, parseMode: 'HTML' });
+      await service.sendToAuthorizedChats({ text: bellMessage, parseMode: 'HTML' });
       return;
     }
 
@@ -46,7 +49,7 @@ export class TelegramChannel implements NotificationChannel {
     }
 
     if (eventType === DEVICE_CONNECTION_ERROR_EVENT) {
-      await telegramService.sendToAuthorizedChats({
+      await service.sendToAuthorizedChats({
         text: escapeTelegramHtmlText(buildConnectionErrorText(event)),
         parseMode: 'HTML',
       });
@@ -54,7 +57,7 @@ export class TelegramChannel implements NotificationChannel {
     }
 
     if (isCredentialWarningEvent(event)) {
-      await telegramService.sendToAuthorizedChats({
+      await service.sendToAuthorizedChats({
         text: escapeTelegramHtmlText(buildCredentialWarningText(event)),
         parseMode: 'HTML',
       });
@@ -63,12 +66,12 @@ export class TelegramChannel implements NotificationChannel {
 
     if (eventType === 'terminal_notification') {
       const notificationMessage = this.formatTelegramNotificationMessage(event);
-      await telegramService.sendToAuthorizedChats({ text: notificationMessage, parseMode: 'HTML' });
+      await service.sendToAuthorizedChats({ text: notificationMessage, parseMode: 'HTML' });
       return;
     }
 
     const message = this.formatTelegramMessage(event, settings);
-    await telegramService.sendToAuthorizedChats({ text: message, parseMode: 'HTML' });
+    await service.sendToAuthorizedChats({ text: message, parseMode: 'HTML' });
   }
 
   private formatTelegramBellMessage(event: WebhookEvent): string {

@@ -1,13 +1,61 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { isRelayOnly, parseVibeTermRoles } from './config';
-import { getMessagingRuntimeHooks, resetMessagingRuntime } from './messaging/context';
-import { setMessagingMeshRuntime } from './messaging/runtime-hooks';
-import { shouldStartMessagingServices, startLiveGatewayServices } from './runtime';
+import {
+  type LiveStartGates,
+  liveServicesEnabled,
+  setLiveServicesEnabled,
+} from './live-start-gates';
+import { getMessagingRuntimeHooks } from './messaging/context';
+import { ensureMessagingHooks, resetMessagingHooksIfLoaded } from './messaging/lazy-hooks';
+import {
+  type LiveGatewayStartDeps,
+  shouldStartMessagingServices,
+  startLiveGatewayServices,
+} from './runtime';
 
 afterEach(() => {
-  resetMessagingRuntime();
-  setMessagingMeshRuntime(null);
+  resetMessagingHooksIfLoaded();
+  setLiveServicesEnabled(false);
 });
+
+function gates(open: boolean, overrides: Partial<LiveStartGates> = {}): LiveStartGates {
+  const value = () => open;
+  return {
+    telegram: value,
+    weixin: value,
+    agent: value,
+    watch: value,
+    tunnel: value,
+    portMaps: value,
+    ...overrides,
+  };
+}
+
+function recordingDeps(calls: string[], roles: string, open: boolean): LiveGatewayStartDeps {
+  const mark = (name: string) => async () => {
+    calls.push(name);
+  };
+  return {
+    roles: parseVibeTermRoles(roles),
+    startLag: () => {
+      calls.push('lag');
+    },
+    ensureLocale: mark('locale'),
+    refreshTelegram: mark('telegram-refresh'),
+    refreshWeixin: mark('weixin-refresh'),
+    startPush: mark('push'),
+    startAgent: mark('agent'),
+    startWatch: mark('watch'),
+    startTunnel: mark('tunnel'),
+    loadTunnel: mark('tunnel-load'),
+    startExportSweeper: () => {
+      calls.push('export-sweeper');
+    },
+    startPortMaps: mark('portmaps'),
+    sendOnline: mark('online'),
+    gates: gates(open),
+  };
+}
 
 describe('relay-only messaging gate', () => {
   test('isRelayOnly is true only for pure relay', () => {
@@ -25,130 +73,82 @@ describe('relay-only messaging gate', () => {
     expect(shouldStartMessagingServices(parseVibeTermRoles(undefined))).toBe(true);
   });
 
-  test('startLiveGatewayServices skips telegram/weixin/watch/online/push/agent/tunnel on relay-only', async () => {
-    const calls: string[] = [];
-    const mark = (name: string) => async () => {
-      calls.push(name);
-    };
-    await startLiveGatewayServices({
-      roles: parseVibeTermRoles('relay'),
-      startLag: () => {
-        calls.push('lag');
-      },
-      refreshTelegram: mark('telegram-refresh'),
-      refreshWeixin: mark('weixin-refresh'),
-      startPush: mark('push'),
-      startAgent: mark('agent'),
-      startWatch: mark('watch'),
-      startTunnel: mark('tunnel'),
-      sendOnline: mark('online'),
-    });
-    expect(calls).toEqual(['lag']);
+  test('relay-only starts nothing and only loads the tunnel when configured', async () => {
+    const idle: string[] = [];
+    await startLiveGatewayServices(recordingDeps(idle, 'relay', false));
+    expect(idle).toEqual(['lag']);
+    expect(liveServicesEnabled()).toBe(false);
+
+    const configured: string[] = [];
+    await startLiveGatewayServices(recordingDeps(configured, 'relay', true));
+    expect(configured).toEqual(['lag', 'tunnel-load']);
   });
 
-  test('startLiveGatewayServices starts messaging on node/relay,node roles', async () => {
+  test('configured node starts every subsystem in the original order', async () => {
     const calls: string[] = [];
-    const mark = (name: string) => async () => {
-      calls.push(name);
-    };
-    await startLiveGatewayServices({
-      roles: parseVibeTermRoles('node'),
-      startLag: () => {
-        calls.push('lag');
-      },
-      refreshTelegram: mark('telegram-refresh'),
-      refreshWeixin: mark('weixin-refresh'),
-      startPush: mark('push'),
-      startAgent: mark('agent'),
-      startWatch: mark('watch'),
-      startTunnel: mark('tunnel'),
-      sendOnline: mark('online'),
-    });
+    await startLiveGatewayServices(recordingDeps(calls, 'node', true));
     expect(calls).toEqual([
       'lag',
+      'locale',
       'telegram-refresh',
       'weixin-refresh',
       'push',
       'agent',
       'watch',
       'tunnel',
+      'export-sweeper',
+      'portmaps',
+      'online',
+    ]);
+    expect(liveServicesEnabled()).toBe(true);
+  });
+
+  test('unconfigured node keeps only push, export sweeper and online', async () => {
+    const calls: string[] = [];
+    await startLiveGatewayServices(recordingDeps(calls, 'node', false));
+    expect(calls).toEqual(['lag', 'locale', 'push', 'export-sweeper', 'online']);
+    expect(liveServicesEnabled()).toBe(true);
+  });
+
+  test('each gate controls only its own subsystem', async () => {
+    const calls: string[] = [];
+    const deps = recordingDeps(calls, 'relay,node', false);
+    deps.gates = gates(false, { watch: () => true, portMaps: () => true });
+    await startLiveGatewayServices(deps);
+    expect(calls).toEqual([
+      'lag',
+      'locale',
+      'push',
+      'watch',
+      'export-sweeper',
+      'portmaps',
       'online',
     ]);
   });
+});
 
-  test('startLiveGatewayServices registers messaging hooks before telegram refresh', async () => {
-    const seen: string[] = [];
-    await startLiveGatewayServices({
-      roles: parseVibeTermRoles('node'),
-      startLag: () => {
-        seen.push('lag');
-      },
-      refreshTelegram: async () => {
-        const hooks = getMessagingRuntimeHooks();
-        expect(typeof hooks.getUplinkStatus).toBe('function');
-        expect(typeof hooks.listMeshNodes).toBe('function');
-        expect(typeof hooks.getDeviceTree).toBe('function');
-        expect(typeof hooks.capturePane).toBe('function');
-        expect(typeof hooks.sendKeys).toBe('function');
-        expect(typeof hooks.decideConfirmation).toBe('function');
-        seen.push('telegram-refresh');
-      },
-      refreshWeixin: async () => {
-        seen.push('weixin-refresh');
-      },
-      startPush: async () => {
-        seen.push('push');
-      },
-      startAgent: async () => {
-        seen.push('agent');
-      },
-      startWatch: async () => {
-        seen.push('watch');
-      },
-      startTunnel: async () => {
-        seen.push('tunnel');
-      },
-      sendOnline: async () => {
-        seen.push('online');
-      },
-    });
-    expect(seen[0]).toBe('lag');
-    expect(seen[1]).toBe('telegram-refresh');
+describe('lazy messaging hooks', () => {
+  test('live start arms hooks; registration waits for the first bot service load', async () => {
+    await startLiveGatewayServices(recordingDeps([], 'node', false));
+    expect(getMessagingRuntimeHooks().decideConfirmation).toBeUndefined();
+    await ensureMessagingHooks();
     const hooks = getMessagingRuntimeHooks();
-    expect(hooks.getDeviceTree).toBeDefined();
-    expect(hooks.capturePane).toBeDefined();
-    expect(hooks.sendKeys).toBeDefined();
-    expect(hooks.decideConfirmation).toBeDefined();
-    expect(hooks.getUplinkStatus).toBeDefined();
-    expect(hooks.listMeshNodes).toBeDefined();
+    expect(typeof hooks.getUplinkStatus).toBe('function');
+    expect(typeof hooks.listMeshNodes).toBe('function');
+    expect(typeof hooks.getDeviceTree).toBe('function');
+    expect(typeof hooks.capturePane).toBe('function');
+    expect(typeof hooks.sendKeys).toBe('function');
+    expect(typeof hooks.decideConfirmation).toBe('function');
   });
 
-  test('relay-only still registers hooks while skipping telegram/weixin', async () => {
-    await startLiveGatewayServices({
-      roles: parseVibeTermRoles('relay'),
-      startLag: () => {},
-      refreshTelegram: async () => {
-        throw new Error('telegram must not start');
-      },
-      refreshWeixin: async () => {
-        throw new Error('weixin must not start');
-      },
-      startPush: async () => {
-        throw new Error('push must not start');
-      },
-      startAgent: async () => {
-        throw new Error('agent must not start');
-      },
-      startWatch: async () => {
-        throw new Error('watch must not start');
-      },
-      startTunnel: async () => {
-        throw new Error('tunnel must not start');
-      },
-      sendOnline: async () => {
-        throw new Error('online must not start');
-      },
-    });
+  test('relay-only still arms hooks', async () => {
+    await startLiveGatewayServices(recordingDeps([], 'relay', false));
+    await ensureMessagingHooks();
     expect(typeof getMessagingRuntimeHooks().decideConfirmation).toBe('function');
+  });
+
+  test('hooks stay unregistered before live start and after reset', async () => {
+    await ensureMessagingHooks();
+    expect(getMessagingRuntimeHooks().decideConfirmation).toBeUndefined();
   });
 });

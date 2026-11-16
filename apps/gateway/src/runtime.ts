@@ -27,26 +27,34 @@ import {
   isExecWsPath,
 } from './exec/channel/ws-upgrade';
 import { sweepOrphanTransferTemps } from './files/transfer-session';
-import { t } from './i18n';
+import { ensureI18nLocale, t } from './i18n';
+import {
+  type LiveStartGates,
+  defaultLiveStartGates,
+  setLiveServicesEnabled,
+} from './live-start-gates';
 import { logMemoryProfileOnce } from './memory-profile';
 import { type DispatchContext, requestDispatchContext } from './mesh/types';
-import { registerMessagingRuntime, resetMessagingRuntime } from './messaging/context';
-import { createMessagingRuntimeHooks, setMessagingMeshRuntime } from './messaging/runtime-hooks';
-import { startPortMaps, stopPortMaps } from './portmap/manager';
+import { armMessagingHooks, resetMessagingHooksIfLoaded } from './messaging/lazy-hooks';
+import {
+  startPortMapExportSweeper,
+  startPortMapManager,
+  stopPortMapsIfLoaded,
+} from './portmap/lazy';
 import { connectionAlertNotifier } from './push/connection-alerts';
 import { pushSupervisor } from './push/supervisor';
 import { registerSettingsBroadcaster, registerTreeOverlayBridge } from './settings/broadcaster';
 import {
-  loadTelegramService,
+  peekTelegramService,
   refreshTelegramService,
   stopTelegramServiceIfLoaded,
 } from './telegram/lazy';
 import { tmuxRuntimeRegistry } from './tmux-client/registry';
 import { primeLocalShellPath } from './tmux/local-shell-path';
 import { registerSnapshotLookup } from './tmux/snapshot-directory';
-import { startTunnelManager, stopTunnelManagerIfLoaded } from './tunnel/lazy';
+import { loadTunnelManager, startTunnelManager, stopTunnelManagerIfLoaded } from './tunnel/lazy';
 import { startWatchService, stopWatchServiceIfLoaded } from './watch/lazy';
-import { loadWeixinService, refreshWeixinService, stopWeixinServiceIfLoaded } from './weixin/lazy';
+import { peekWeixinService, refreshWeixinService, stopWeixinServiceIfLoaded } from './weixin/lazy';
 import { WebSocketServer } from './ws';
 import { startGatewayEventLoopLag, stopGatewayEventLoopLag } from './ws/event-loop-lag';
 import type { GatewaySocketData } from './ws/types';
@@ -104,24 +112,32 @@ function noopWebsocket(): GatewayRuntime['websocket'] {
 export type LiveGatewayStartDeps = {
   roles?: ReturnType<typeof resolveLiveRoles>;
   startLag?: () => void;
+  /** 推送 / bot 文案按站点语言渲染：先把该语言包加载进来。 */
+  ensureLocale?: () => Promise<void>;
   refreshTelegram?: () => Promise<void>;
   refreshWeixin?: () => Promise<void>;
   startPush?: () => Promise<void>;
   startAgent?: () => Promise<void>;
   startWatch?: () => Promise<void>;
   startTunnel?: () => Promise<void>;
+  /** 纯 relay 下已有隧道配置时只加载（注册 Access 守卫），不 start。 */
+  loadTunnel?: () => Promise<void>;
+  startExportSweeper?: () => void;
+  startPortMaps?: () => Promise<void>;
   sendOnline?: () => Promise<void>;
+  gates?: Partial<LiveStartGates>;
 };
 
+type ResolvedLiveDeps = Required<Omit<LiveGatewayStartDeps, 'roles' | 'gates'>> & {
+  gates: LiveStartGates;
+};
+
+/** 只给已加载（即已配置并启动）的 bot 服务发上线消息；未加载时本来也没有在跑的 bot。 */
 async function sendGatewayOnlineMessages(): Promise<void> {
   try {
     const settings = getSiteSettings();
-    const [{ telegramService }, { weixinService }] = await Promise.all([
-      loadTelegramService(),
-      loadWeixinService(),
-    ]);
-    await telegramService.sendGatewayOnlineMessage(settings.siteName);
-    await weixinService.sendGatewayOnlineMessage(settings.siteName);
+    await peekTelegramService()?.telegramService.sendGatewayOnlineMessage(settings.siteName);
+    await peekWeixinService()?.weixinService.sendGatewayOnlineMessage(settings.siteName);
   } catch (err) {
     console.error('[gateway] failed to push startup message:', err);
   }
@@ -133,31 +149,61 @@ export function shouldStartMessagingServices(
   return !isRelayOnly(roles);
 }
 
+function resolveLiveDeps(deps: LiveGatewayStartDeps): ResolvedLiveDeps {
+  return {
+    startLag: startGatewayEventLoopLag,
+    ensureLocale: () => ensureI18nLocale(getSiteSettings().language),
+    refreshTelegram: refreshTelegramService,
+    refreshWeixin: refreshWeixinService,
+    startPush: () => pushSupervisor.start(),
+    startAgent: startAgentSupervisor,
+    startWatch: startWatchService,
+    startTunnel: startTunnelManager,
+    loadTunnel: async () => {
+      await loadTunnelManager();
+    },
+    startExportSweeper: startPortMapExportSweeper,
+    startPortMaps: startPortMapManager,
+    sendOnline: sendGatewayOnlineMessages,
+    ...deps,
+    gates: { ...defaultLiveStartGates, ...deps.gates },
+  };
+}
+
+/** 未配置的子系统不在开机时 import / start；首个相关 REST 请求或用户启用时再懒加载。 */
+async function startConfiguredServices(d: ResolvedLiveDeps): Promise<void> {
+  await d.ensureLocale();
+  if (d.gates.telegram()) await d.refreshTelegram();
+  if (d.gates.weixin()) await d.refreshWeixin();
+  await d.startPush();
+  if (d.gates.agent()) await d.startAgent();
+  if (d.gates.watch()) await d.startWatch();
+  if (d.gates.tunnel()) await d.startTunnel();
+  d.startExportSweeper();
+  if (d.gates.portMaps()) await d.startPortMaps();
+  await d.sendOnline();
+}
+
 export async function startLiveGatewayServices(deps: LiveGatewayStartDeps = {}): Promise<void> {
   const messaging = shouldStartMessagingServices(deps.roles ?? resolveLiveRoles());
-  (deps.startLag ?? startGatewayEventLoopLag)();
-  registerMessagingRuntime(createMessagingRuntimeHooks());
-  if (!messaging) return;
-  await (deps.refreshTelegram ?? refreshTelegramService)();
-  await (deps.refreshWeixin ?? refreshWeixinService)();
-  await (deps.startPush ?? (() => pushSupervisor.start()))();
-  await (deps.startAgent ?? startAgentSupervisor)();
-  await (deps.startWatch ?? startWatchService)();
-  await (deps.startTunnel ?? startTunnelManager)();
-  startPortMaps();
-  await (deps.sendOnline ?? sendGatewayOnlineMessages)();
+  const resolved = resolveLiveDeps(deps);
+  resolved.startLag();
+  armMessagingHooks();
+  setLiveServicesEnabled(messaging);
+  if (messaging) return startConfiguredServices(resolved);
+  if (resolved.gates.tunnel()) await resolved.loadTunnel();
 }
 
 async function stopGatewayLiveServices(): Promise<void> {
   stopGatewayEventLoopLag();
-  resetMessagingRuntime();
-  setMessagingMeshRuntime(null);
+  setLiveServicesEnabled(false);
+  resetMessagingHooksIfLoaded();
   connectionAlertNotifier.setBroadcaster(null);
   connectionAlertNotifier.setEventEmitter(null);
   registerSettingsBroadcaster(null);
   registerEventNotifyBroadcaster(null);
   registerTreeOverlayBridge(null);
-  stopPortMaps();
+  stopPortMapsIfLoaded();
   await stopTunnelManagerIfLoaded();
   await stopWatchServiceIfLoaded();
   await stopAgentSupervisorIfLoaded();

@@ -12,7 +12,7 @@ import {
   AgentSessionBusyError,
   AgentSessionNotFoundError,
   AgentSessionOrphanedError,
-} from '../agent/supervisor';
+} from '../agent/supervisor-errors';
 import type {
   AgentConfirmationRecord,
   AgentMessageRecord,

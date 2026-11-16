@@ -11,7 +11,7 @@ import {
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
 import { publicRequestUrl } from '../mesh/session-middleware';
 import { TunnelConfigStore } from '../tunnel/config-store';
-import { tunnelManager } from '../tunnel/manager';
+import { peekTunnelPublicUrl } from '../tunnel/lazy';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
 
@@ -76,7 +76,7 @@ export function listDomainAccessHosts(): string[] {
     /* tunnel_config may be missing */
   }
   try {
-    sources.push(tunnelManager.status().process.publicUrl);
+    sources.push(peekTunnelPublicUrl());
   } catch {
     /* tunnel manager unread in some tests */
   }

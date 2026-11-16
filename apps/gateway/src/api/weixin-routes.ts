@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { toBCP47 } from '@vibeterm/shared';
+import { toBCP47 } from '@vibeterm/shared/i18n/meta';
 import {
   approveWeixinUser,
   createWeixinAccount,
@@ -12,7 +12,7 @@ import {
 } from '../db';
 import { t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
-import { weixinService } from '../weixin/service';
+import { loadWeixinService } from '../weixin/lazy';
 import type { ConfigFieldSpec, FieldParseResult } from './config-field';
 import { json } from './http';
 import {
@@ -21,6 +21,10 @@ import {
   parseRequiredTrimmed,
 } from './messaging-channel-routes';
 import { type ApiRoute, route } from './route';
+
+async function weixinService() {
+  return (await loadWeixinService()).weixinService;
+}
 
 function parseAccountName(raw: unknown): FieldParseResult<string> {
   return parseRequiredTrimmed(raw, t('weixin.accountNameRequired'));
@@ -93,13 +97,13 @@ async function persistWeixinUpdate(
 ): Promise<void> {
   updateWeixinAccount(accountId, draft);
   broadcastSettingsUpdate('weixin');
-  await weixinService.refresh();
+  await (await weixinService()).refresh();
 }
 
 async function persistWeixinDelete(accountId: string): Promise<void> {
   deleteWeixinAccount(accountId);
   broadcastSettingsUpdate('weixin');
-  await weixinService.refresh();
+  await (await weixinService()).refresh();
 }
 
 async function afterApproveWeixin(
@@ -109,7 +113,7 @@ async function afterApproveWeixin(
   broadcastSettingsUpdate('weixin');
   const settings = getSiteSettings();
   try {
-    await weixinService.sendTestMessage(
+    await (await weixinService()).sendTestMessage(
       parent.id,
       userId,
       t('weixin.approveMessageTemplate', {
@@ -128,7 +132,7 @@ async function handleStartWeixinLogin(accountId: string): Promise<Response> {
     return json({ error: t('weixin.accountNotFound') }, 404);
   }
   try {
-    const result = await weixinService.startLogin(accountId);
+    const result = await (await weixinService()).startLogin(accountId);
     return json(result);
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : t('weixin.loginFailed') }, 502);
@@ -140,7 +144,7 @@ async function handleGetWeixinLoginStatus(accountId: string): Promise<Response> 
   if (!existing) {
     return json({ error: t('weixin.accountNotFound') }, 404);
   }
-  return json(weixinService.getLoginStatus(accountId));
+  return json((await weixinService()).getLoginStatus(accountId));
 }
 
 async function handleTestWeixinAccount(accountId: string): Promise<Response> {
@@ -150,7 +154,7 @@ async function handleTestWeixinAccount(accountId: string): Promise<Response> {
   }
   const settings = getSiteSettings();
   try {
-    await weixinService.sendTestMessageToBoundUser(
+    await (await weixinService()).sendTestMessageToBoundUser(
       accountId,
       t('weixin.testMessageTemplate', {
         siteName: settings.siteName,

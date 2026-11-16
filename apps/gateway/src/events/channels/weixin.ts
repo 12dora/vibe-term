@@ -1,6 +1,6 @@
 import type { EventType, WebhookEvent } from '@vibeterm/shared';
 import { getSiteSettings } from '../../db';
-import { weixinService } from '../../weixin/service';
+import { peekWeixinService } from '../../weixin/lazy';
 import {
   buildBellRawView,
   buildConnectionErrorText,
@@ -27,13 +27,16 @@ export class WeixinChannel implements NotificationChannel {
     if (PUSH_CHANNEL_SKIPPED_LIFECYCLE_EVENTS.has(eventType)) {
       return;
     }
+    // 服务未加载即没有在跑的 bot / 账号，原本的发送也是空操作
+    const service = peekWeixinService()?.weixinService;
+    if (!service) return;
     const settings = getSiteSettings();
 
     if (eventType === 'terminal_bell') {
       if (!settings.enableBellPush) {
         return;
       }
-      await weixinService.sendToAuthorizedUsers({ text: this.formatBellMessage(event) });
+      await service.sendToAuthorizedUsers({ text: this.formatBellMessage(event) });
       return;
     }
 
@@ -42,12 +45,12 @@ export class WeixinChannel implements NotificationChannel {
     }
 
     if (eventType === DEVICE_CONNECTION_ERROR_EVENT) {
-      await weixinService.sendToAuthorizedUsers({ text: buildConnectionErrorText(event) });
+      await service.sendToAuthorizedUsers({ text: buildConnectionErrorText(event) });
       return;
     }
 
     if (isCredentialWarningEvent(event)) {
-      await weixinService.sendToAuthorizedUsers({ text: buildCredentialWarningText(event) });
+      await service.sendToAuthorizedUsers({ text: buildCredentialWarningText(event) });
       return;
     }
 
@@ -55,7 +58,7 @@ export class WeixinChannel implements NotificationChannel {
       eventType === 'terminal_notification'
         ? this.formatNotificationMessage(event)
         : this.formatGenericMessage(event, settings);
-    await weixinService.sendToAuthorizedUsers({ text });
+    await service.sendToAuthorizedUsers({ text });
   }
 
   private formatBellMessage(event: WebhookEvent): string {

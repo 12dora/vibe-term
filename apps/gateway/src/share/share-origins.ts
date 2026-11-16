@@ -11,7 +11,7 @@ import { getStoredSiteSettings } from '../db';
 import { getDb as getOrmDb } from '../db/client';
 import { meshRelays, nodeIdentity } from '../db/schema';
 import { TunnelConfigStore } from '../tunnel/config-store';
-import { tunnelManager } from '../tunnel/manager';
+import { peekTunnelManager } from '../tunnel/lazy';
 import { RelayEntryProbe, type RelayProbeState } from './relay-entry-probe';
 import { listedOriginsOf, shouldOfferSite, uniqueByAccessUrl } from './share-origins-site';
 
@@ -141,11 +141,12 @@ function readTunnelUrl(): string | null {
     hostname = null;
   }
   try {
-    const status = tunnelManager.status();
-    const live = status.process.publicUrl;
+    // 未加载即无本进程托管的隧道，只剩上面读到的持久化配置
+    const status = peekTunnelManager()?.tunnelManager.status();
+    const live = status?.process.publicUrl;
     if (live) return live;
-    if (status.config.mode === 'off') return null;
-    hostname = hostname ?? status.config.hostname ?? null;
+    if (status?.config.mode === 'off') return null;
+    hostname = hostname ?? status?.config.hostname ?? null;
   } catch {
     /* tunnel manager unavailable in unit tests */
   }

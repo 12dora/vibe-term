@@ -1,4 +1,5 @@
-import { RELAY_UPLINK_PATH, type RelayRuntime } from '../../../../apps/gateway/src/relay';
+import type { RelayRuntime } from '../../../../apps/gateway/src/relay';
+import { RELAY_UPLINK_PATH } from '../../../../apps/gateway/src/relay/types';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 
 type RelayHttpResult = Response | null | undefined;
