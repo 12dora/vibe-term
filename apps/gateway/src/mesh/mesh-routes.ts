@@ -43,8 +43,8 @@ import {
   sweepStaleNodeOperations,
 } from './node-operations';
 import { pausedNodeIds } from './node-pause';
-import { directBusyBody } from './rtc/browser-authorize';
 import { BrowserSignalReplay } from './rtc/browser-signal-replay';
+import { directBusyBody } from './rtc/direct-busy';
 import {
   type AuthenticateOk,
   type SessionMiddlewareDeps,

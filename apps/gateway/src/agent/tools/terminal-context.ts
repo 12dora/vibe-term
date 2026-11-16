@@ -1,7 +1,7 @@
 import { errorMessage } from '@vibeterm/shared';
 import type { PaneInfo } from '../../tmux-client/capture-history';
 import type { PaneEmulator } from '../../tmux-client/pane-emulator';
-import type { PaneSnapshotLookup } from './pane-info';
+import type { PaneSnapshotLookup } from './pane-snapshot-lookup';
 
 export interface TerminalRuntimeLike {
   sendInput(paneId: string, data: string): void | Promise<void>;

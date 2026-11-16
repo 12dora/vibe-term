@@ -32,6 +32,7 @@ import {
   sweepReleaseCache,
 } from './release-download';
 import { extractCliTarball } from './upgrade-extract';
+import { STAGED_PACKAGE_MAX_BYTES } from './upgrade-limits';
 import {
   type PackageManifestResult,
   persistStagedManifest,
@@ -63,6 +64,7 @@ import { getBaseVersion } from './version';
 export { parseSha256Sums, releaseSha256SumsUrl, sha256Hex } from './release-download';
 export { assertExtractedCliPackage, extractCliTarball } from './upgrade-extract';
 export { parsePidFileRecord, type PidFileRecord } from './upgrade-pid';
+export { STAGED_PACKAGE_MAX_BYTES } from './upgrade-limits';
 export { waitForSpawnAndDetach } from './upgrade-spawn';
 export { processCommandLine, processStartIdentity };
 export type {
@@ -72,7 +74,6 @@ export type {
   StagedPackageStatusResult,
 };
 
-export const STAGED_PACKAGE_MAX_BYTES = 256 * 1024 * 1024;
 const STAGED_PACKAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const STAGED_PACKAGE_MAX_COUNT = 2;
 function createTxnId(): string {

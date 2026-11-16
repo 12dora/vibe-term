@@ -1,15 +1,15 @@
 import { readFile } from 'node:fs/promises';
 import { runCommand } from '../lib/process';
 import {
-  SYSTEMD_KILL_MODE_WARNING,
-  systemdUnitLacksKillModeProcess,
-  vibeTermSystemdUnitPath,
-} from '../lib/service';
-import {
   SYSTEMD_OOM_POLICY_WARNING,
   parseDefaultOomPolicy,
   shouldWarnAboutOomPolicy,
 } from '../lib/systemd-oom-policy';
+import {
+  SYSTEMD_KILL_MODE_WARNING,
+  systemdUnitLacksKillModeProcess,
+  vibeTermSystemdUnitPath,
+} from '../lib/systemd-unit';
 
 /** OpenRC init 脚本 export 了 VIBETERM_SERVICE_MANAGER=openrc；那里没有 systemd unit 可查。 */
 function underOpenrc(serviceManager: string | undefined): boolean {

@@ -5,7 +5,7 @@ import type { TransferErrorCode } from '@vibeterm/shared';
 import { type ByteRange, runPush } from '@vibeterm/transfer';
 import { openRange } from '@vibeterm/transfer/node';
 import { type PulledFile, pullFileFromDevice } from '../files/device-storage';
-import { abortableSleep } from '../system/remote-upgrade-io';
+import { abortableSleep } from '../system/abortable-sleep';
 import type { TransferChannel } from './channel';
 import { normalizeTransferError } from './errors';
 import type { ExpandedEntry } from './expand';

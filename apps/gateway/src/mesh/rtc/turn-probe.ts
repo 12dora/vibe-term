@@ -11,6 +11,7 @@ import {
   type ProbeScheduler,
   failedAttemptedProbes,
 } from './probe-loop';
+import { publishTurnProbeRows } from './probe-views';
 import { formatRtcLog, rtcLog } from './rtc-log';
 import {
   STUN_PROBE_INTERVAL_MS,
@@ -81,6 +82,8 @@ export function turnUrlOf(turn: unknown): string | null {
   if (typeof turn !== 'object' || turn === null) return null;
   return turnUrlFromRecord(turn as Record<string, unknown>);
 }
+
+publishTurnProbeRows(turnProbeSnapshot, turnUrlOf);
 
 export function parseTurnProbeTarget(url: string): StunTarget | null {
   const parsed = parseTurnProbe(url);

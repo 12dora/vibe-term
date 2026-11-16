@@ -2,8 +2,17 @@ import { type DtlsFingerprint, normalizeFingerprint } from '@vibeterm/shared/aut
 import type { RtcAuthorizeBrowserInput, RtcAuthorizeBrowserResult } from '../mesh-deps';
 import { withPeerHandshakeTimeout } from '../peer-handshake-timeout';
 import { PeerHandshakeError } from '../types';
+import { AuthorizeBusyError, failReason } from './direct-busy';
 import type { DataChannelLike, PeerConnectionLike } from './native';
 import { type LocalDescriptionFanout, raceWithAbort } from './rtc-peer-helpers';
+
+export {
+  AuthorizeBusyError,
+  DIRECT_BUSY_RETRY_MS,
+  type DirectBusyReason,
+  directBusyBody,
+  failReason,
+} from './direct-busy';
 
 /** 不是 `sess`：浏览器才是 offerer，这条通道只用来逼出本机证书指纹。 */
 export const BROWSER_FP_PROBE_LABEL = 'vt-fp-probe';
@@ -65,42 +74,6 @@ export function emptyBrowserRecord(
 export const RTC_AUTHORIZE_MAX_PER_USER = 8;
 /** 授权后数据通道还没打开。通道打开之后才延长到完整握手 TTL。 */
 export const RTC_AUTHORIZE_PENDING_TTL_MS = 30_000;
-
-/**
- * 客户端熔断按目标 node 计，不按会话。retryAfterMs 只是最短间隔，设太长会把别的标签一起冻住。
- * 真正挡住刷接口的是用户名额和节点上限；连续失败仍由客户端 30s 熔断接管。
- */
-export const DIRECT_BUSY_RETRY_MS = {
-  timeout: 1_000,
-  aborted: 500,
-  failed: 2_000,
-  capacity: 1_000,
-} as const;
-
-export type DirectBusyReason = keyof typeof DIRECT_BUSY_RETRY_MS;
-
-export class AuthorizeBusyError extends Error {
-  readonly reason = 'capacity' as const;
-
-  constructor() {
-    super('browser authorize capacity');
-    this.name = 'AuthorizeBusyError';
-  }
-}
-
-export function failReason(err: unknown): string {
-  if (err instanceof AuthorizeBusyError) return err.reason;
-  if (err instanceof PeerHandshakeError) return err.code;
-  if (isAbortError(err)) return 'aborted';
-  return 'failed';
-}
-
-export function directBusyBody(err: unknown): { reason: DirectBusyReason; retryAfterMs: number } {
-  const raw = failReason(err);
-  const reason: DirectBusyReason =
-    raw === 'timeout' || raw === 'aborted' || raw === 'capacity' ? raw : 'failed';
-  return { reason, retryAfterMs: DIRECT_BUSY_RETRY_MS[reason] };
-}
 
 export function pendingAuthorizeTtlMs(authorizeTtlMs: number): number {
   return Math.min(Math.max(1, authorizeTtlMs), RTC_AUTHORIZE_PENDING_TTL_MS);
@@ -240,10 +213,6 @@ function throwIfAborted(signal?: AbortSignal): void {
 function abortReason(signal?: AbortSignal): Error {
   if (signal?.reason instanceof Error) return signal.reason;
   return new DOMException('The operation was aborted.', 'AbortError');
-}
-
-function isAbortError(err: unknown): boolean {
-  return err instanceof Error && err.name === 'AbortError';
 }
 
 function signalingOf(pc: PeerConnectionLike): string | null {

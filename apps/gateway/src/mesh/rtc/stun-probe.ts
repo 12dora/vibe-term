@@ -1,4 +1,5 @@
 import { MeshProbeLoop, type ProbeLoopDeps, type ProbeScheduler } from './probe-loop';
+import { publishStunProbeRows } from './probe-views';
 export { STUN_PROBE_MIN_BIND_MS } from './stun-probe-budget';
 export {
   STUN_MAGIC_COOKIE,
@@ -39,6 +40,8 @@ let loopDeps: StunProbeLoopDeps = {};
 export function stunProbeSnapshot(): readonly StunProbeRecord[] {
   return session?.lastResults ?? [];
 }
+
+publishStunProbeRows(stunProbeSnapshot);
 
 export function resetStunProbeForTest(): void {
   session?.stop();

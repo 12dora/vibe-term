@@ -29,8 +29,7 @@ import {
   probeTcpConnect,
 } from './port-reach-probe';
 import { membersProbeSnapshot, resetTurnReachForTest, setTurnReachNow } from './port-reach-turn';
-import { matchingTurnProbe } from './rtc/stun-effective';
-import { stunProbeSnapshot } from './rtc/stun-probe';
+import { matchingTurnProbeRow, stunProbeRows } from './rtc/probe-views';
 import { ensureTcpSamplingTrust } from './tcp-sampling-trust';
 
 export type { MembersProbeSnapshot } from './port-reach-turn';
@@ -316,14 +315,14 @@ export function peerReachPayload(
 }
 
 export function turnOkForConfigured(configured: unknown): boolean | undefined {
-  const probe = matchingTurnProbe(configured);
+  const probe = matchingTurnProbeRow(configured);
   if (!probe) return undefined;
   return probe.ok;
 }
 
 function stunProbesOk(): boolean {
   if (state.stunOk != null) return state.stunOk;
-  return stunProbeSnapshot().some((row) => row.ok);
+  return stunProbeRows().some((row) => row.ok);
 }
 
 function selfRtcStatus(): Pick<MeshPortReach, 'status' | 'code' | 'checkedAt'> {

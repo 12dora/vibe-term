@@ -11,16 +11,9 @@ import { withEnvLock } from '../lib/env-mutation';
 import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
 import type { AcmeHttp01Challenge } from './acme-challenge';
+import { ACME_RENEW_LEAD_MS, RENEWAL_BACKOFF_MIN_MS, acmeDirectoryUrl } from './acme-constants';
 import { resolveAcmeDnsPatch } from './acme-dns-patch';
-import {
-  ACME_RENEW_LEAD_MS,
-  type AcmeIssueInput,
-  type AcmeIssuedMaterial,
-  RENEWAL_BACKOFF_MIN_MS,
-  RenewalScheduler,
-  acmeDirectoryUrl,
-  issue as issueAcmeCert,
-} from './acme-service';
+import type { AcmeIssueInput, AcmeIssuedMaterial } from './acme-service';
 import {
   CA_MIN_REMAINING_MS,
   type CaMaterial,
@@ -35,6 +28,7 @@ import { DnspodDnsClient } from './dnspod-dns';
 import { TlsApiError } from './errors';
 import type { HttpsListenerConfig, HttpsListenerState } from './https-listener';
 
+import { RenewalScheduler } from './renewal-scheduler';
 import { readTrustProxy, writeTrustProxy } from './tls-trust-proxy';
 import {
   validateBindHost,
@@ -120,6 +114,11 @@ export type TlsServiceOptions = {
 
 type AcmeJobTuple = { domain: string; challenge: AcmeChallengeType | null; staging: boolean };
 
+// ACME 签发栈（acme-client、DNS-01 校验）只在真正签发时加载；自签与关闭 HTTPS 不碰它。
+async function issueAcmeLazily(input: AcmeIssueInput): Promise<AcmeIssuedMaterial> {
+  return (await import('./acme-service')).issue(input);
+}
+
 class SerialQueue {
   private chain: Promise<unknown> = Promise.resolve();
   run<T>(fn: () => Promise<T>): Promise<T> {
@@ -157,7 +156,7 @@ export class TlsService {
   constructor(private readonly opts: TlsServiceOptions) {
     this.trustProxy = opts.trustProxy ?? false;
     this.now = opts.now ?? Date.now;
-    this.issueAcmeFn = opts.issueAcme ?? issueAcmeCert;
+    this.issueAcmeFn = opts.issueAcme ?? issueAcmeLazily;
     this.scheduleBackground =
       opts.scheduleBackground ??
       ((work) => {

@@ -35,3 +35,19 @@ export function logMemoryProfileOnce(profile: MemoryProfile = getMemoryProfile()
   logged = true;
   logAt('info', `[memory] profile=${profile}`);
 }
+
+export const SETTLED_GC_DELAY_MS = 30_000;
+
+/** 启动完成后做一次完整 GC，回收启动期临时分配；只跑一次，unref 不阻止退出。 */
+export function scheduleSettledGc(
+  deps: {
+    delayMs?: number;
+    gc?: () => void;
+    setTimer?: (fn: () => void, ms: number) => { unref?: () => unknown };
+  } = {}
+): void {
+  const gc = deps.gc ?? (() => Bun.gc(true));
+  const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const timer = setTimer(gc, deps.delayMs ?? SETTLED_GC_DELAY_MS);
+  timer.unref?.();
+}

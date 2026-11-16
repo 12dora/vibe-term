@@ -10,7 +10,7 @@ import { membersProbeSnapshot } from './port-reach';
 import { classifyRelayLinkError } from './relay-link-error';
 import type { RelayPresence } from './relay-presence';
 import type { RelayUplinkClient } from './relay-uplink-client';
-import { matchingTurnProbe } from './rtc/stun-effective';
+import { matchingTurnProbeRow } from './rtc/probe-views';
 import { tcpSamplingTrusted } from './tcp-sampling-trust';
 import type { PooledUplink } from './types';
 import { isUplinkPathRerace, uplinkPathView } from './uplink-path-sampler';
@@ -288,7 +288,7 @@ export function buildRelayStatusPayload(input: {
     turnOf: (rowClient, relayUrl) => {
       const turn = turnViewFromRtc(rowClient?.rtc);
       if (!turn) return null;
-      const probe = matchingTurnProbe(rowClient?.rtc.turn ?? null);
+      const probe = matchingTurnProbeRow(rowClient?.rtc.turn ?? null);
       return enrichRelayTurnView({ url: turn.url, probeOk: probe ? probe.ok : null }, relayUrl, {
         selfId: rowClient?.identity.nodeId,
       });

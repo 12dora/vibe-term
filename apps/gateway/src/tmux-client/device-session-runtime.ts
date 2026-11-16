@@ -44,7 +44,7 @@ import { clearSkippedPaneOutput } from './retention/skipped-output';
 import { CanonicalScreenCapture } from './runtime/canonical-screen-capture';
 import { type DeviceSessionRuntimeListener, RuntimeEventBridge } from './runtime/event-bridge';
 import { WindowMemoryRuntimeFacade } from './runtime/window-memory-view';
-import { SshExternalTmuxConnection } from './ssh-external-connection';
+import { loadedSshConnection } from './ssh-connection-lazy';
 
 export type { DeviceSessionRuntimeListener };
 
@@ -121,7 +121,7 @@ function createDefaultConnection(options: TmuxConnectionOptions): DeviceSessionR
   if (device?.type === 'local') {
     return new LocalExternalTmuxConnection(options);
   }
-  return new SshExternalTmuxConnection(options);
+  return new (loadedSshConnection())(options);
 }
 
 export class DeviceSessionRuntime extends WindowMemoryRuntimeFacade {

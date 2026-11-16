@@ -2,16 +2,10 @@ import type { Device } from '@vibeterm/shared';
 import type { ConnectConfig } from 'ssh2';
 
 import type { decryptWithContext } from '../crypto';
-import {
-  type ResolveSshConnectConfigDeps,
-  createSshConnectDeps,
-  resolveAgentAuth,
-  resolveAutoAuth,
-  resolveConfigRefAuth,
-  resolveKeyAuth,
-  resolvePasswordAuth,
-  resolveSshTarget,
-} from './ssh-auth-resolvers';
+import { createMemoizedLoader } from '../lazy-load';
+import type { ResolveSshConnectConfigDeps } from './ssh-auth-resolvers';
+
+const resolvers = createMemoizedLoader(() => import('./ssh-auth-resolvers'));
 
 export type { ResolveSshConnectConfigDeps };
 
@@ -20,6 +14,15 @@ export async function resolveSshConnectConfig(
   decrypt: typeof decryptWithContext,
   inputDeps: Partial<ResolveSshConnectConfigDeps> = {}
 ): Promise<ConnectConfig> {
+  const {
+    createSshConnectDeps,
+    resolveAgentAuth,
+    resolveAutoAuth,
+    resolveConfigRefAuth,
+    resolveKeyAuth,
+    resolvePasswordAuth,
+    resolveSshTarget,
+  } = await resolvers.load();
   const deps = createSshConnectDeps(inputDeps);
   const target = resolveSshTarget(device, deps);
   const base: ConnectConfig = {

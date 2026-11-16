@@ -6,6 +6,7 @@ import {
 } from '@vibeterm/shared/net';
 import type { RelayTurnConfig } from '@vibeterm/shared/relay';
 import type { CachedRtcConfig } from '../mesh-deps';
+import { latestProbeForUrl } from './probe-views';
 import { rtcLog } from './rtc-log';
 import {
   type StunProbeRecord,
@@ -79,13 +80,7 @@ export function matchingTurnProbe(
   configured: unknown,
   probes: readonly TurnProbeRecord[] = turnProbeSnapshot()
 ): TurnProbeRecord | null {
-  const url = turnUrlOf(configured);
-  if (!url) return null;
-  for (let i = probes.length - 1; i >= 0; i--) {
-    const row = probes[i];
-    if (row?.url === url) return row;
-  }
-  return null;
+  return latestProbeForUrl(turnUrlOf(configured), probes);
 }
 
 /** 探测成功才纳入 TURN；未探测或失败一律排除，按 RTT 升序最多 2 条。 */

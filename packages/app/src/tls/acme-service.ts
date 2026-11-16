@@ -6,15 +6,21 @@ import type { AcmeChallengeType } from '../../../../apps/gateway/src/tls/types';
 import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
 import type { AcmeHttp01Challenge } from './acme-challenge';
+import { ACME_RENEW_LEAD_MS, acmeDirectoryUrl } from './acme-constants';
 import { defaultAcmeClient, loadAcmeClient } from './acme-lazy';
 import { parseCertificate } from './cert-authority';
 import type { DnsCredentials, DnsProvider, DnsProviderId, DnsTxtRef } from './dns-provider';
 import { resolveStoredDnsCredentials } from './dns-provider';
 
-export const ACME_RENEW_LEAD_MS = 30 * 24 * 60 * 60 * 1000;
-export const RENEWAL_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
-export const RENEWAL_BACKOFF_MIN_MS = 60 * 60 * 1000;
-export const RENEWAL_BACKOFF_MAX_MS = 24 * 60 * 60 * 1000;
+export {
+  ACME_RENEW_LEAD_MS,
+  RENEWAL_BACKOFF_MAX_MS,
+  RENEWAL_BACKOFF_MIN_MS,
+  RENEWAL_CHECK_INTERVAL_MS,
+  acmeDirectoryUrl,
+} from './acme-constants';
+export { RenewalScheduler, type RenewalSchedulerOptions } from './renewal-scheduler';
+
 export const DNS_PROPAGATION_INTERVAL_MS = 2000;
 export const DNS_PROPAGATION_TIMEOUT_MS = 120_000;
 
@@ -91,10 +97,6 @@ type AccountRow = { acmeAccountUrl: string | null; acmeAccountDirectory: string 
 
 function asPem(value: string | Buffer): string {
   return Buffer.isBuffer(value) ? value.toString('utf8') : value;
-}
-
-export function acmeDirectoryUrl(staging: boolean): string {
-  return `https://${staging ? 'acme-staging-v02' : 'acme-v02'}.api.letsencrypt.org/directory`;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -416,91 +418,4 @@ export async function issue(input: AcmeIssueInput): Promise<AcmeIssuedMaterial> 
     cleanupWarning:
       pending.failures.length > 0 ? `dns-01 cleanup failed: ${pending.failures.join('; ')}` : null,
   };
-}
-
-type RenewalSchedulerOptions = {
-  isDue: () => boolean | Promise<boolean>;
-  renew: () => Promise<void>;
-  now?: () => number;
-  setTimeoutFn?: (fn: () => void, ms: number) => unknown;
-  clearTimeoutFn?: (id: unknown) => void;
-  checkIntervalMs?: number;
-  log?: (message: string) => void;
-};
-
-export class RenewalScheduler {
-  private timer: unknown = null;
-  private stopped = true;
-  private backoffMs: number;
-  private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
-  private readonly clearTimeoutFn: (id: unknown) => void;
-  private readonly checkIntervalMs: number;
-
-  constructor(private readonly opts: RenewalSchedulerOptions) {
-    this.setTimeoutFn = opts.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
-    this.clearTimeoutFn = opts.clearTimeoutFn ?? ((id) => clearTimeout(id as NodeJS.Timeout));
-    this.checkIntervalMs = opts.checkIntervalMs ?? RENEWAL_CHECK_INTERVAL_MS;
-    this.backoffMs = RENEWAL_BACKOFF_MIN_MS;
-  }
-
-  get nextBackoffMs(): number {
-    return this.backoffMs;
-  }
-
-  start(): void {
-    this.stopped = false;
-    this.backoffMs = RENEWAL_BACKOFF_MIN_MS;
-    this.arm(this.checkIntervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    this.clearTimer();
-  }
-
-  resetBackoff(): void {
-    this.backoffMs = RENEWAL_BACKOFF_MIN_MS;
-  }
-
-  retryAfterFailure(detail?: string): void {
-    const wait = this.backoffMs;
-    this.backoffMs = Math.min(this.backoffMs * 2, RENEWAL_BACKOFF_MAX_MS);
-    this.opts.log?.(
-      detail
-        ? `tls renewal failed, retry in ${wait}ms: ${detail}`
-        : `tls renewal failed, retry in ${wait}ms`
-    );
-    this.arm(wait);
-  }
-
-  async runNow(): Promise<void> {
-    await this.tick(true);
-  }
-
-  private arm(ms: number): void {
-    if (this.stopped) return;
-    this.clearTimer();
-    this.timer = this.setTimeoutFn(() => {
-      void this.tick(false);
-    }, ms);
-  }
-
-  private clearTimer(): void {
-    if (this.timer === null) return;
-    this.clearTimeoutFn(this.timer);
-    this.timer = null;
-  }
-
-  private async tick(force: boolean): Promise<void> {
-    if (this.stopped && !force) return;
-    try {
-      if (force || (await this.opts.isDue())) {
-        await this.opts.renew();
-      }
-      this.backoffMs = RENEWAL_BACKOFF_MIN_MS;
-      this.arm(this.checkIntervalMs);
-    } catch (error) {
-      this.retryAfterFailure(errorMessage(error));
-    }
-  }
 }

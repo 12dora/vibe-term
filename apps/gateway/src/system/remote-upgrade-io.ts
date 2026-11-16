@@ -14,6 +14,8 @@ import { resolveUpgradeInstallDir } from './upgrade';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 import { rangesFromPairs } from './upgrade-staging';
 
+export { abortableSleep } from './abortable-sleep';
+
 export const RANGED_PUSH_STREAMS = 4;
 export const RANGED_PUSH_STREAMS_CAP = 8;
 export const RANGED_PUSH_CHUNK_BYTES = 4 * 1024 * 1024;
@@ -45,24 +47,6 @@ export function detachRequest(req: Request): Request {
   const origin = req.headers.get('origin');
   if (origin) headers.set('origin', origin);
   return new Request(req.url, { headers });
-}
-
-export function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new Error('aborted'));
-      return;
-    }
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      reject(new Error('aborted'));
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 /**

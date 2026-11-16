@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  SETTLED_GC_DELAY_MS,
   SMALL_HOST_TOTAL_MEM_BYTES,
   getMemoryProfile,
   resolveMemoryProfile,
+  scheduleSettledGc,
 } from './memory-profile';
 import { fanoutMaxPendingBytes } from './mesh/rtc/channel-fanout';
 import { defaultEmulatorMaxEntries } from './tmux-client/pane-emulator';
@@ -110,5 +112,33 @@ describe('profile limits', () => {
     expect(transferChunkBytes()).toBe(8 * 1024 * 1024);
     process.env.VIBETERM_TRANSFER_CHUNK_BYTES = '65536';
     expect(transferChunkBytes()).toBe(65536);
+  });
+});
+
+describe('scheduleSettledGc', () => {
+  test('启动后只排一次 GC，定时器 unref', () => {
+    const delays: number[] = [];
+    let unrefs = 0;
+    let gcs = 0;
+    let fire = (): void => undefined;
+    scheduleSettledGc({
+      gc: () => {
+        gcs += 1;
+      },
+      setTimer: (fn, ms) => {
+        delays.push(ms);
+        fire = fn;
+        return {
+          unref: () => {
+            unrefs += 1;
+          },
+        };
+      },
+    });
+    expect(delays).toEqual([SETTLED_GC_DELAY_MS]);
+    expect(unrefs).toBe(1);
+    expect(gcs).toBe(0);
+    fire();
+    expect(gcs).toBe(1);
   });
 });

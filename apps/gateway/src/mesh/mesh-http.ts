@@ -45,7 +45,8 @@ import { handleMeshInternalTmuxRequest, isMeshInternalPath } from './mesh-intern
 import { isUnguardedLocalUiPath } from './mesh-local-ui-paths';
 import { MeshRoutes } from './mesh-routes';
 import { isPeerInboundRequest, stripMeshPeerMarkerFromRequest } from './peer-request-marker';
-import { type RelayRoutes, isLocalRelayStatusRequest } from './relay-routes';
+import type { RelayRoutes } from './relay-routes';
+import { isLocalRelayStatusRequest } from './relay-routes-input';
 import {
   type AuthenticateResult,
   type SessionMiddlewareDeps,

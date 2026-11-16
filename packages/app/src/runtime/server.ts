@@ -2,6 +2,7 @@ import './bootstrap-env';
 import { resolve } from 'node:path';
 import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
 import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
+import { scheduleSettledGc } from '../../../../apps/gateway/src/memory-profile';
 import { startLoopWatchdogFromEnv } from '../../../../apps/gateway/src/system/loop-watchdog';
 import { getDisplayVersion } from '../../../../apps/gateway/src/system/version';
 import { t } from '../i18n';
@@ -79,6 +80,7 @@ async function main(): Promise<void> {
 
   console.log(`[vibeterm] ${t('runtime.started', { url: `http://${host}:${port}` })}`);
   watchdog.markStarted();
+  scheduleSettledGc();
 }
 
 process.on('unhandledRejection', (reason) => {

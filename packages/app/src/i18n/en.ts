@@ -1,4 +1,7 @@
+import { enRuntime } from './en-runtime';
+
 export const en: Record<string, string> = {
+  ...enRuntime,
   'tls.reset.warning':
     'This deletes all local TLS certificates, private keys, ACME account and DNS credentials without decrypting them. Stop the service first; HTTPS must be configured again and a new CA requires refreshing member trust pins.',
   'tls.reset.done':
@@ -31,16 +34,7 @@ export const en: Record<string, string> = {
 
   'errors.args.invalidFlag': 'Invalid flag value: --{{flag}}={{value}}',
 
-  'errors.validate.invalidPort': 'Invalid port: {{value}}',
-  'errors.validate.emptyField': '{{field}} cannot be empty.',
-
   'errors.version.invalid': 'Invalid version: {{input}}',
-
-  'errors.layout.packageRootNotFound':
-    'Unable to locate VibeTerm package root. Please ensure dist artifacts are complete.',
-  'errors.layout.runtimeMissing': 'Runtime artifact not found: {{path}}',
-  'errors.layout.feMissing': 'Frontend static assets not found: {{path}}',
-  'errors.layout.drizzleMissing': 'Gateway migration assets not found: {{path}}',
 
   'bun.notFound': 'Bun not found. Please install Bun and ensure it is available in PATH.',
   'bun.versionExecFailed': 'Failed to execute bun --version. Please verify Bun installation.',
@@ -48,35 +42,6 @@ export const en: Record<string, string> = {
   'bun.checkFailed': 'Bun check failed.',
   'bun.explicitInvalid': 'Specified bun path is invalid or not executable: {{path}}',
   'bun.unsafePath': 'Unsafe bun path (contains shell metacharacters): {{path}}',
-
-  'service.install.unsupportedPlatform':
-    'Automatic service installation is not supported on this platform: {{platform}}',
-  'service.systemd.daemonReloadFailed': 'systemctl daemon-reload failed: {{detail}}',
-  'service.systemd.enableFailed': 'systemctl enable failed: {{detail}}',
-  'service.systemd.restartFailed': 'systemctl restart failed: {{detail}}',
-  'service.systemd.lingerEnabled':
-    'Enabled systemd linger for {{user}} so the service keeps running after logout (opt out with --no-linger).',
-  'service.systemd.lingerFailed':
-    'Could not enable systemd linger; the service stops when your last login session ends. Run: {{command}}',
-  'service.launchd.bootstrapFailed': 'launchctl bootstrap failed: {{detail}}',
-  'service.status.none': 'Service manager is not integrated for platform: {{platform}}',
-  'service.status.plistMissing': 'launchd plist not found',
-  'service.hint.systemd': 'systemctl --user status {{serviceName}}',
-  'service.hint.launchd': 'launchctl print gui/$(id -u)/com.vibeterm.{{serviceName}}',
-  'service.hint.none': 'No service manager command on this platform.',
-  'service.hint.openrc': 'rc-service {{serviceName}} status',
-  'service.status.openrcNotBooted':
-    'OpenRC is installed but did not boot this system (common in containers); services cannot be managed.',
-  'service.openrc.sudoPrompt':
-    'The OpenRC service is managed as root; sudo may ask for your password.',
-  'service.openrc.sudoRequired':
-    'Root access is required for "{{command}}". Run as root or with sudo, or pass --no-service.',
-  'service.openrc.commandFailed': '{{command}} failed: {{detail}}',
-  'service.openrc.invalidName': 'Invalid OpenRC service or user name: {{name}}',
-  'service.openrc.sudoersSkipped':
-    'Could not install the sudoers rule; upgrades and restarts from the web UI will need sudo: {{detail}}',
-  'service.openrc.uninstallManual':
-    'Could not remove the OpenRC service ({{detail}}). Run as root: {{commands}}',
 
   'init.prompt.dirExistsConfirm':
     'Directory {{installDir}} is not empty. Install into it anyway (existing files are not deleted)?',
@@ -263,13 +228,6 @@ export const en: Record<string, string> = {
   'deps.install.brewMissing': 'Homebrew not found. Install Homebrew first: https://brew.sh',
   'deps.install.unknownDistro':
     'Unable to detect Linux distribution. Please install {{dep}} manually.',
-
-  'runtime.restartRequested': 'Restart requested; exiting for service manager restart.',
-  'runtime.started': 'Service started on {{url}}',
-  'runtime.frontendMissing': 'Frontend assets not found.',
-  'runtime.methodNotAllowed': 'Method Not Allowed',
-  'runtime.forbidden': 'Forbidden',
-  'runtime.notFound': 'Not Found',
 
   'relay.join.portsHint': 'Allow inbound {{list}}',
   'relay.join.relay': 'Relay: {{url}} (tenant {{tenantId}})',

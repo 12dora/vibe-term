@@ -6,7 +6,7 @@ import { requestDispatchContext } from '../mesh/types';
 import { getAccessAddressesAsync } from '../system/access-addresses';
 import { MANAGED_EXTERNALLY, getSystemInfo, isManagedExternally } from '../system/info-public';
 import { awaitRelayEntryProbe, relayEntryAccessUrl } from '../system/relay-entry';
-import { STAGED_PACKAGE_MAX_BYTES } from '../system/upgrade';
+import { STAGED_PACKAGE_MAX_BYTES } from '../system/upgrade-limits';
 import { json } from './http';
 import { handleSystemFacts } from './system-facts';
 

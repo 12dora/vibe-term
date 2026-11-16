@@ -8,7 +8,7 @@ import {
   readPaneGrantRef,
   toServerEpochHex,
 } from '../agent/pane-grant/rpc-guard';
-import { findPaneInSnapshot } from '../agent/tools/pane-info';
+import { findPaneInSnapshot } from '../agent/tools/pane-snapshot-lookup';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, dispatchRoutes, route } from '../api/route';
 import { getDeviceById } from '../db';
