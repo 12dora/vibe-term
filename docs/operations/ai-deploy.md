@@ -6,19 +6,21 @@
 
 ### 前置条件
 
-- **操作系统**：macOS 或 Linux。`install.sh` 检测到其它系统直接退出；Windows 不安装服务。
-- **Bun ≥ 1.3.0**：不需要用户预装，`install.sh` 检测不到或版本过低时会自动执行 `curl -fsSL https://bun.sh/install | bash`，装到 `~/.bun/bin`。
-- **tmux ≥ 3.0**：本机要跑终端就必须有；`--role relay`（纯中继）跳过该检查。缺失时 `init` 会给出安装计划，非交互模式加 `--install-deps` 才会自动装。
-- **curl 与 tar**：`install.sh` 硬依赖，缺失即退出。
+- **操作系统**：macOS 或 Linux（含 Alpine musl 的 x64 / arm64）。`install.sh` 检测到其它系统直接退出；Windows 不安装服务。
+- **Bun ≥ 1.3.0**：不需要用户预装。`install.sh` 检测不到或版本过低时：同时有 bash+curl 则执行 `curl -fsSL https://bun.sh/install | bash`；否则在 Linux 上下官方 zip（musl 为 `bun-linux-*-musl.zip`），对照 `SHASUMS256.txt` 后装到 `~/.bun/bin`。zip 引导需要 `unzip`。
+- **tmux ≥ 3.0**：本机要跑终端就必须有；`--role relay`（纯中继）跳过该检查。缺失时 `init` 会给出安装计划，非交互模式加 `--install-deps` 才会自动装。Alpine 上另需 `libstdc++` / `libgcc`（`apk add tmux libstdc++ libgcc`）。
+- **curl 或 wget，以及 tar**：`install.sh` 硬依赖其一 HTTP 客户端与 tar，缺失即退出。
 - 出网能访问 GitHub Releases（下载 `vibeterm-cli-<版本>.tgz` 与 `SHA256SUMS`，校验不通过即中止）。
 
 ### 安装命令
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
+```sh
+curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
+# 无 curl 时：
+wget -qO- https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
 ```
 
-安装不提问，全部取默认值（角色 `standalone`、`127.0.0.1:9883`、peer 端口 `39001`、开机自启）；`--install-dir`、`--host`、`--port`、`--db-path`、`--autostart`、`--service-name`、`--role`、`--peer-port` 均为可选覆盖。默认端口被占用且未显式指定时，`init` 自动顺延到下一个空闲端口并打印一行说明。`install.sh` 后面追加的参数会原样传给 `vibeterm init`，例如 `bash install.sh --role relay --relay-public-url https://relay.example.com`。管道执行时脚本会尝试接管 `/dev/tty`，仅用于缺依赖时的安装确认与中继角色的追问（公网 HTTPS 端口、中继公开地址）；接不上就自动补 `--no-interactive`，非交互的中继角色必须给 `--relay-public-url`。固定版本用 `VIBETERM_VERSION=<版本> bash install.sh`。
+安装不提问，全部取默认值（角色 `standalone`、`127.0.0.1:9883`、peer 端口 `39001`、开机自启）；`--install-dir`、`--host`、`--port`、`--db-path`、`--autostart`、`--service-name`、`--role`、`--peer-port` 均为可选覆盖。默认端口被占用且未显式指定时，`init` 自动顺延到下一个空闲端口并打印一行说明。`install.sh` 后面追加的参数会原样传给 `vibeterm init`，例如 `sh install.sh --role relay --relay-public-url https://relay.example.com`。管道执行时脚本会尝试接管 `/dev/tty`，仅用于缺依赖时的安装确认与中继角色的追问（公网 HTTPS 端口、中继公开地址）；接不上就自动补 `--no-interactive`，非交互的中继角色必须给 `--relay-public-url`。固定版本用 `VIBETERM_VERSION=<版本> sh install.sh`。
 
 CLI 落在 `~/.local/bin/vibeterm`（`tmex` 为等价别名）。该目录不在 `PATH` 时脚本会打印提示，需要 `export PATH="$HOME/.local/bin:$PATH"`。
 
@@ -67,6 +69,10 @@ systemctl --user restart vibeterm
 systemctl --user status vibeterm -l --no-pager
 journalctl --user -u vibeterm -n 200 --no-pager
 
+# Linux（OpenRC）
+rc-service vibeterm restart
+rc-service vibeterm status
+
 # macOS（launchd）
 launchctl kickstart -k gui/$(id -u)/com.vibeterm.vibeterm
 launchctl print gui/$(id -u)/com.vibeterm.vibeterm
@@ -112,11 +118,13 @@ vibeterm relay status           # 中继机本地：口令状态、租户数、�
 
 1. 安装（不提问，角色默认 `standalone`）：
 
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
+   # 无 curl 时：
+   wget -qO- https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
    ```
 
-   需要局域网访问或改端口时追加参数，例如 `bash install.sh --host 0.0.0.0 --port 9884`。
+   需要局域网访问或改端口时追加参数，例如 `sh install.sh --host 0.0.0.0 --port 9884`。
 
 2. 打开 `http://127.0.0.1:9883`。
 
@@ -125,7 +133,7 @@ vibeterm relay status           # 中继机本地：口令状态、租户数、�
    ```bash
    # Linux 路径示例，macOS 换成 ~/Library/Application Support/vibeterm/app.env
    sed -i 's/^VIBETERM_BIND_HOST=.*/VIBETERM_BIND_HOST=0.0.0.0/' ~/.local/share/vibeterm/app.env
-   systemctl --user restart vibeterm
+   systemctl --user restart vibeterm   # OpenRC：rc-service vibeterm restart
    ```
 
    然后放行防火墙上的 `9883`。局域网地址是明文 HTTP，只适合可信网络。
@@ -169,8 +177,8 @@ curl -sS http://127.0.0.1:9883/healthz
 
 1. 安装。中继角色是唯一仍会追问的场景（公网 HTTPS 端口、中继公开地址）；非交互必须给 `--relay-public-url`，它在落任何配置之前就按 https 规则校验（只有回环允许 http）：
 
-   ```bash
-   bash install.sh --role relay --no-interactive \
+   ```sh
+   sh install.sh --role relay --no-interactive \
      --relay-public-url https://<中继域名>
    ```
 
@@ -270,8 +278,8 @@ curl -sS https://<中继域名>/api/relay/health
 
 1. 安装，公开地址写成公网侧真正能访问到的形态：
 
-   ```bash
-   bash install.sh --role relay,node --no-interactive \
+   ```sh
+   sh install.sh --role relay,node --no-interactive \
      --relay-public-url https://<公网 IP 或 DDNS 域名> --public-port <路由器外部端口>
    ```
 
@@ -325,8 +333,8 @@ curl -sSk https://<公网 IP 或 DDNS 域名>:<路由器外部端口>/api/relay/
 
 1. 安装，公开地址直接写隧道域名：
 
-   ```bash
-   bash install.sh --role relay,node --no-interactive \
+   ```sh
+   sh install.sh --role relay,node --no-interactive \
      --relay-public-url https://<隧道域名>
    ```
 
@@ -388,8 +396,10 @@ curl -sS https://<隧道域名>/api/relay/health
 
 1. 在要加入的机器上按默认安装（`standalone`，无需选角色；加入时 `relay join` 自动切为 `node` 并重启服务）：
 
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
+   # 无 curl 时：
+   wget -qO- https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
    ```
 
 2. **密码加入**（推荐，不需要提前出码）：

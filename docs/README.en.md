@@ -19,8 +19,10 @@
   Run Claude Code, Codex, Grok, and other AI coding agents remotely from one place, keep them working in the background, and check results or send instructions from anywhere.
 </p>
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
+```sh
+curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
+# without curl:
+wget -qO- https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
 ```
 
 <p align="center">

@@ -7,7 +7,7 @@
 | 能力 | 条件 | 不满足时 |
 | --- | --- | --- |
 | 看到窗口内存读数 | 宿主有可用的 `ps`（几乎总有） | 徽标不渲染 |
-| 给窗口套内存限额 | Linux + cgroup v2 + 用户级 systemd + **tmux ≥ 3.6 且带 systemd 支持** | 限额写得进设置但不会生效，界面会明说 |
+| 给窗口套内存限额 | Linux + cgroup v2 + 用户级 systemd + **tmux ≥ 3.6 且带 systemd 支持** | 限额写得进设置但不会生效，界面会明说。OpenRC 宿主没有用户级 systemd，走这一档 |
 
 2.8.0 之前只有前一套判据的一半：宿主只要有 cgroup v2 与用户级 systemd 就被判为「支持」，却没检查 tmux 有没有真的把 pane 放进 scope。tmux < 3.6（Ubuntu 24.04 是 3.4、Debian 12 是 3.3a）下所有读数都是 0，徽标显示 `0 B`，限额也悄悄不生效。
 
@@ -243,7 +243,7 @@ vibeterm settings memory set [--enabled on|off] [--high <MB>] [--max <MB>] [--sw
 下列任一成立：
 
 - 非 Linux（含 macOS / Windows），或没有 cgroup v2（`/sys/fs/cgroup/cgroup.controllers` 不存在）
-- `systemctl --user show-environment` 失败（没有用户级 systemd 会话）
+- `systemctl --user show-environment` 失败（没有用户级 systemd 会话；OpenRC 安装属于这一类）
 - **有 pane 读数、却一个 `tmux-spawn-*.scope` 都没有**（tmux 低于 3.6 或未编 systemd 支持）
 
 前两条由采样脚本的头判定（`no-cgroup2` 在这次连接内永久，`no-user-systemd` 连续 6 次才钉死，中途恢复就复位）；

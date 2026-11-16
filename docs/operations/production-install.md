@@ -1,6 +1,6 @@
 # VibeTerm 部署指南
 
-本文是单机生产部署手册：安装、服务与日志、HTTPS 反代、升级、SSH 设备、备份恢复与基础排障；面向部署 VibeTerm 的运维。生产安装走 GitHub Releases 的 `vibeterm-cli` 包（launchd / systemd 用户服务 + SQLite）。多机 mesh、登录、passkey / TOTP、直连与排障见 [mesh 运维](./mesh-operations.md)。
+本文是单机生产部署手册：安装、服务与日志、HTTPS 反代、升级、SSH 设备、备份恢复与基础排障；面向部署 VibeTerm 的运维。生产安装走 GitHub Releases 的 `vibeterm-cli` 包（launchd / systemd 用户服务 / OpenRC + SQLite）。多机 mesh、登录、passkey / TOTP、直连与排障见 [mesh 运维](./mesh-operations.md)。Alpine musl 与 OpenRC 见下文专节。
 
 VibeTerm 没有 JWT、管理员密码或 OIDC：standalone 无应用层登录；加入 mesh 后的身份是用户自持根钥。
 
@@ -8,14 +8,30 @@ VibeTerm 没有 JWT、管理员密码或 OIDC：standalone 无应用层登录；
 
 - **Bun**：1.3+（生产 runtime 与 CLI 鉴权命令）
 - **tmux**：3.0+（本机设备）
-- **macOS 或 Linux**（Windows 不安装服务；直连 native addon 另需 glibc，见运维指南平台表）
+- **macOS 或 Linux**（含 Alpine musl 的 x64 / arm64；Windows 不安装服务。直连 native addon 支持 glibc 与 musl，见运维指南平台表）
 
 开发调试用仓库内 `bun run dev`，走 `development.env`，端口与生产 9883 错开。三套环境见 [三套环境](../development/environments.md)。**不要**用生产库或安装目录做开发。
 
+## Alpine Linux（musl）
+
+x64 与 arm64 的 Alpine / musl 主机可以安装、运行、升级与卸载。`install.sh` 缺 tmux / `libstdc++` 时只打印 hint，不失败。
+
+前置（root 或加 `sudo`）：
+
+```sh
+apk add tmux libstdc++ libgcc
+```
+
+HTTP 客户端二选一：`apk add curl`，或使用 busybox 自带的 `wget`。走官方 musl zip 引导 Bun 时还需要 `unzip`（`apk add unzip`）。非 root 安装 OpenRC 服务需要 `sudo`。
+
+**Bun 如何到位。** `install.sh` 在本机没有合格 Bun（≥ 1.3.0）时：同时有 `bash` 与 `curl` 则执行官方安装器 `curl -fsSL https://bun.sh/install | bash`，装到 `~/.bun/bin`；否则只在 Linux 上下官方 zip（`bun-linux-x64-musl.zip` / `bun-linux-aarch64-musl.zip`，x64 无 AVX2 时带 `-baseline`），对照同一 release 的 `SHASUMS256.txt` 校验后 `unzip` 进 `~/.bun/bin/bun`。缺 `unzip` 会硬失败并提示 `apk add unzip`。Darwin 没有 zip 引导，需自行提供 bash+curl。
+
 ## 生产安装（vibeterm-cli）
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
+```sh
+curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
+# 无 curl 时：
+wget -qO- https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
 ```
 
 安装全程不提问，全部取默认值：角色 `standalone`（单机、无登录页）、监听 `127.0.0.1:9883`、peer 端口 `39001`、开机自启、服务名 `vibeterm`。默认的网关或 peer 端口被占用且未显式指定时，`init` 自动顺延到下一个空闲端口并打印一行说明。
@@ -26,8 +42,8 @@ curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | 
 
 要做公网中继入口，改角色即可：
 
-```bash
-bash install.sh --role relay --relay-public-url https://<中继域名>
+```sh
+sh install.sh --role relay --relay-public-url https://<中继域名>
 ```
 
 或 `relay,node`（中继兼本机设备）。只有这两种角色才会追问公网 HTTPS 端口与中继公开地址，非交互时必须给 `--relay-public-url`。角色只能是 `standalone` | `node` | `relay` | `relay,node`。
@@ -42,7 +58,7 @@ bash install.sh --role relay --relay-public-url https://<中继域名>
 - 生成 `app.env`（含 `VIBETERM_MASTER_KEY`、`VIBETERM_BIND_HOST`、`GATEWAY_PORT`、`DATABASE_URL` 及 mesh 相关键）；
 - 部署 `runtime/server.js`、前端静态资源、drizzle 迁移；
 - 写 `run.sh`（导出 `VIBETERM_FE_DIST_DIR` / `VIBETERM_MIGRATIONS_DIR` / `VIBETERM_NATIVE_DIR` 后 exec Bun）；
-- 按平台安装 launchd plist 或 systemd 用户单元。
+- 按探测结果安装 launchd plist、systemd 用户单元或 OpenRC init 脚本（`/etc/init.d/<服务名>`）。
 
 安装树权限：`init` / `upgrade` apply 把安装根与 `data/`、`versions/`、`backups/`、`staging/` 收成 `0700`（已存在的目录也会 chmod）。目录若是符号链接，只在解析后的目标属于当前 uid 时 chmod 目标，否则告警并继续；`EPERM` / `EACCES` 同样告警、不阻断安装或升级。只有进程自己新建的目录失败才会让 `init` / `upgrade` 失败。`vibeterm.db` 及 `-wal`/`-shm`、备份副本、日志与 pid 文件为 `0600`（gateway 打开库之后也会再 chmod 一次）。不设 systemd `UMask` / launchd `Umask`，以免 tmux 窗格与 `exec` 子进程继承 077、把用户文件默默收成 `0600`/`0700`。
 
@@ -58,7 +74,7 @@ vibeterm init --no-interactive --host 0.0.0.0 --port 9884 --autostart false
 
 ### 管道执行时的终端接管
 
-`curl … | bash` 下 bash 自己的 fd 0 是脚本管道，所以 `install.sh` 用 `exec 3</dev/tty` 把控制终端接回来再喂给 `init`，供缺少 tmux / bun 时的依赖安装确认与中继角色的追问使用；接不上就自动补 `--no-interactive`（依赖需 `--install-deps` 才会自动安装，中继角色必须由参数给全）。
+`curl … | sh`（或 `wget … | sh`）下脚本自己的 fd 0 是管道，所以 `install.sh` 用子 shell `( : </dev/tty )` 探测控制终端，成功则把 `/dev/tty` 喂给 `init`，供缺少 tmux / bun 时的依赖安装确认与中继角色的追问使用；接不上就自动补 `--no-interactive`（依赖需 `--install-deps` 才会自动安装，中继角色必须由参数给全）。dash / ash 上失败的 `exec 3</dev/tty` 会直接退出整个非交互 shell，因此不能再用那种写法。
 
 CLI 侧不读 `process.stdin`，而是每次提问自己打开 `/dev/tty`，答完即销毁该句柄。原因是 **Bun 在「被 shell 重新打开的 `/dev/tty`」这种描述符上永远收不到 `process.stdin` 数据**（Node 正常），沿用 `process.stdin` 会让一键安装卡死在第一个提问上——机器没装 Node ≥ 20 时 `install.sh` 正是用 Bun 跑 `init`。句柄必须销毁：留着不销毁会吊住事件循环，答完最后一问也退不出去。`stdin` 不是 TTY 时仍走 `process.stdin`，管道喂答案与非交互行为不变。
 
@@ -68,7 +84,7 @@ CLI 侧不读 `process.stdin`，而是每次提问自己打开 `/dev/tty`，答�
 
 ## 服务与日志
 
-服务名默认 `vibeterm`：systemd 用户单元为 `vibeterm.service`，launchd label 为 `com.vibeterm.vibeterm`。改名前装的实例若用的是旧默认服务名 `tmex`，2.0.0 升级会改成 `vibeterm` 并先 bootout、删除旧的 `com.tmex.tmex.plist` / `tmex.service`；自定义服务名保持不变，只换 label 前缀为 `com.vibeterm.`。定义只在 `init` / `upgrade` 时渲染，已运行实例不会热更新 unit / plist。下面示例里的 `vibeterm.service` 按自己的服务名替换。
+服务名默认 `vibeterm`：systemd 用户单元为 `vibeterm.service`，OpenRC 为 `/etc/init.d/vibeterm`，launchd label 为 `com.vibeterm.vibeterm`。改名前装的实例若用的是旧默认服务名 `tmex`，2.0.0 升级会改成 `vibeterm` 并先 bootout、删除旧的 `com.tmex.tmex.plist` / `tmex.service`；自定义服务名保持不变，只换 label 前缀为 `com.vibeterm.`。定义只在 `init` / `upgrade` 时渲染，已运行实例不会热更新 unit / plist / init 脚本。下面示例里的 `vibeterm.service` 按自己的服务名替换。
 
 **Linux（systemd 用户单元）：**
 
@@ -82,7 +98,29 @@ unit 使用 `KillMode=process`，stop / restart / crash 只杀 VibeTerm 主进�
 
 **macOS（launchd）：** plist 含 `AbandonProcessGroup=true`，不含 `Umask`。用 `launchctl` 查看对应 job；标准输出进系统日志。
 
-健康检查（mesh 下无会话只返回 `{status:'ok'}`）：
+## OpenRC
+
+Linux 上服务管理器探测顺序：可用的 systemd 用户管理器（`systemctl --user show-environment` 成功）→ 已引导的 OpenRC（存在 `/sbin/openrc-run` 或 PATH 上的 `openrc-run`，且 `/run/openrc/softlevel` 存在；若只有 `/run/openrc` 目录则再看 `rc-status --runlevel` 是否成功）→ `none`。装了 OpenRC 包但未经它引导（容器常见）时，`init` 报错并提示加 `--no-service`，由容器的进程管理负责运行，不会静默回退。
+
+`init` 写入 `/etc/init.d/<服务名>`（默认 `vibeterm`），`command_user` 为安装用户，由 `supervise-daemon` 守护：`respawn_delay=3`、`respawn_max=0`（无限重拉，网页「重启」`process.exit(0)` 后约 3 秒拉回）；`rc_cgroup_cleanup=no` 且不加 `--stop-group`，stop / restart 只向 supervise-daemon 的子进程发信号，tmux 会话得以存活。日志落在 `<installDir>/vibeterm.log` 与 `vibeterm.err.log`（与 launchd 同路径）；init 在 `start_pre` 导出 `VIBETERM_LOG_FILE` / `VIBETERM_LOG_ERR_FILE`，gateway 进程内轮转（默认单文件 16 MiB、保留 3 代）。依赖写成 `want net` 而非 `need net`，避免无 net provider 的容器启动失败。
+
+非 root 安装会提权一次（有 TTY 时先 `sudo -v`，之后 `sudo -n`）。无 TTY、没有 sudo 或被拒则失败，提示以 sudo 运行或加 `--no-service`。
+
+非 root 还会写 `/etc/sudoers.d/vibeterm-<服务名>`（0440，先 `visudo -cf` 校验）：只放行 `rc-service <服务名> start|stop|restart|status`，`NOPASSWD`。网页升级没有 TTY，不能再交互输入密码，所以需要这条规则才能做到「只 sudo 一次」。已有等价规则则跳过；写入失败只告警、不阻断安装。卸载删除该文件。
+
+没有用户级 systemd 时不可用：窗口内存限额、tmux cgroup 归位、`DefaultOOMPolicy=continue` drop-in。读数仍走进程树 RSS。见 [窗口内存](./window-memory-limits.md) 与 [tmux 进程存活](./tmux-process-survival.md)。
+
+**状态与日志：**
+
+```sh
+rc-service vibeterm status
+tail -n 200 ~/.local/share/vibeterm/vibeterm.log
+tail -n 200 ~/.local/share/vibeterm/vibeterm.err.log
+```
+
+`rc-service … status` 与 `rc-update show default` 不需要 root。
+
+健康检查（任意平台；mesh 下无会话只返回 `{status:'ok'}`）：
 
 ```bash
 curl -sS http://127.0.0.1:9883/healthz
@@ -144,10 +182,10 @@ ssh-copy-id -i ~/.ssh/id_ed25519.pub user@remote-host
 
 ```bash
 # 示例：Linux 默认路径，先停服务再拷
-systemctl --user stop vibeterm.service
+systemctl --user stop vibeterm.service   # OpenRC：rc-service vibeterm stop
 cp -a ~/.local/share/vibeterm/data/vibeterm.db* ./backup/
 cp ~/.local/share/vibeterm/app.env ./backup/
-systemctl --user start vibeterm.service
+systemctl --user start vibeterm.service  # OpenRC：rc-service vibeterm start
 ```
 
 恢复时必须同时放回对应的 `VIBETERM_MASTER_KEY`。不要把测试库拷进生产目录。mesh 节点身份在库内，只恢复单机库不会自动出现在其它入口，需保持各机备份一致或重新 `vibeterm relay join`。
@@ -157,9 +195,14 @@ systemctl --user start vibeterm.service
 ### 服务起不来
 
 ```bash
-# Linux
+# Linux（systemd）
 systemctl --user status vibeterm.service -l --no-pager
 journalctl --user -u vibeterm.service -n 200 --no-pager
+
+# Linux（OpenRC）
+rc-service vibeterm status
+tail -n 200 ~/.local/share/vibeterm/vibeterm.log
+tail -n 200 ~/.local/share/vibeterm/vibeterm.err.log
 ```
 
 核对 `app.env` 里生产契约键是否齐全：`VIBETERM_MASTER_KEY`、`GATEWAY_PORT`、`VIBETERM_BIND_HOST`、`DATABASE_URL`。`run.sh` 必须能找到 `VIBETERM_FE_DIST_DIR` 与 `VIBETERM_MIGRATIONS_DIR`。

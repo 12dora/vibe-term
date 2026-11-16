@@ -7,7 +7,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [ai-deploy.md](./ai-deploy.md) | 按场景给出可直接执行的部署步骤（独立 / 中继 × 公网域名 / 端口转发 / Cloudflare Tunnel），外加 agent 用 CLI 调试别的节点，面向 AI 助手与运维 |
-| [production-install.md](./production-install.md) | 单机生产部署（安装、服务、日志、反代、SSH 设备、备份、排障） |
+| [production-install.md](./production-install.md) | 单机生产部署（安装、Alpine musl、OpenRC、服务、日志、反代、SSH 设备、备份、排障） |
 | [mesh-operations.md](./mesh-operations.md) | mesh 运维手册（角色、延迟优化、节点表、环境变量、接入中继、加入 / 吊销、账号安全、直连、灾难恢复、排障表） |
 | [docker-node.md](./docker-node.md) | 容器节点 |
 
@@ -23,7 +23,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [tmux-process-survival.md](./tmux-process-survival.md) | 服务 kill 策略、linger、systemd OOMPolicy、套接字不可达的自动恢复 |
+| [tmux-process-survival.md](./tmux-process-survival.md) | 服务 kill 策略（含 OpenRC supervise-daemon）、linger、systemd OOMPolicy、套接字不可达的自动恢复 |
 | [window-memory-limits.md](./window-memory-limits.md) | 按 tmux 窗口统计内存与 Linux 上的 systemd 限额：GUI 徽标、远程/批量设限、CLI，面向运维 |
 | [gateway-loop-watchdog.md](./gateway-loop-watchdog.md) | 主线程卡死（libdatachannel 死锁）的真因、进程内看门狗与「服务 running 但 HTTP 不通」排查 |
 | [troubleshooting-db-master-key.md](./troubleshooting-db-master-key.md) | 库与主密钥不匹配 |
@@ -45,4 +45,4 @@
 | [remote-upgrade.md](./remote-upgrade.md) | 远程升级：三通道投递与推包续传 |
 | [bun-path-resolution.md](./bun-path-resolution.md) | CLI 的 bun 路径解析 |
 | [rename-migration.md](./rename-migration.md) | tmex → VibeTerm 改名迁移 |
-| [small-memory.md](./small-memory.md) | 小内存主机的内存档位、按角色懒加载与分包、缓冲上限与复测 |
+| [small-memory.md](./small-memory.md) | 小内存 / 256 MB 主机：启动路径懒加载、RSS 构成、内存档位与复测 |

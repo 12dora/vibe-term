@@ -19,8 +19,10 @@
   让 Claude Code、Codex、Grok 等 AI 编码助手远程集中管理，后台运行，实现随时随地看结果、发指令。
 </p>
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
+```sh
+curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
+# 无 curl 时：
+wget -qO- https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | sh
 ```
 
 <p align="center">

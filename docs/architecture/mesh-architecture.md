@@ -33,13 +33,13 @@ mesh 之前的「多设备」是 gateway 通过 SSH 主动连接远程主机（`
 | 会话 | 浏览器临时钥 18 小时（只能登录）；`node-session` 18 小时滑动续期，绝对上限 7 天 |
 | OIDC | 移除 |
 | 中继兼设备 | `relay,node` 同进程；纯 `relay` 无前端 |
-| 部署 | `vibeterm init --role standalone \| node \| relay \| relay,node`，systemd/launchd + SQLite |
+| 部署 | `vibeterm init --role standalone \| node \| relay \| relay,node`，systemd 用户服务 / launchd / OpenRC + SQLite |
 | WebRTC 依赖 | `node-datachannel` 的 JS 层内联进 runtime，`.node` 二进制按平台在安装期按需下载到 `<installDir>/native/` |
 | 文件传输 | 直连 `bulk` 流，失败回落中转（v1 失败即整体重传） |
 | UI 壳 | 不引入 EasyUI，沿用 VibeTerm 现有 UI 体系 |
 | 直连承载范围 | 直连是同一逻辑 WS 会话的第二条载体（§3），不迁移会话 |
 | node 离线展示 | 每个 node 缓存清单，离线时灰显其设备 |
-| 直连支持平台（v1） | macOS arm64 / x64，Linux glibc x64 / arm64；musl、Windows 不在 v1 |
+| 直连支持平台（v1） | macOS arm64 / x64，Linux glibc 与 musl 的 x64 / arm64（`linux-x64-musl` / `linux-arm64-musl` 预构建）；Windows 不在 v1。Linux 上 libc 探测失败则视为不支持，不再猜测 glibc |
 
 ## §1 总体拓扑
 

@@ -9,6 +9,7 @@ VibeTerm 沿用 tmux 的哲学：只要业务 tmux 会话还在、用户随时�
 服务定义模板按平台分别放宽 kill 范围，使其只针对 VibeTerm 主进程：
 
 - **Linux（systemd 用户单元）**：`[Service]` 段 `KillMode=process`。systemd 在 stop/restart 以及进程异常退出（crash 触发 `Restart=always`）时，只向 MainPID 发送终止信号，不对整个 unit cgroup 广播。
+- **Linux（OpenRC）**：`/etc/init.d/<服务名>` 用 `supervise-daemon`，stop / restart 只向其子进程发 SIGTERM（不加 `--stop-group`，且 `rc_cgroup_cleanup=no`）。tmux server 已 daemonize，服务停止或重启不会带走业务会话。
 - **macOS（launchd）**：plist `AbandonProcessGroup=true`。launchd 终止 job 时只终止主进程，放弃对进程组的连带处理。
 
 覆盖 stop、restart 与 crash 重启，即由服务管理器主动终止 VibeTerm 主进程的所有路径。程序内自升级也依赖这一策略：detached 的升级子进程在服务被停时仍存活（见 [自更新](./self-update.md)）。
@@ -71,7 +72,7 @@ DefaultOOMPolicy=continue
 - **不阻断安装**：写文件或重载失败一律降级为告警日志，安装/升级照常完成。
 - **卸载**：`vibeterm uninstall` 只在该文件与 VibeTerm 写出的内容逐字节相同时删除；用户改过就保留。
 
-实现见 `packages/app/src/lib/systemd-oom-policy.ts`，接入点在 `packages/app/src/lib/service.ts` 的 systemd 分支（macOS/launchd 不涉及）。
+实现见 `packages/app/src/lib/systemd-oom-policy.ts`，接入点在 `packages/app/src/lib/service.ts` 的 systemd 分支（macOS / launchd / OpenRC 不涉及：没有用户级 systemd 时不写这份 drop-in，窗口内存限额与 tmux cgroup 归位同样不可用）。
 
 网关启动时另有只读自检（`packages/app/src/runtime/service-selfcheck.ts`）：Linux 上 `systemctl --user show -p DefaultOOMPolicy` 为 `stop` 且 `tmux -V` ≥ 3.6（解析不出版本时按可能受影响处理）就打一行告警，提示跑 `vibeterm upgrade`。覆盖未升级或手工部署的机器。
 

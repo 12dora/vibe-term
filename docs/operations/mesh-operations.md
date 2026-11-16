@@ -110,20 +110,20 @@
 
 ## 首次组网
 
-推荐路径：一台有公网 HTTPS 的机器做 `relay` 或 `relay,node`，其它机器 `init` 后 `vibeterm user add`（若尚无本机用户）再 `relay enroll` / `relay join`。包与升级流程与单机相同（`bash install.sh` / `vibeterm upgrade`）。零中继的 `node` 也合法：uplink 空闲，peer 直连与 `peer_cache` 仍可用，网页提示去接入一台中继。
+推荐路径：一台有公网 HTTPS 的机器做 `relay` 或 `relay,node`，其它机器 `init` 后 `vibeterm user add`（若尚无本机用户）再 `relay enroll` / `relay join`。包与升级流程与单机相同（`sh install.sh` / `vibeterm upgrade`）。零中继的 `node` 也合法：uplink 空闲，peer 直连与 `peer_cache` 仍可用，网页提示去接入一台中继。
 
-安装目录默认：macOS `~/Library/Application Support/vibeterm/`，Linux `~/.local/share/vibeterm/`；改名前（1.1.x）装在 `.../tmex/` 的实例升到 2.0.0 时由升级器整体搬到新路径（库、`app.env` 键、服务 label 一并迁移，见 [改名迁移](./rename-migration.md)），自定义 `--install-dir` 的安装不搬。服务名取自 `install-meta.json`，默认 `vibeterm`（launchd label `com.vibeterm.vibeterm`，systemd `vibeterm.service`）。**不要**手改正在跑的生产安装目录里的库或 `app.env` 做试验。
+安装目录默认：macOS `~/Library/Application Support/vibeterm/`，Linux `~/.local/share/vibeterm/`；改名前（1.1.x）装在 `.../tmex/` 的实例升到 2.0.0 时由升级器整体搬到新路径（库、`app.env` 键、服务 label 一并迁移，见 [改名迁移](./rename-migration.md)），自定义 `--install-dir` 的安装不搬。服务名取自 `install-meta.json`，默认 `vibeterm`（launchd label `com.vibeterm.vibeterm`，systemd `vibeterm.service`，OpenRC `/etc/init.d/vibeterm`）。**不要**手改正在跑的生产安装目录里的库或 `app.env` 做试验。
 
 ### 1. 在中继机安装并指定角色
 
-```bash
-bash install.sh --role relay --relay-public-url https://relay.example.com
+```sh
+sh install.sh --role relay --relay-public-url https://relay.example.com
 ```
 
 交互模式会询问 `VIBETERM_RELAY_PUBLIC_URL`。非交互：
 
-```bash
-bash install.sh --role relay --no-interactive \
+```sh
+sh install.sh --role relay --no-interactive \
   --relay-public-url https://relay.example.com
 ```
 
@@ -311,7 +311,7 @@ vibeterm direct disable
 
 `enable` 按 `platform / arch / libc` 查 pinned manifest，从 npm 拉单平台 tarball，校验 sha512 后解出 `node_datachannel.node` 到 `<installDir>/native/`，并写 `native/manifest.json`。`disable` 删除整个 `native/` 目录。`upgrade` 在部署 runtime 后若已有 native 且版本变化则重下；standalone 无 `native/` 则跳过。
 
-**v1 支持的平台：** macOS arm64 / x64，Linux glibc x64 / arm64。**musl、Windows、其它 arch 不支持**（`lookupNativePin` 返回 `null`，enable 失败且不阻断）。缺失或装载失败 → `direct_capable=false`。authorize 在没有 RTC provider 时回 503 `DIRECT_UNAVAILABLE` `reason=disabled`，原生栈没就绪回 `reason=native-missing`。这两档客户端停放 10 分钟，只有用户重试才再问。指纹超时、中止、内部失败、名额满回 `DIRECT_BUSY`（带 `retryAfterMs`），走熔断，不停放。名额是每会话 2、每用户 8、全节点 64。
+**v1 支持的平台：** macOS arm64 / x64，Linux glibc x64 / arm64，Linux musl x64 / arm64（`linux-x64-musl` / `linux-arm64-musl` 预构建）。**Windows、其它 arch 不支持。** Linux 上 libc 探测失败时 `lookupNativePin` 返回 `null`（不再猜测 glibc），enable 以 `unsupported` 跳过且不阻断。缺失或装载失败 → `direct_capable=false`。authorize 在没有 RTC provider 时回 503 `DIRECT_UNAVAILABLE` `reason=disabled`，原生栈没就绪回 `reason=native-missing`。这两档客户端停放 10 分钟，只有用户重试才再问。指纹超时、中止、内部失败、名额满回 `DIRECT_BUSY`（带 `retryAfterMs`），走熔断，不停放。名额是每会话 2、每用户 8、全节点 64。
 
 ICE 顺序（自动）：同内网 host → IPv6 → IPv4 STUN → TURN（可达探测通过的，最多两条）→ 中继转发。未实现 UPnP / NAT-PMP。空 ICE 服务器列表在早期原型测试中会长时间超时，因此缺省带内置 STUN；可用 `VIBETERM_STUN_SERVERS` 换成本网可达的列表，或 `none` 显式禁用（仅局域网/全中继场景）。
 
@@ -486,7 +486,7 @@ vibeterm mesh keylog status
 ## 已知限制（v1）
 
 1. 未接入中继或中继不可达时只用缓存地址，无 mDNS / 签名 UDP 信标；对端换 IP 须等中继或 peer link 更新。
-2. 直连不支持 musl、Windows。
+2. 直连不支持 Windows。
 3. passkey 不能在纯 IP 入口使用。
 4. 文件直连 `bulk` 失败即整次改走 REST 重传。
 5. IPv6 ICE 候选未做现场实测。
