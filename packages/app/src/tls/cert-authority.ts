@@ -1,4 +1,3 @@
-import 'reflect-metadata';
 import { isIP } from 'node:net';
 import type * as X509 from '@peculiar/x509';
 import { loadX509 } from './x509-lazy';

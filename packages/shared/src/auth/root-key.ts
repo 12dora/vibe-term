@@ -1,9 +1,20 @@
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
-import { argon2id } from 'hash-wasm';
 import { AsyncMutex } from './async-mutex';
 import { type KdfParams, randomBytes } from './encoding';
 
 const kdfMutex = new AsyncMutex();
+
+type HashWasm = typeof import('hash-wasm');
+let hashWasmPending: Promise<HashWasm> | null = null;
+
+/** hash-wasm（Argon2 WASM）首次 KDF 时才加载；失败不缓存，下次重试。 */
+function loadHashWasm(): Promise<HashWasm> {
+  hashWasmPending ??= import('hash-wasm').catch((err: unknown) => {
+    hashWasmPending = null;
+    throw err;
+  });
+  return hashWasmPending;
+}
 
 export type KdfLockHook = {
   onEnter?: () => void;
@@ -75,6 +86,7 @@ export function generateKdfParams(): KdfParams {
 export async function deriveSeed(password: string, kdfParams: KdfParams): Promise<Uint8Array> {
   assertKdfParamsWithinBudget(kdfParams);
   const normalized = password.normalize('NFKC');
+  const { argon2id } = await loadHashWasm();
   return kdfMutex.runExclusive(async () => {
     kdfLockHook?.onEnter?.();
     try {

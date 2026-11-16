@@ -1,9 +1,3 @@
-import {
-  generateAuthenticationOptions,
-  generateRegistrationOptions,
-  verifyAuthenticationResponse,
-  verifyRegistrationResponse,
-} from '@simplewebauthn/server';
 import type {
   AuthenticationResponseJSON,
   AuthenticatorTransportFuture,
@@ -21,6 +15,7 @@ import {
   verifyDelegationTimes,
 } from '@vibeterm/shared/auth';
 import type { UserStore } from './user-store';
+import { loadWebAuthn } from './webauthn-lazy';
 
 export type CreateRegistrationOptionsInput = {
   uid: string;
@@ -94,6 +89,7 @@ export function decodePasskeyAssertionSig(sig: Uint8Array): AuthenticationRespon
 export async function createRegistrationOptions(
   input: CreateRegistrationOptionsInput
 ): Promise<PublicKeyCredentialCreationOptionsJSON> {
+  const { generateRegistrationOptions } = await loadWebAuthn();
   return generateRegistrationOptions({
     // 仅用于认证器 UI 的展示名；rpID 由 origin 推导，不随品牌改名变化（改动会作废已注册的通行密钥）
     rpName: 'VibeTerm',
@@ -113,6 +109,7 @@ export async function createRegistrationOptions(
 export async function verifyRegistration(
   input: VerifyRegistrationInput
 ): Promise<AddPasskeyPayload | null> {
+  const { verifyRegistrationResponse } = await loadWebAuthn();
   const verified = await verifyRegistrationResponse({
     response: input.response,
     expectedChallenge: input.expectedChallenge,
@@ -141,6 +138,7 @@ export async function verifyRegistration(
 export async function createAuthenticationOptions(
   input: CreateAuthenticationOptionsInput
 ): Promise<PublicKeyCredentialRequestOptionsJSON> {
+  const { generateAuthenticationOptions } = await loadWebAuthn();
   return generateAuthenticationOptions({
     rpID: input.rpId,
     allowCredentials: input.allowCredentials,
@@ -151,6 +149,7 @@ export async function createAuthenticationOptions(
 
 export async function verifyAssertion(input: VerifyAssertionInput): Promise<VerifyAssertionResult> {
   try {
+    const { verifyAuthenticationResponse } = await loadWebAuthn();
     const verified = await verifyAuthenticationResponse({
       response: input.response,
       expectedChallenge: input.expectedChallenge,
