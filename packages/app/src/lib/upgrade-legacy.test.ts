@@ -70,6 +70,27 @@ describe('readRepairInstallMeta', () => {
     });
   });
 
+  test('keeps the recorded OpenRC manager and sudoers state while rebuilding', async () => {
+    const installDir = await currentInstall();
+    await writeFile(
+      join(installDir, 'install-meta.json'),
+      JSON.stringify({ serviceName: 'vibeterm', serviceManager: 'openrc', openrcSudoers: true })
+    );
+    expect((await readRepairInstallMeta(installDir))?.meta).toMatchObject({
+      serviceManager: 'openrc',
+      openrcSudoers: true,
+    });
+  });
+
+  test('drops an unknown service manager value', async () => {
+    const installDir = await currentInstall();
+    await writeFile(
+      join(installDir, 'install-meta.json'),
+      JSON.stringify({ serviceName: 'vibeterm', serviceManager: 'upstart' })
+    );
+    expect((await readRepairInstallMeta(installDir))?.meta.serviceManager).toBeUndefined();
+  });
+
   test('does not infer a version from an external current target or missing version directory', async () => {
     const installDir = await currentInstall();
     await rm(join(installDir, 'current'));

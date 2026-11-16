@@ -2186,6 +2186,7 @@
           "loginRequired": "须先登录该节点。",
           "unreachable": "无法连接到该节点。",
           "notAllowed": "该节点不是由 VibeTerm 安装器部署的，无法远程卸载。",
+          "openrcNeedsTerminal": "此节点以 OpenRC 系统服务运行，请在该节点的终端执行 vibeterm uninstall 卸载。",
           "unsupported": "该节点版本过旧，不支持远程卸载。",
           "selfBlocked": "不能卸载本机。",
           "upgradeInProgress": "该节点正在升级，请稍后再试。",

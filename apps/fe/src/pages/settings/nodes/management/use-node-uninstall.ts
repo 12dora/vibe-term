@@ -33,6 +33,8 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 /** 首个带 `POST /api/system/uninstall` 的网关版本；更早的目标只能到机器上手动卸。 */
 export const MIN_REMOTE_UNINSTALL_VERSION = '1.1.13';
 
+const OPENRC_NEEDS_TERMINAL_REASON = 'openrc_needs_terminal';
+
 const ERROR_KEYS: Record<MeshUninstallErrorCode, string> = {
   NODE_LOGIN_REQUIRED: 'nodes.uninstall.errors.loginRequired',
   NODE_UNREACHABLE: 'nodes.uninstall.errors.unreachable',
@@ -44,7 +46,10 @@ const ERROR_KEYS: Record<MeshUninstallErrorCode, string> = {
 };
 
 /** 稳定错误码走文案表，其余原样显示——后端加了新码也不至于弹一句空话。 */
-export function uninstallErrorText(t: Translate, code: string): string {
+export function uninstallErrorText(t: Translate, code: string, reason?: string): string {
+  if (code === 'UNINSTALL_NOT_ALLOWED' && reason === OPENRC_NEEDS_TERMINAL_REASON) {
+    return t('nodes.uninstall.errors.openrcNeedsTerminal');
+  }
   const key = ERROR_KEYS[code as MeshUninstallErrorCode];
   return key ? t(key) : code;
 }
@@ -82,7 +87,9 @@ export function planUninstall(rows: NodeRow[]): UninstallPlan {
   return plan;
 }
 
-export type UninstallStartOutcome = { kind: 'scheduled' } | { kind: 'failed'; code: string };
+export type UninstallStartOutcome =
+  | { kind: 'scheduled' }
+  | { kind: 'failed'; code: string; reason?: string };
 
 /** 状态机与真实请求之间的接缝：单测注入假 fetch，不碰网络。 */
 export interface UninstallIo {
@@ -94,15 +101,19 @@ export interface UninstallIo {
 
 type FetchLike = (path: string, init?: RequestInit) => Promise<Response>;
 
-async function readCode(res: Response): Promise<string> {
+async function readFailure(res: Response): Promise<{ code: string; reason?: string }> {
   try {
-    const payload = (await res.json()) as { code?: unknown; error?: unknown };
-    if (typeof payload.code === 'string') return payload.code;
-    if (typeof payload.error === 'string') return payload.error;
+    const payload = (await res.json()) as { code?: unknown; error?: unknown; reason?: unknown };
+    if (typeof payload.code === 'string') {
+      return typeof payload.reason === 'string'
+        ? { code: payload.code, reason: payload.reason }
+        : { code: payload.code };
+    }
+    if (typeof payload.error === 'string') return { code: payload.error };
   } catch {
     // 落到通用码
   }
-  return 'UNINSTALL_FAILED';
+  return { code: 'UNINSTALL_FAILED' };
 }
 
 export function createUninstallIo(
@@ -122,7 +133,7 @@ export function createUninstallIo(
       }
       // 卸载没有回读通道：POST 一律不重试，2xx 就是「目标已受理」。
       if (res.ok) return { kind: 'scheduled' };
-      return { kind: 'failed', code: await readCode(res) };
+      return { kind: 'failed', ...(await readFailure(res)) };
     },
     async clearOperation(nodeId) {
       try {
@@ -181,7 +192,7 @@ export async function runUninstallBatch(p: UninstallBatchParams): Promise<Uninst
     }
     const outcome = await p.io.start(row.id);
     if (outcome.kind === 'failed') {
-      fail(row.name, uninstallErrorText(p.t, outcome.code));
+      fail(row.name, uninstallErrorText(p.t, outcome.code, outcome.reason));
       continue;
     }
     summary.scheduled += 1;

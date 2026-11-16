@@ -2,6 +2,7 @@ import type { InstallMeta } from '../types';
 import { writeInstallMeta } from './install';
 import { createInstallLayout } from './install-layout';
 import { readJsonFile } from './json-file';
+import { refreshServiceMeta } from './service-manager-meta';
 import { readRepairInstallMeta } from './upgrade-legacy';
 
 export type RepairMetaOptions = {
@@ -68,9 +69,10 @@ export async function persistRepairMeta(
 ): Promise<void> {
   const recovered = await resolveRepairMeta(installDir, deps, bunPath);
   if (!recovered?.rebuilt) return;
+  const meta = { ...recovered.meta, serviceName: serviceName ?? recovered.meta.serviceName };
   await writeInstallMeta(createInstallLayout(installDir), {
-    ...recovered.meta,
-    serviceName: serviceName ?? recovered.meta.serviceName,
+    ...meta,
+    ...(await refreshServiceMeta(meta)),
   });
   log(`install-meta.json rebuilt from current: ${recovered.meta.cliVersion}`);
 }

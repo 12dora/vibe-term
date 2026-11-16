@@ -98,6 +98,12 @@ describe('detectServiceManagerDetail: OpenRC', () => {
     expect(calls).toEqual(['--version']);
   });
 
+  test('systemd-booted host with the openrc package but no user bus → plain none', async () => {
+    const { probe } = probeWith({ '--version': 0, '--user show-environment': 1 });
+    const openrc = fsWith(['/sbin/openrc-run', '/run/systemd/system']);
+    expect(await detectServiceManagerDetail('linux', probe, openrc)).toEqual({ kind: 'none' });
+  });
+
   test('no openrc-run anywhere → plain none', async () => {
     const { probe } = probeWith(NO_SYSTEMCTL);
     const openrc = fsWith(['/run/openrc/softlevel'], '/usr/bin');

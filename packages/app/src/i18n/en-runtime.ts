@@ -32,6 +32,14 @@ export const enRuntime: Record<string, string> = {
   'service.openrc.sudoRequired':
     'Root access is required for "{{command}}". Run as root or with sudo, or pass --no-service.',
   'service.openrc.commandFailed': '{{command}} failed: {{detail}}',
+  'service.openrc.unsafePath':
+    'Path not allowed for an OpenRC service (use only letters, digits and _ . / : @ + -): {{path}}',
+  'service.openrc.foreignScript':
+    '{{path}} was not written by VibeTerm; choose another name with --service-name.',
+  'service.openrc.ownedByOther':
+    '{{path}} belongs to the VibeTerm install at {{installDir}}; use --service-name or --force.',
+  'service.openrc.refreshSkipped':
+    'OpenRC service files not refreshed (needs sudo); starting the existing service: {{detail}}',
   'service.openrc.invalidName': 'Invalid OpenRC service or user name: {{name}}',
   'service.openrc.sudoersSkipped':
     'Could not install the sudoers rule; upgrades and restarts from the web UI will need sudo: {{detail}}',

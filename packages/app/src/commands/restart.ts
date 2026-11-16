@@ -4,19 +4,34 @@ import { createInstallLayout } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
 import { type ServiceManagerKind, detectServiceManager } from '../lib/platform';
 import { restartService } from '../lib/service';
+import { recordedManagerDeps } from '../lib/service-manager-meta';
 import { asString } from '../lib/validate';
 import type { InstallMeta, ParsedArgs } from '../types';
 import type { CliIo } from './cli-io';
 
-export async function resolveServiceName(parsed: ParsedArgs, installDir: string): Promise<string> {
-  let serviceName = asString(parsed.flags['service-name']) || DEFAULT_SERVICE_NAME;
-  if (!installDir) return serviceName;
+async function readMeta(installDir: string): Promise<InstallMeta | null> {
+  if (!installDir) return null;
   const layout = createInstallLayout(installDir);
-  if (await pathExists(layout.metaPath)) {
-    const meta = await readJsonFile<InstallMeta>(layout.metaPath);
-    serviceName = meta.serviceName;
-  }
-  return serviceName;
+  if (!(await pathExists(layout.metaPath))) return null;
+  return await readJsonFile<InstallMeta>(layout.metaPath);
+}
+
+export async function resolveServiceName(parsed: ParsedArgs, installDir: string): Promise<string> {
+  const meta = await readMeta(installDir);
+  return meta?.serviceName ?? (asString(parsed.flags['service-name']) || DEFAULT_SERVICE_NAME);
+}
+
+/**
+ * --no-service 安装由用户自己托管进程，不能顺手去重启宿主机服务管理器里的别的实例；
+ * 否则 install-meta 记录的管理器优先于现场探测。
+ */
+export async function resolveRestartManager(
+  injected: ServiceManagerKind | undefined,
+  meta: Pick<InstallMeta, 'serviceMode' | 'serviceManager'> | null,
+  detect: () => Promise<ServiceManagerKind> = detectServiceManager
+): Promise<ServiceManagerKind> {
+  if (meta?.serviceMode === 'none') return 'none';
+  return injected ?? recordedManagerDeps(meta?.serviceManager).manager ?? (await detect());
 }
 
 /** `restarted` 已重启；`manual` 需要用户手动重启（旗标或平台没有服务管理器）；`skipped` 由调用方自己处理。 */
@@ -35,9 +50,10 @@ export async function maybeRestart(
     return 'restarted';
   }
   if (io?.skipRestart) return 'skipped';
-  const manager: ServiceManagerKind = io?.serviceManager ?? (await detectServiceManager());
+  const meta = await readMeta(installDir).catch(() => null);
+  const manager = await resolveRestartManager(io?.serviceManager, meta);
   if (manager === 'none') return 'manual';
   const serviceName = await resolveServiceName(parsed, installDir);
-  await restartService(serviceName, installDir);
+  await restartService(serviceName, installDir, { manager });
   return 'restarted';
 }

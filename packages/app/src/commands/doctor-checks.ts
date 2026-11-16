@@ -2,7 +2,6 @@ import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseStunServersEnv } from '../../../shared/src/net/stun-defaults';
 import { formatHttpEndpoint, rewriteWildcardBindHost } from '../../../shared/src/network';
-import { DEFAULT_SERVICE_NAME } from '../constants';
 import { t } from '../i18n';
 import { checkBunVersion } from '../lib/bun';
 import { defaultShimDirs, findLegacyMarkedShims } from '../lib/cli-shim';
@@ -10,13 +9,9 @@ import { getInstallHintAsync } from '../lib/dep-install';
 import { readEnvFile } from '../lib/env-file';
 import type { FetchLike } from '../lib/fetch-like';
 import { pathExists } from '../lib/fs-utils';
-import {
-  type ServiceManagerKind,
-  detectServiceManager,
-  isSupportedPlatform,
-} from '../lib/platform';
+import { type ServiceManagerKind, isSupportedPlatform } from '../lib/platform';
 import { runCommand } from '../lib/process';
-import { findLegacyLaunchdPlists, getServiceStatus } from '../lib/service';
+import { findLegacyLaunchdPlists } from '../lib/service';
 import { checkTmuxVersion } from '../lib/tmux';
 import { LEGACY_SERVICE_NAME } from '../lib/upgrade-migrate-dir';
 import type { DoctorCheck } from '../types';
@@ -25,7 +20,10 @@ import {
   peerPortDoctorCheck,
   portPlanDoctorChecks,
 } from './doctor-ports';
+import { loopStallCheck, stallServiceManager } from './doctor-service';
 import { relayTurnDoctorCheck } from './doctor-turn';
+
+export { checkService, loopStallCheck } from './doctor-service';
 
 export interface DoctorEnvironmentResult {
   platformChecks: DoctorCheck[];
@@ -296,50 +294,6 @@ export async function checkPasskeyOrigins(input: {
   return classifyPasskeyOrigin({ origin, mode });
 }
 
-export async function checkService(input: {
-  serviceName: string;
-  installDir: string;
-}): Promise<DoctorCheck[]> {
-  const status = await getServiceStatus(input.serviceName, input.installDir);
-  if (status.manager === 'none') {
-    return [
-      {
-        id: 'service',
-        level: 'warn',
-        message: t('doctor.service.noManager', { detail: status.detail || '' }),
-      },
-    ];
-  }
-  if (!status.installed) {
-    return [
-      {
-        id: 'service',
-        level: 'warn',
-        message: t('doctor.service.notInstalled', { serviceName: input.serviceName }),
-        detail: status.detail,
-      },
-    ];
-  }
-  if (!status.running) {
-    return [
-      {
-        id: 'service',
-        level: 'warn',
-        message: t('doctor.service.notRunning', { serviceName: input.serviceName }),
-        detail: status.detail,
-      },
-    ];
-  }
-  return [
-    {
-      id: 'service',
-      level: 'pass',
-      message: t('doctor.service.running', { serviceName: input.serviceName }),
-      detail: status.detail,
-    },
-  ];
-}
-
 const HEALTHZ_TIMEOUT_MS = 3000;
 const HEALTHZ_ATTEMPTS = 2;
 export const HEALTHZ_RETRY_DELAY_MS = 1000;
@@ -387,38 +341,6 @@ export async function probeHealthz(
   return { ok: false, timedOut: timeouts === HEALTHZ_ATTEMPTS };
 }
 
-export function loopStallCheck(input: {
-  serviceRunning: boolean;
-  timedOut: boolean;
-  url: string;
-  installDir: string;
-  serviceManager?: ServiceManagerKind;
-  serviceName?: string;
-}): DoctorCheck[] {
-  if (!input.serviceRunning || !input.timedOut) return [];
-  const openrc = input.serviceManager === 'openrc';
-  const key = openrc ? 'doctor.health.loopStallOpenrc' : 'doctor.health.loopStall';
-  return [
-    {
-      id: 'loop-stall',
-      level: 'fail',
-      message: t(key, {
-        url: input.url,
-        installDir: input.installDir,
-        serviceName: input.serviceName ?? DEFAULT_SERVICE_NAME,
-      }),
-    },
-  ];
-}
-
-async function stallServiceManager(
-  options: CheckHealthOptions,
-  stalled: boolean
-): Promise<ServiceManagerKind | undefined> {
-  if (!stalled || options.serviceManager) return options.serviceManager;
-  return await (options.detectManager ?? detectServiceManager)().catch(() => undefined);
-}
-
 export async function checkHealth(
   host: string,
   port: string,
@@ -443,7 +365,11 @@ export async function checkHealth(
       timedOut: probe.timedOut,
       url,
       installDir: options.installDir ?? '',
-      serviceManager: await stallServiceManager(options, serviceRunning && probe.timedOut),
+      serviceManager: await stallServiceManager(
+        options.serviceManager,
+        serviceRunning && probe.timedOut,
+        options.detectManager
+      ),
       serviceName: options.serviceName,
     })
   );

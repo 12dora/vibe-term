@@ -59,4 +59,6 @@ export interface InstallMeta {
   installSource?: InstallSource;
   /** 安装 / 升级时探测到的服务管理器；serviceMode=none 时为 none。老安装没有这一项。 */
   serviceManager?: ServiceManagerKind;
+  /** OpenRC：安装用户能否免密执行 `rc-service <服务名> …`（root 安装恒为 true）。 */
+  openrcSudoers?: boolean;
 }

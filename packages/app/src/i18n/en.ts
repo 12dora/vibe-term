@@ -108,6 +108,7 @@ export const en: Record<string, string> = {
   'doctor.service.notInstalled': 'Service not installed: {{serviceName}}',
   'doctor.service.notRunning': 'Service not running: {{serviceName}}',
   'doctor.service.running': 'Service running: {{serviceName}}',
+  'doctor.service.unmanaged': 'Installed with --no-service; no service manager is used.',
   'doctor.service.noManager': '{{detail}}',
   'doctor.health.pass': 'Health check OK: {{url}}',
   'doctor.health.fail': 'Health check failed or unreachable: {{url}}',

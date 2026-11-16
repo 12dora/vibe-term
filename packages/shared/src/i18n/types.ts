@@ -2695,6 +2695,7 @@ export type TranslationKey =
   | 'nodes.uninstall.errors.loginRequired'
   | 'nodes.uninstall.errors.unreachable'
   | 'nodes.uninstall.errors.notAllowed'
+  | 'nodes.uninstall.errors.openrcNeedsTerminal'
   | 'nodes.uninstall.errors.unsupported'
   | 'nodes.uninstall.errors.selfBlocked'
   | 'nodes.uninstall.errors.upgradeInProgress'

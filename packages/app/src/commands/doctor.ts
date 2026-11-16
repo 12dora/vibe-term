@@ -210,6 +210,12 @@ export async function checkLoopWatchdogLog(installDir: string): Promise<DoctorCh
   }
 }
 
+function doctorServiceName(ctx: DoctorRunContext): string {
+  return (
+    ctx.meta?.serviceName || asString(ctx.parsed.flags['service-name']) || DEFAULT_SERVICE_NAME
+  );
+}
+
 async function ensureEnvironment(ctx: DoctorRunContext): Promise<DoctorEnvironmentResult> {
   if (!ctx.environment) {
     ctx.environment = await checkEnvironment({
@@ -241,11 +247,10 @@ export const DOCTOR_CHECK_TABLE: DoctorCheckStep[] = [
     id: 'service',
     collect: async (ctx) => {
       const checks = await checkService({
-        serviceName:
-          ctx.meta?.serviceName ||
-          asString(ctx.parsed.flags['service-name']) ||
-          DEFAULT_SERVICE_NAME,
+        serviceName: doctorServiceName(ctx),
         installDir: ctx.installDir,
+        serviceManager: ctx.meta?.serviceManager,
+        serviceMode: ctx.meta?.serviceMode,
       });
       ctx.serviceRunning = checks.some((check) => check.id === 'service' && check.level === 'pass');
       return checks;
@@ -254,13 +259,7 @@ export const DOCTOR_CHECK_TABLE: DoctorCheckStep[] = [
   {
     id: 'legacy-layout',
     collect: async (ctx) =>
-      checkLegacyLeftovers({
-        serviceName:
-          ctx.meta?.serviceName ||
-          asString(ctx.parsed.flags['service-name']) ||
-          DEFAULT_SERVICE_NAME,
-        installDir: ctx.installDir,
-      }),
+      checkLegacyLeftovers({ serviceName: doctorServiceName(ctx), installDir: ctx.installDir }),
   },
   {
     id: 'health',
@@ -269,6 +268,8 @@ export const DOCTOR_CHECK_TABLE: DoctorCheckStep[] = [
       return checkHealth(env.healthHost, env.healthPort, {
         serviceRunning: ctx.serviceRunning === true,
         installDir: ctx.installDir,
+        serviceManager: ctx.meta?.serviceManager,
+        serviceName: doctorServiceName(ctx),
       });
     },
   },

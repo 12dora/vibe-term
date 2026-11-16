@@ -21,6 +21,7 @@ export interface OpenrcProbeDeps {
 
 const OPENRC_RUN = '/sbin/openrc-run';
 const OPENRC_SVCDIR = '/run/openrc';
+const SYSTEMD_BOOTED = '/run/systemd/system';
 
 const defaultProbe: Probe = (command, args) =>
   runCommand(command, args, { stdio: 'pipe', timeoutMs: 5000 }).catch(() => null);
@@ -50,6 +51,8 @@ async function detectOpenrc(probe: Probe, deps: OpenrcProbeDeps): Promise<Servic
     const status = await probe('rc-status', ['--runlevel']);
     if (status?.code === 0) return { kind: 'openrc' };
   }
+  // systemd 引导的主机上装了 openrc 包只是缺 user bus，不能误报成「OpenRC 未引导（容器）」。
+  if (exists(SYSTEMD_BOOTED)) return { kind: 'none' };
   return { kind: 'none', reason: 'openrc-not-booted' };
 }
 

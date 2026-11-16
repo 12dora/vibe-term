@@ -9,6 +9,7 @@ import {
   installService,
   stopService,
 } from './service';
+import { recordedManagerDeps } from './service-manager-meta';
 import type { ServiceDeps } from './service-types';
 import {
   type ServiceReleaseProbes,
@@ -110,5 +111,6 @@ export function createServiceControl(opts: {
     linger: opts.meta.linger,
     runScriptPath: layout.runScriptPath,
     legacyLabel: opts.legacyLabel,
+    deps: recordedManagerDeps(opts.meta.serviceManager),
   });
 }

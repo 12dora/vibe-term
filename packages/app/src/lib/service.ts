@@ -1,5 +1,5 @@
 import { rm } from 'node:fs/promises';
-import { homedir, userInfo } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_SERVICE_NAME } from '../constants';
 import { t } from '../i18n';
@@ -55,6 +55,7 @@ export {
   systemdUnitLacksKillModeProcess,
   vibeTermSystemdUnitPath,
 } from './systemd-unit';
+import { currentOsAccount } from '../../../shared/src/env/os-account';
 import { systemdUnitPath } from './systemd-unit';
 
 /** 只有服务名真的换了才需要拆旧 unit；同名时新内容直接原地覆盖。 */
@@ -132,7 +133,7 @@ export async function ensureSystemdLinger(
   if (!options.autostart || options.linger === false) return 'skipped';
   const {
     run = runCommand,
-    username = userInfo().username,
+    username = currentOsAccount().username,
     log = console.log,
     warn = console.warn,
   } = deps ?? {};
@@ -320,7 +321,9 @@ export async function uninstallService(
     return;
   }
 
-  if (manager === 'openrc') await uninstallOpenrcService(options.serviceName, deps);
+  if (manager === 'openrc') {
+    await uninstallOpenrcService(options.serviceName, options.installDir, deps);
+  }
 }
 
 async function querySystemdStatus(serviceName: string, deps?: ServiceDeps): Promise<ServiceStatus> {

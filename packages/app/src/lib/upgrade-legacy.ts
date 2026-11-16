@@ -2,7 +2,7 @@ import { readlink, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { DEFAULT_SERVICE_NAME } from '../constants';
 import { t } from '../i18n';
-import type { InstallMeta } from '../types';
+import type { InstallMeta, ServiceManagerKind } from '../types';
 import type { ShimDirs } from './cli-shim';
 import { copyDirectory, pathExists } from './fs-utils';
 import { writeRunScript } from './install';
@@ -42,6 +42,29 @@ async function readRecoverableCurrentVersion(installDir: string): Promise<string
   return (await stat(resolved)).isDirectory() ? version : null;
 }
 
+const SERVICE_MANAGERS: readonly ServiceManagerKind[] = [
+  'systemd-user',
+  'launchd',
+  'openrc',
+  'none',
+];
+
+function isServiceManagerKind(value: unknown): value is ServiceManagerKind {
+  return SERVICE_MANAGERS.includes(value as ServiceManagerKind);
+}
+
+/** 重建 meta 时保留已记录的服务管理器与 OpenRC 免密状态，网关才不会退回平台启发式。 */
+function preservedServiceFields(
+  raw: Partial<InstallMeta> | null
+): Pick<InstallMeta, 'serviceManager' | 'openrcSudoers'> {
+  const fields: Pick<InstallMeta, 'serviceManager' | 'openrcSudoers'> = {};
+  const manager = raw?.serviceManager;
+  const sudoers = raw?.openrcSudoers;
+  if (isServiceManagerKind(manager)) fields.serviceManager = manager;
+  if (typeof sudoers === 'boolean') fields.openrcSudoers = sudoers;
+  return fields;
+}
+
 function rebuildInstallMeta(
   installDir: string,
   fromVersion: string,
@@ -63,6 +86,7 @@ function rebuildInstallMeta(
     bunPath: bunPath ?? (typeof raw?.bunPath === 'string' ? raw.bunPath : undefined),
     serviceMode: raw?.serviceMode === 'none' ? 'none' : 'managed',
     ...(raw?.linger === false ? { linger: false } : {}),
+    ...preservedServiceFields(raw),
     ...(raw?.installSource === 'install-script' ||
     raw?.installSource === 'npx' ||
     raw?.installSource === 'cli'

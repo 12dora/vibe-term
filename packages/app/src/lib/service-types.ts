@@ -13,6 +13,8 @@ export interface ServiceInstallOptions {
    * 注册新身份之前要把它留下的 plist / unit 拆掉，否则 KeepAlive / Restart 会拉起第二个实例抢端口。
    */
   legacyServiceName?: string;
+  /** OpenRC：允许接管属于另一个仍存在安装目录的托管脚本（init --force） */
+  force?: boolean;
 }
 
 export interface ServiceUninstallOptions {

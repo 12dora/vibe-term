@@ -3017,6 +3017,7 @@
           "loginRequired": "Sign in to that node first.",
           "unreachable": "Unable to connect to this node.",
           "notAllowed": "That node was not deployed by the VibeTerm installer and cannot be uninstalled remotely.",
+          "openrcNeedsTerminal": "This node runs as an OpenRC system service. Uninstall it from a terminal on the node: vibeterm uninstall",
           "unsupported": "That node runs a version without remote uninstall.",
           "selfBlocked": "This machine cannot be uninstalled.",
           "upgradeInProgress": "That node is upgrading. Try again later.",

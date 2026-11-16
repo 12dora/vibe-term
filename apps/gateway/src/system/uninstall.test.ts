@@ -6,7 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { requestDispatchContext } from '../mesh/types';
 import type { InstallInfo } from './install-info';
-import { startLocalUninstall, uninstallController } from './uninstall';
+import {
+  OPENRC_TERMINAL_UNINSTALL_MESSAGE,
+  startLocalUninstall,
+  uninstallController,
+} from './uninstall';
 
 const tempDirs: string[] = [];
 
@@ -67,13 +71,32 @@ describe('UninstallController', () => {
     });
   });
 
-  test('schedules uninstall for openrc the same way as other managed deployments', async () => {
+  test('non-root openrc node: refuses and points to the terminal', async () => {
+    const dir = tempDir('vibeterm-uninst-openrc-user-');
+    uninstallController.setDepsForTests({
+      getInstallInfo: () => cliInstallInfo(dir, { deployment: 'openrc', openrcSudoers: true }),
+      geteuid: () => 1000,
+      spawn: () => {
+        throw new Error('must not spawn');
+      },
+    });
+    const res = await uninstallController.start();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      code: 'UNINSTALL_NOT_ALLOWED',
+      reason: 'openrc_needs_terminal',
+      message: OPENRC_TERMINAL_UNINSTALL_MESSAGE,
+    });
+  });
+
+  test('schedules uninstall for a root openrc node like other managed deployments', async () => {
     const installDir = tempDir('vibeterm-uninst-openrc-');
     writeCliInstall(installDir);
     const copyRoot = tempDir('vibeterm-uninst-openrc-tmp-');
     const spawned: Array<{ cmd: string; args: string[] }> = [];
     uninstallController.setDepsForTests({
       getInstallInfo: () => cliInstallInfo(installDir, { deployment: 'openrc' }),
+      geteuid: () => 0,
       tmpdir: () => copyRoot,
       randomId: () => 'openrc1',
       spawn: (cmd, args) => {

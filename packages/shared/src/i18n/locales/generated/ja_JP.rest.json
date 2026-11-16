@@ -2186,6 +2186,7 @@
           "loginRequired": "先にそのノードにログインしてください。",
           "unreachable": "このノードに接続できません。",
           "notAllowed": "そのノードは VibeTerm インストーラーで導入されていないため、リモートでアンインストールできません。",
+          "openrcNeedsTerminal": "このノードは OpenRC のシステムサービスとして動作しています。ノードのターミナルで vibeterm uninstall を実行してアンインストールしてください。",
           "unsupported": "そのノードのバージョンはリモートアンインストールに対応していません。",
           "selfBlocked": "本機はアンインストールできません。",
           "upgradeInProgress": "そのノードはアップグレード中です。しばらくしてからお試しください。",

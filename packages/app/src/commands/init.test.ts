@@ -514,6 +514,11 @@ describe('buildInitMeta', () => {
     });
   });
 
+  test('records whether the OpenRC NOPASSWD rule is ready', () => {
+    expect(buildInitMeta(config, { ...runtime, openrcSudoers: true }).openrcSudoers).toBe(true);
+    expect(buildInitMeta(config, runtime).openrcSudoers).toBeUndefined();
+  });
+
   test('--no-service records none', () => {
     expect(buildInitMeta({ ...config, noService: true }, runtime)).toMatchObject({
       serviceMode: 'none',

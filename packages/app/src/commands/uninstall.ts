@@ -11,6 +11,7 @@ import { createInstallLayout, resolveInstallDir } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
 import { promptConfirm } from '../lib/prompt';
 import { uninstallService } from '../lib/service';
+import { recordedManagerDeps } from '../lib/service-manager-meta';
 import { asBoolean, asString } from '../lib/validate';
 import type { InstallMeta, ParsedArgs, ServiceManagerKind } from '../types';
 
@@ -155,17 +156,12 @@ async function executeUninstallPlan(plan: UninstallPlan): Promise<void> {
   }
 }
 
-/** meta 记录的管理器优先；`none`（--no-service 安装）与缺省一样交给探测。 */
-function managerDeps(manager: ServiceManagerKind | undefined): { manager?: ServiceManagerKind } {
-  return manager && manager !== 'none' ? { manager } : {};
-}
-
 async function uninstallServiceStep(plan: UninstallPlan): Promise<void> {
   plan.log('service');
   const uninstall =
     plan.deps.uninstallService ??
     ((opts: { serviceName: string; installDir: string; serviceManager?: ServiceManagerKind }) =>
-      uninstallService(opts, managerDeps(opts.serviceManager)));
+      uninstallService(opts, recordedManagerDeps(opts.serviceManager)));
   try {
     await uninstall({
       serviceName: plan.serviceName,

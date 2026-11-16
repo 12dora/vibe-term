@@ -15,6 +15,7 @@ export interface InstallMetaShape {
   installSource?: string;
   serviceManager?: string;
   serviceMode?: string;
+  openrcSudoers?: boolean;
 }
 
 export interface InstallInfo {
@@ -26,6 +27,25 @@ export interface InstallInfo {
   serviceName: string | null;
   cliVersion: string | null;
   bunPath: string | null;
+  /** OpenRC：安装用户能否免密 `rc-service <服务名> …`；缺省按不能处理。 */
+  openrcSudoers?: boolean;
+}
+
+/** 非 root 的 OpenRC 节点只能经 sudo 控制系统服务；没有就绪的免密规则就不能无 TTY 自更新。 */
+export function openrcSelfUpdateBlocked(
+  install: Pick<InstallInfo, 'deployment' | 'openrcSudoers'>,
+  euid: number | undefined = process.geteuid?.()
+): boolean {
+  if (install.deployment !== 'openrc' || euid === 0) return false;
+  return install.openrcSudoers !== true;
+}
+
+/** 卸载要 rc-update del 与删 /etc 下的文件，免密规则不覆盖：非 root 的 OpenRC 节点只能在终端卸。 */
+export function openrcRemoteUninstallBlocked(
+  install: Pick<InstallInfo, 'deployment'>,
+  euid: number | undefined = process.geteuid?.()
+): boolean {
+  return install.deployment === 'openrc' && euid !== 0;
 }
 
 /**
@@ -156,5 +176,6 @@ export function getInstallInfo(): InstallInfo {
     serviceName: meta.serviceName ?? null,
     cliVersion: meta.cliVersion ?? null,
     bunPath: meta.bunPath ?? null,
+    openrcSudoers: meta.openrcSudoers === true,
   };
 }

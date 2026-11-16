@@ -41,6 +41,7 @@ import { type ServiceManagerKind, detectServiceManagerDetail } from '../lib/plat
 import { promptConfirm, promptText } from '../lib/prompt';
 import { DEFAULT_PEER_PORT, parseVibeTermRoleName } from '../lib/roles';
 import { installService, serviceHint } from '../lib/service';
+import { openrcControlReady } from '../lib/service-openrc';
 import { checkTmuxVersion } from '../lib/tmux';
 import { repairUpgrade, withUpgradeLock } from '../lib/upgrade-apply';
 import { readJournal } from '../lib/upgrade-state';
@@ -391,7 +392,12 @@ export async function resolveInitServiceManager(
 
 export function buildInitMeta(
   config: Pick<InitConfig, 'serviceName' | 'autostart' | 'installDir' | 'noService' | 'linger'>,
-  runtime: { cliVersion: string; bunPath: string; manager: ServiceManagerKind }
+  runtime: {
+    cliVersion: string;
+    bunPath: string;
+    manager: ServiceManagerKind;
+    openrcSudoers?: boolean;
+  }
 ): InstallMeta {
   return {
     serviceName: config.serviceName,
@@ -405,6 +411,7 @@ export function buildInitMeta(
     linger: config.linger,
     installSource: detectInstallSource(),
     serviceManager: config.noService ? 'none' : runtime.manager,
+    openrcSudoers: runtime.openrcSudoers,
   };
 }
 
@@ -412,19 +419,14 @@ async function startInstalledRuntime(
   config: InitConfig,
   runScriptPath: string,
   manager: ServiceManagerKind
-): Promise<void> {
+): Promise<boolean | undefined> {
   if (!config.noService) {
+    const { serviceName, installDir, autostart, linger, force } = config;
     await installService(
-      {
-        serviceName: config.serviceName,
-        installDir: config.installDir,
-        runScriptPath,
-        autostart: config.autostart,
-        linger: config.linger,
-      },
+      { serviceName, installDir, runScriptPath, autostart, linger, force },
       { manager }
     );
-    return;
+    return manager === 'openrc' ? await openrcControlReady(serviceName) : undefined;
   }
   const { createDirectProcessControl, pidFilePath } = await import('../lib/upgrade-apply');
   await createDirectProcessControl({
@@ -547,9 +549,9 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   });
   await writeEnvFile(installLayout.envPath, envValues);
   await writeRunScript(installLayout, bun.path);
-  await startInstalledRuntime(config, installLayout.runScriptPath, manager);
+  const openrcSudoers = await startInstalledRuntime(config, installLayout.runScriptPath, manager);
 
-  const meta = buildInitMeta(config, { cliVersion, bunPath: bun.path, manager });
+  const meta = buildInitMeta(config, { cliVersion, bunPath: bun.path, manager, openrcSudoers });
   await writeInstallMeta(installLayout, meta);
 
   printInitSummary(config, bun, await serviceHint(config.serviceName, { manager }), shim);

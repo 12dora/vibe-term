@@ -9,10 +9,18 @@ import { json } from '../api/http';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
 import { requestDispatchContext } from '../mesh/types';
 import { isManagedExternally } from './info-public';
-import { type InstallInfo, getInstallInfo, isManagedDeployment } from './install-info';
+import {
+  type InstallInfo,
+  getInstallInfo,
+  isManagedDeployment,
+  openrcRemoteUninstallBlocked,
+} from './install-info';
 import { upgradeController, waitForSpawnAndDetach } from './upgrade';
 
 export const UNINSTALL_SPAWN_DELAY_MS = 1500;
+
+export const OPENRC_TERMINAL_UNINSTALL_MESSAGE =
+  'This node runs as an OpenRC system service; run "vibeterm uninstall" in a terminal on it.';
 
 export type UninstallSpawnFn = (
   command: string,
@@ -29,6 +37,7 @@ export type UninstallControllerDeps = {
   randomId?: () => string;
   copyDir?: (src: string, dest: string) => void;
   now?: () => number;
+  geteuid?: () => number;
 };
 
 declare const VIBETERM_MANAGED_BUILD: boolean | undefined;
@@ -122,6 +131,16 @@ export class UninstallController {
     }
     if (!isManagedDeployment(install.deployment)) {
       return json({ code: 'UNINSTALL_NOT_ALLOWED', reason: 'no_service_manager' }, 409);
+    }
+    if (openrcRemoteUninstallBlocked(install, this.deps.geteuid?.() ?? process.geteuid?.())) {
+      return json(
+        {
+          code: 'UNINSTALL_NOT_ALLOWED',
+          reason: 'openrc_needs_terminal',
+          message: OPENRC_TERMINAL_UNINSTALL_MESSAGE,
+        },
+        409
+      );
     }
     const upgradeState = this.deps.getUpgradeState?.() ?? upgradeController.status().state;
     if (upgradeState === 'downloading' || upgradeState === 'executing') {

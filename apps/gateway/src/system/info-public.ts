@@ -3,7 +3,7 @@
  */
 import { type SystemInfo, TRANSFER_CAPABILITIES } from '@vibeterm/shared';
 import { config } from '../config';
-import { getInstallInfo, isManagedDeployment } from './install-info';
+import { getInstallInfo, isManagedDeployment, openrcSelfUpdateBlocked } from './install-info';
 import {
   canSelfUpdate as canSelfUpdateManaged,
   getManagementMode,
@@ -31,7 +31,9 @@ export function getSystemInfo(): SystemInfo {
   const install = getInstallInfo();
   const canSelfUpdate =
     canSelfUpdateManaged(
-      install.installedViaCli && isManagedDeployment(install.deployment),
+      install.installedViaCli &&
+        isManagedDeployment(install.deployment) &&
+        !openrcSelfUpdateBlocked(install),
       config.isProd
     ) && getManagementMode() === 'none';
 

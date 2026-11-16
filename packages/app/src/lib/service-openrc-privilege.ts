@@ -1,26 +1,27 @@
 // OpenRC 系统服务的提权执行器：root 直接执行；否则先 `sudo -n`，需要密码时交互式 `sudo -v` 一次。
 import { existsSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { t } from '../i18n';
 import { type RunCommandResult, runCommand } from './process';
 import type { ServiceDeps } from './service-types';
 
 export class OpenrcPrivilegeError extends Error {}
 
+// 固定 LC_ALL=C 后 sudo / sudo-rs 的认证失败文案（含 sudo-rs 的拒绝用语）。
 const SUDO_AUTH_FAILURES = [
-  /sudo: (?:a password is required|a terminal is required|no tty present)/i,
-  /is not allowed to (?:execute|run)|may not run sudo/i,
+  /(?:a password|interactive authentication|a terminal) is required|no tty present/i,
+  /is not allowed to (?:execute|run)|may not run sudo|I'm afraid I can't do that/i,
 ];
 
-function isSudoAuthFailure(result: RunCommandResult): boolean {
+export function isSudoAuthFailure(result: RunCommandResult): boolean {
   return result.code !== 0 && SUDO_AUTH_FAILURES.some((pattern) => pattern.test(result.stderr));
 }
 
+/** 以 root 执行或写进 sudoers 的命令只从固定系统目录解析，绝不读用户 PATH。 */
 const SYSTEM_BIN_DIRS = ['/sbin', '/usr/sbin', '/bin', '/usr/bin'];
 
 export function defaultResolveBin(name: string): string {
-  const dirs = [...SYSTEM_BIN_DIRS, ...(process.env.PATH ?? '').split(delimiter).filter(Boolean)];
-  for (const dir of dirs) {
+  for (const dir of SYSTEM_BIN_DIRS) {
     const candidate = join(dir, name);
     if (existsSync(candidate)) return candidate;
   }
@@ -38,15 +39,32 @@ export interface OpenrcRuntime {
   warn: (message: string) => void;
 }
 
+const SUDO_ENV = { LC_ALL: 'C', LANG: 'C' };
+
 function sudoRequired(argv: string[]): OpenrcPrivilegeError {
   return new OpenrcPrivilegeError(t('service.openrc.sudoRequired', { command: argv.join(' ') }));
 }
 
 async function runSudo(run: OpenrcRuntime['run'], argv: string[]): Promise<RunCommandResult> {
   try {
-    return await run('sudo', ['-n', ...argv]);
+    return await run('sudo', ['-n', ...argv], { env: { ...process.env, ...SUDO_ENV } });
   } catch {
     throw sudoRequired(argv);
+  }
+}
+
+/**
+ * 免密规则是否就绪：`-k` 忽略缓存的 sudo 凭据，避免刚交互输过密码时误判；
+ * 只要不是认证失败（status 对已停服务返回 3 也算）即视为可用。
+ */
+export async function probeNopasswd(run: OpenrcRuntime['run'], argv: string[]): Promise<boolean> {
+  try {
+    const result = await run('sudo', ['-n', '-k', ...argv], {
+      env: { ...process.env, ...SUDO_ENV },
+    });
+    return !isSudoAuthFailure(result);
+  } catch {
+    return false;
   }
 }
 

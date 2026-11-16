@@ -9,7 +9,7 @@ import { defaultInstallDir } from '../constants';
 import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
 import { defaultShimDirs } from '../lib/cli-shim';
-import { getInstallHint } from '../lib/dep-install';
+import { getInstallHintAsync } from '../lib/dep-install';
 import { readEnvFile } from '../lib/env-file';
 import { errorMessage } from '../lib/error-message';
 import { ensureDir, pathExists } from '../lib/fs-utils';
@@ -306,7 +306,7 @@ async function requireUpgradeBun(parsed: ParsedArgs, meta: InstallMeta): Promise
     metaBunPath: meta.bunPath,
   });
   if (bun.ok && bun.path) return bun.path;
-  const hint = getInstallHint('bun');
+  const hint = await getInstallHintAsync('bun');
   const reason = bun.reason || t('bun.checkFailed');
   throw new Error(`${reason}\n${t('deps.install.hint', { command: hint })}`);
 }

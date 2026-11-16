@@ -28,6 +28,7 @@ import {
   HEALTHZ_RETRY_DELAY_MS,
   checkEnvironment,
   checkHealth,
+  checkService,
   classifyPasskeyOrigin,
   healthzUrl,
   isDomainOrigin,
@@ -501,6 +502,31 @@ describe('loopStallCheck', () => {
   });
 });
 
+describe('checkService with install-meta', () => {
+  test('--no-service installs pass without asking any service manager', async () => {
+    const checks = await checkService({
+      serviceName: 'vibeterm',
+      installDir: '/opt/vibeterm',
+      serviceMode: 'none',
+      serviceManager: 'systemd-user',
+    });
+    expect(checks).toEqual([
+      { id: 'service', level: 'pass', message: t('doctor.service.unmanaged'), detail: undefined },
+    ]);
+  });
+
+  test('the recorded manager is used instead of probing', async () => {
+    const checks = await checkService({
+      serviceName: 'vibeterm-doctor-absent-test',
+      installDir: '/opt/vibeterm',
+      serviceManager: 'openrc',
+    });
+    expect(checks[0]?.message).toBe(
+      t('doctor.service.notInstalled', { serviceName: 'vibeterm-doctor-absent-test' })
+    );
+  });
+});
+
 describe('loopStallCheck per service manager', () => {
   test('OpenRC points at rc-service and the log file', () => {
     const checks = loopStallCheck({
@@ -515,6 +541,18 @@ describe('loopStallCheck per service manager', () => {
     expect(checks[0]?.message).toContain('rc-service vibeterm status');
     expect(checks[0]?.message).toContain(`${STALL_INSTALL_DIR}/vibeterm.log`);
     expect(checks[0]?.message).not.toContain('journalctl');
+  });
+
+  test('a custom service name reaches the OpenRC hint', () => {
+    const checks = loopStallCheck({
+      serviceRunning: true,
+      timedOut: true,
+      url: STALL_URL,
+      installDir: STALL_INSTALL_DIR,
+      serviceManager: 'openrc',
+      serviceName: 'vt-work',
+    });
+    expect(checks[0]?.message).toContain('sudo rc-service vt-work restart');
   });
 
   test('systemd keeps the journalctl hint', () => {

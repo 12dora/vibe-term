@@ -1635,11 +1635,22 @@ describe('远程卸载', () => {
       if (path.includes('/bad/')) {
         return new Response(JSON.stringify({ code: 'UNINSTALL_NOT_ALLOWED' }), { status: 409 });
       }
+      if (path.includes('/openrc/')) {
+        return new Response(
+          JSON.stringify({ code: 'UNINSTALL_NOT_ALLOWED', reason: 'openrc_needs_terminal' }),
+          { status: 409 }
+        );
+      }
       if (path.includes('/boom/')) throw new Error('offline');
       return new Response(JSON.stringify({ state: 'scheduled' }), { status: 202 });
     });
     expect(await io.start('good')).toEqual({ kind: 'scheduled' });
     expect(await io.start('bad')).toEqual({ kind: 'failed', code: 'UNINSTALL_NOT_ALLOWED' });
+    expect(await io.start('openrc')).toEqual({
+      kind: 'failed',
+      code: 'UNINSTALL_NOT_ALLOWED',
+      reason: 'openrc_needs_terminal',
+    });
     expect(await io.start('boom')).toEqual({ kind: 'failed', code: 'NODE_UNREACHABLE' });
     expect(calls[0]).toEqual({ path: '/api/mesh/nodes/good/uninstall', method: 'POST' });
   });
@@ -1729,11 +1740,48 @@ describe('远程卸载', () => {
     expect(summary).toEqual({ scheduled: 0, revoked: 0, aborted: 1, failed: [] });
   });
 
+  test('逐台：OpenRC 拒绝带 reason 时报终端卸载提示且跳过吊销', async () => {
+    const revoked: string[] = [];
+    const messages: string[] = [];
+    const summary = await runUninstallBatch({
+      targets: [row('a')],
+      io: {
+        start: async () =>
+          ({
+            kind: 'failed',
+            code: 'UNINSTALL_NOT_ALLOWED',
+            reason: 'openrc_needs_terminal',
+          }) as const,
+        clearOperation: async () => true,
+      },
+      t,
+      onScheduled: () => undefined,
+      onFailed: (_name, message) => messages.push(message),
+      canWrite: () => true,
+      revoke: async (target) => {
+        revoked.push(target.id);
+        return true;
+      },
+    });
+    expect(messages).toEqual(['nodes.uninstall.errors.openrcNeedsTerminal']);
+    expect(revoked).toEqual([]);
+    expect(summary.scheduled).toBe(0);
+  });
+
   test('稳定错误码走文案表，未知码原样显示', () => {
     expect(uninstallErrorText(t, 'UNINSTALL_UNSUPPORTED')).toBe(
       'nodes.uninstall.errors.unsupported'
     );
     expect(uninstallErrorText(t, 'WAT')).toBe('WAT');
+    expect(uninstallErrorText(t, 'UNINSTALL_NOT_ALLOWED', 'openrc_needs_terminal')).toBe(
+      'nodes.uninstall.errors.openrcNeedsTerminal'
+    );
+    expect(uninstallErrorText(t, 'UNINSTALL_NOT_ALLOWED', 'not_cli_install')).toBe(
+      'nodes.uninstall.errors.notAllowed'
+    );
+    expect(uninstallErrorText(t, 'UNINSTALL_NOT_ALLOWED')).toBe(
+      'nodes.uninstall.errors.notAllowed'
+    );
   });
 
   test('汇总提示：全成功报成功，有失败带上名字', () => {

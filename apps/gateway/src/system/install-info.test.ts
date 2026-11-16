@@ -1,7 +1,13 @@
 // 安装来源的判定：install-meta 里记了什么就是什么，老 meta 没记按 CLI，压根没有 meta 是手动/容器。
 
 import { describe, expect, test } from 'bun:test';
-import { deploymentFromMeta, installSourceFromMeta, isManagedDeployment } from './install-info';
+import {
+  deploymentFromMeta,
+  installSourceFromMeta,
+  isManagedDeployment,
+  openrcRemoteUninstallBlocked,
+  openrcSelfUpdateBlocked,
+} from './install-info';
 
 describe('installSourceFromMeta', () => {
   test('没有 install-meta：手动部署或容器', () => {
@@ -65,5 +71,22 @@ describe('isManagedDeployment', () => {
 
   test('未知值按托管处理，避免旧客户端对新增枚举崩溃', () => {
     expect(isManagedDeployment('runit')).toBe(true);
+  });
+});
+
+describe('OpenRC 非 root 的自更新与远程卸载闸门', () => {
+  test('免密规则未就绪时禁止自更新；root 与非 OpenRC 不受影响', () => {
+    expect(openrcSelfUpdateBlocked({ deployment: 'openrc' }, 1000)).toBe(true);
+    const ready = { deployment: 'openrc' as const, openrcSudoers: true };
+    expect(openrcSelfUpdateBlocked({ ...ready, openrcSudoers: false }, 1000)).toBe(true);
+    expect(openrcSelfUpdateBlocked(ready, 1000)).toBe(false);
+    expect(openrcSelfUpdateBlocked({ deployment: 'openrc' }, 0)).toBe(false);
+    expect(openrcSelfUpdateBlocked({ deployment: 'systemd' }, 1000)).toBe(false);
+  });
+
+  test('非 root 的 OpenRC 节点一律不能远程卸载', () => {
+    expect(openrcRemoteUninstallBlocked({ deployment: 'openrc' }, 1000)).toBe(true);
+    expect(openrcRemoteUninstallBlocked({ deployment: 'openrc' }, 0)).toBe(false);
+    expect(openrcRemoteUninstallBlocked({ deployment: 'systemd' }, 1000)).toBe(false);
   });
 });

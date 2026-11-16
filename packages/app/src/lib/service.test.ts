@@ -430,7 +430,7 @@ describe('openrc dispatch', () => {
     const calls: string[] = [];
     const run = async (command: string, args: string[]): Promise<RunCommandResult> => {
       calls.push([command, ...args].join(' '));
-      if (command === 'install') await writeFile(args[3], await readFile(args[2], 'utf8'));
+      if (command.endsWith('/install')) await writeFile(args[3], await readFile(args[2], 'utf8'));
       const stopped = command === '/sbin/rc-service' && args[1] === 'status';
       return { code: stopped ? 3 : 0, stdout: '', stderr: '' };
     };

@@ -66,6 +66,13 @@ export const zhCN: Record<string, string> = {
   'service.openrc.sudoRequired':
     '执行「{{command}}」需要 root 权限。请以 root 或 sudo 运行，或加 --no-service。',
   'service.openrc.commandFailed': '{{command}} 失败：{{detail}}',
+  'service.openrc.unsafePath':
+    'OpenRC 服务不支持该路径（仅允许字母、数字和 _ . / : @ + -）：{{path}}',
+  'service.openrc.foreignScript': '{{path}} 不是 VibeTerm 写入的，请用 --service-name 换个服务名。',
+  'service.openrc.ownedByOther':
+    '{{path}} 属于 {{installDir}} 的 VibeTerm 安装，请用 --service-name 换名或加 --force。',
+  'service.openrc.refreshSkipped':
+    '未刷新 OpenRC 服务文件（需要 sudo），继续启动现有服务：{{detail}}',
   'service.openrc.invalidName': 'OpenRC 服务名或用户名无效：{{name}}',
   'service.openrc.sudoersSkipped':
     '未能写入 sudoers 规则，之后在网页上升级或重启需要 sudo：{{detail}}',
@@ -131,6 +138,7 @@ export const zhCN: Record<string, string> = {
   'doctor.service.notInstalled': '服务未安装：{{serviceName}}',
   'doctor.service.notRunning': '服务未运行：{{serviceName}}',
   'doctor.service.running': '服务运行中：{{serviceName}}',
+  'doctor.service.unmanaged': '以 --no-service 安装，未使用服务管理器。',
   'doctor.service.noManager': '{{detail}}',
   'doctor.health.pass': '健康检查通过：{{url}}',
   'doctor.health.fail': '健康检查失败或不可达：{{url}}',
