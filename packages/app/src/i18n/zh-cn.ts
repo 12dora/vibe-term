@@ -59,6 +59,18 @@ export const zhCN: Record<string, string> = {
   'service.hint.systemd': 'systemctl --user status {{serviceName}}',
   'service.hint.launchd': 'launchctl print gui/$(id -u)/com.vibeterm.{{serviceName}}',
   'service.hint.none': '当前平台无服务管理命令',
+  'service.hint.openrc': 'rc-service {{serviceName}} status',
+  'service.status.openrcNotBooted':
+    '已安装 OpenRC，但本系统并非由 OpenRC 引导（常见于容器），无法托管服务。',
+  'service.openrc.sudoPrompt': 'OpenRC 服务需以 root 管理，sudo 可能要求输入密码。',
+  'service.openrc.sudoRequired':
+    '执行「{{command}}」需要 root 权限。请以 root 或 sudo 运行，或加 --no-service。',
+  'service.openrc.commandFailed': '{{command}} 失败：{{detail}}',
+  'service.openrc.invalidName': 'OpenRC 服务名或用户名无效：{{name}}',
+  'service.openrc.sudoersSkipped':
+    '未能写入 sudoers 规则，之后在网页上升级或重启需要 sudo：{{detail}}',
+  'service.openrc.uninstallManual':
+    '未能移除 OpenRC 服务（{{detail}}）。请以 root 执行：{{commands}}',
 
   'init.prompt.dirExistsConfirm': '目录 {{installDir}} 非空，是否仍在此安装（不会删除现有文件）？',
   'init.error.installDirNotEmpty': '安装目录非空：{{installDir}}。如需清空后重装，请加 --force',
@@ -69,7 +81,9 @@ export const zhCN: Record<string, string> = {
   'init.error.noFreePort': '{{host}} 上 {{from}}-{{to}} 无可用端口，请用 --{{flag}} 指定。',
   'init.port.fallback': '端口 {{from}} 不可用，改用 {{to}}。',
   'init.error.noServiceManager':
-    '未检测到可用的服务管理器（平台：{{platform}}）。VibeTerm 需要 systemd（Linux）或 launchd（macOS）。',
+    '未检测到可用的服务管理器（平台：{{platform}}）。Linux 需要 systemd 用户会话或 OpenRC，macOS 需要 launchd；也可加 --no-service。',
+  'init.error.openrcNotBooted':
+    '已安装 OpenRC，但本系统并非由 OpenRC 引导（常见于容器）。请加 --no-service，由容器的进程管理负责运行 VibeTerm。',
   'init.warning.noServiceManager': '当前平台 {{platform}} 未实现自动服务安装，已完成文件部署。',
   'init.done': '初始化完成。',
   'init.summary.installDir': '安装目录',
@@ -130,6 +144,8 @@ export const zhCN: Record<string, string> = {
   'doctor.ports.blocked': '端口不可达：{{list}}',
   'doctor.health.loopStall':
     '服务进程仍在运行，但 HTTP 无响应（{{url}}）：网关主线程可能已卡住；事件循环看门狗会自动重启（参见 `journalctl --user -u vibeterm` / `{{installDir}}/loop-watchdog.log`）；立即恢复可执行 `systemctl --user restart vibeterm` / `launchctl kickstart -k gui/$UID/com.vibeterm.vibeterm`',
+  'doctor.health.loopStallOpenrc':
+    '服务进程仍在运行，但 HTTP 无响应（{{url}}）：网关主线程可能已卡住；事件循环看门狗会自动重启（参见 `rc-service {{serviceName}} status` / `{{installDir}}/vibeterm.log` / `{{installDir}}/loop-watchdog.log`）；立即恢复可执行 `sudo rc-service {{serviceName}} restart`',
   'doctor.loopWatchdog.killed':
     'loop-watchdog.log 最近 64 KiB 内至少 {{count}} 次终止；最近一次于 {{ts}}（卡住 {{stalledSec}} 秒，阶段 {{phase}}，版本 {{version}}）',
 

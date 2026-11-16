@@ -39,6 +39,15 @@ export interface ServiceDeps {
   username?: string;
   log?: (message: string) => void;
   warn?: (message: string) => void;
+  /** OpenRC：init 脚本与 sudoers 规则目录；测试注入，避免写到真实 /etc */
+  openrcInitDir?: string;
+  sudoersDir?: string;
+  /** OpenRC：有效 uid（0 时不经 sudo）、是否允许交互式 sudo、命令绝对路径解析 */
+  euid?: number;
+  isInteractive?: () => boolean;
+  resolveBin?: (name: string) => string;
+  /** OpenRC command_user 的组名；默认取 `id -gn` */
+  groupName?: string;
 }
 
 export interface ServiceIdentityOptions {

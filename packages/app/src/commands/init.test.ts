@@ -12,10 +12,12 @@ import {
   type PortFallback,
   applyPublicPort,
   buildInitConfig,
+  buildInitMeta,
   enableDirectAfterInit,
   initPortPlanList,
   normalizeRelayPublicUrl,
   prepareInitConfig,
+  resolveInitServiceManager,
   resolveInitStunServers,
 } from './init';
 import { resolveInstallTarget } from './init-target';
@@ -459,5 +461,63 @@ describe('prepareInitConfig ordering', () => {
     const { calls, deps } = recorder();
     await prepare(['--force'], deps);
     expect(calls).toEqual(['canBind:9883', `canBind:${DEFAULT_PEER_PORT}`]);
+  });
+});
+
+describe('resolveInitServiceManager', () => {
+  test('--no-service skips detection', async () => {
+    let probed = false;
+    const detect = async () => {
+      probed = true;
+      return { kind: 'none' as const };
+    };
+    expect(await resolveInitServiceManager({ noService: true }, detect)).toBe('none');
+    expect(probed).toBe(false);
+  });
+
+  test('OpenRC is accepted as a service manager', async () => {
+    const detect = async () => ({ kind: 'openrc' as const });
+    expect(await resolveInitServiceManager({ noService: false }, detect)).toBe('openrc');
+  });
+
+  test('no manager lists systemd, OpenRC and --no-service', async () => {
+    const detect = async () => ({ kind: 'none' as const });
+    const error = await resolveInitServiceManager({ noService: false }, detect).catch((e) => e);
+    expect(String(error.message)).toContain('OpenRC');
+    expect(String(error.message)).toContain('systemd');
+    expect(String(error.message)).toContain('--no-service');
+  });
+
+  test('OpenRC not booted (container) gets its own message', async () => {
+    const detect = async () => ({ kind: 'none' as const, reason: 'openrc-not-booted' as const });
+    const error = await resolveInitServiceManager({ noService: false }, detect).catch((e) => e);
+    expect(String(error.message)).toContain('did not boot');
+    expect(String(error.message)).toContain('--no-service');
+  });
+});
+
+describe('buildInitMeta', () => {
+  const config = {
+    serviceName: 'vibeterm',
+    autostart: true,
+    installDir: '/opt/vibeterm',
+    noService: false,
+    linger: true,
+  };
+  const runtime = { cliVersion: '2.16.0', bunPath: '/usr/bin/bun', manager: 'openrc' as const };
+
+  test('records the detected service manager', () => {
+    expect(buildInitMeta(config, runtime)).toMatchObject({
+      serviceMode: 'managed',
+      serviceManager: 'openrc',
+      cliVersion: '2.16.0',
+    });
+  });
+
+  test('--no-service records none', () => {
+    expect(buildInitMeta({ ...config, noService: true }, runtime)).toMatchObject({
+      serviceMode: 'none',
+      serviceManager: 'none',
+    });
   });
 });

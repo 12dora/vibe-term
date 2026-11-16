@@ -69,6 +69,7 @@ Init shim ownership:
 
 Service (init / upgrade):
   --no-linger: skip enabling systemd linger (by default the Linux user service keeps running after logout).
+  OpenRC (Alpine and others): installs /etc/init.d/<service-name> running as the current user; without root, sudo asks once.
 
 Global flags:
   --lang <en|zh-CN>
@@ -139,6 +140,7 @@ relay join --token：
 
 服务（init / upgrade）：
   --no-linger：不启用 systemd linger（默认启用，登出后 Linux 用户服务继续运行）。
+  OpenRC（Alpine 等）：安装以当前用户运行的 /etc/init.d/<服务名>；非 root 时 sudo 只询问一次。
 
 全局参数：
   --lang <en|zh-CN>

@@ -64,6 +64,19 @@ export const en: Record<string, string> = {
   'service.hint.systemd': 'systemctl --user status {{serviceName}}',
   'service.hint.launchd': 'launchctl print gui/$(id -u)/com.vibeterm.{{serviceName}}',
   'service.hint.none': 'No service manager command on this platform.',
+  'service.hint.openrc': 'rc-service {{serviceName}} status',
+  'service.status.openrcNotBooted':
+    'OpenRC is installed but did not boot this system (common in containers); services cannot be managed.',
+  'service.openrc.sudoPrompt':
+    'The OpenRC service is managed as root; sudo may ask for your password.',
+  'service.openrc.sudoRequired':
+    'Root access is required for "{{command}}". Run as root or with sudo, or pass --no-service.',
+  'service.openrc.commandFailed': '{{command}} failed: {{detail}}',
+  'service.openrc.invalidName': 'Invalid OpenRC service or user name: {{name}}',
+  'service.openrc.sudoersSkipped':
+    'Could not install the sudoers rule; upgrades and restarts from the web UI will need sudo: {{detail}}',
+  'service.openrc.uninstallManual':
+    'Could not remove the OpenRC service ({{detail}}). Run as root: {{commands}}',
 
   'init.prompt.dirExistsConfirm':
     'Directory {{installDir}} is not empty. Install into it anyway (existing files are not deleted)?',
@@ -77,7 +90,9 @@ export const en: Record<string, string> = {
     'No free port found in {{from}}-{{to}} on {{host}}. Choose one with --{{flag}}.',
   'init.port.fallback': 'Port {{from}} is unavailable; using {{to}}.',
   'init.error.noServiceManager':
-    'No supported service manager found (platform: {{platform}}). VibeTerm requires systemd (Linux) or launchd (macOS).',
+    'No supported service manager found (platform: {{platform}}). Use a systemd user session or OpenRC on Linux, launchd on macOS, or pass --no-service.',
+  'init.error.openrcNotBooted':
+    'OpenRC is installed but did not boot this system (common in containers). Pass --no-service and let the container supervisor run VibeTerm.',
   'init.warning.noServiceManager':
     'Service manager is not supported on platform {{platform}}. Files are deployed but autostart is not configured.',
   'init.done': 'Initialization completed.',
@@ -141,6 +156,8 @@ export const en: Record<string, string> = {
   'doctor.ports.blocked': 'Unreachable ports: {{list}}',
   'doctor.health.loopStall':
     'Service process is running but HTTP is not answering ({{url}}): the gateway main thread may be stalled; the loop watchdog restarts it automatically (see `journalctl --user -u vibeterm` / `{{installDir}}/loop-watchdog.log`); to recover now run `systemctl --user restart vibeterm` / `launchctl kickstart -k gui/$UID/com.vibeterm.vibeterm`',
+  'doctor.health.loopStallOpenrc':
+    'Service process is running but HTTP is not answering ({{url}}): the gateway main thread may be stalled; the loop watchdog restarts it automatically (see `rc-service {{serviceName}} status` / `{{installDir}}/vibeterm.log` / `{{installDir}}/loop-watchdog.log`); to recover now run `sudo rc-service {{serviceName}} restart`',
   'doctor.loopWatchdog.killed':
     'at least {{count}} kill(s) in the last 64 KiB of loop-watchdog.log; last at {{ts}} (stalled {{stalledSec}}s, phase {{phase}}, version {{version}})',
 

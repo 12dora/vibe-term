@@ -414,3 +414,65 @@ describe('systemd linger', () => {
     expect(await ensureSystemdLinger({ autostart: true, linger: false }, deps({}))).toBe('skipped');
   });
 });
+
+describe('openrc dispatch', () => {
+  let root = '';
+
+  afterEach(async () => {
+    if (root) await rm(root, { recursive: true, force: true });
+    root = '';
+  });
+
+  async function openrcDeps() {
+    root = await mkdtemp(join(tmpdir(), 'vibeterm-openrc-dispatch-'));
+    const initDir = join(root, 'init.d');
+    await mkdir(initDir, { recursive: true });
+    const calls: string[] = [];
+    const run = async (command: string, args: string[]): Promise<RunCommandResult> => {
+      calls.push([command, ...args].join(' '));
+      if (command === 'install') await writeFile(args[3], await readFile(args[2], 'utf8'));
+      const stopped = command === '/sbin/rc-service' && args[1] === 'status';
+      return { code: stopped ? 3 : 0, stdout: '', stderr: '' };
+    };
+    return {
+      calls,
+      initDir,
+      deps: {
+        manager: 'openrc' as const,
+        run: run as never,
+        euid: 0,
+        resolveBin: (name: string) => `/sbin/${name}`,
+        openrcInitDir: initDir,
+        username: 'alice',
+        groupName: 'alice',
+        homeDir: '/home/alice',
+        oomConfigDir: join(root, 'systemd'),
+      },
+    };
+  }
+
+  test('installService routes to OpenRC and never touches systemd / loginctl', async () => {
+    const { calls, initDir, deps } = await openrcDeps();
+    await installService(
+      {
+        serviceName: 'vibeterm',
+        runScriptPath: '/opt/vibeterm/run.sh',
+        installDir: '/opt/vibeterm',
+        autostart: true,
+      },
+      deps
+    );
+    expect(await readFile(join(initDir, 'vibeterm'), 'utf8')).toContain('supervise-daemon');
+    expect(calls.some((call) => /systemctl|loginctl/.test(call))).toBe(false);
+    expect(calls).toContain('/sbin/rc-service vibeterm start');
+  });
+
+  test('getServiceStatus and stopService use rc-service', async () => {
+    const { calls, deps } = await openrcDeps();
+    const status = await getServiceStatus('vibeterm', '/opt/vibeterm', { deps });
+    expect(status.manager).toBe('openrc');
+    expect(status.installed).toBe(false);
+    await stopService('vibeterm', '/opt/vibeterm', { deps });
+    expect(calls).toEqual(['/sbin/rc-service vibeterm stop']);
+  });
+});

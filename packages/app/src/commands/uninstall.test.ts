@@ -125,6 +125,25 @@ describe('runUninstall --yes --purge', () => {
     expect(await readFile(outsider, 'utf8')).toBe('safe');
   });
 
+  test('passes the service manager recorded in install-meta', async () => {
+    const { installDir } = await makeInstallTree();
+    await writeFile(
+      join(installDir, 'install-meta.json'),
+      `${JSON.stringify({ serviceName: 'vibeterm', installDir, serviceManager: 'openrc' })}\n`
+    );
+    const serviceCalls: unknown[] = [];
+    await runUninstall(parseArgs(['uninstall', '--yes', '--install-dir', installDir]), {
+      uninstallService: async (opts) => {
+        serviceCalls.push(opts);
+      },
+      removeShims: async () => undefined,
+      log: () => undefined,
+    });
+    expect(serviceCalls).toEqual([
+      { serviceName: 'vibeterm', installDir, serviceManager: 'openrc' },
+    ]);
+  });
+
   test('continues when the service manager is already gone', async () => {
     const { installDir } = await makeInstallTree();
     await runUninstall(parseArgs(['uninstall', '--yes', '--purge', '--install-dir', installDir]), {

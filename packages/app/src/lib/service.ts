@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { DEFAULT_SERVICE_NAME } from '../constants';
 import { t } from '../i18n';
 import { ensureDir, pathExists, writeText } from './fs-utils';
-import { detectServiceManager } from './platform';
+import { type ServiceManagerDetection, detectServiceManagerDetail } from './platform';
 import { runCommand } from './process';
 import {
   installLaunchdService,
@@ -15,6 +15,14 @@ import {
   stopLaunchdService,
   uninstallLaunchdService,
 } from './service-launchd';
+import {
+  installOpenrcService,
+  queryOpenrcStatus,
+  restartOpenrcService,
+  startOpenrcService,
+  stopOpenrcService,
+  uninstallOpenrcService,
+} from './service-openrc';
 import type {
   ServiceDeps,
   ServiceIdentityOptions,
@@ -194,8 +202,13 @@ async function installSystemdService(
   }
 }
 
+async function resolveDetection(deps?: ServiceDeps): Promise<ServiceManagerDetection> {
+  if (deps?.manager) return { kind: deps.manager };
+  return await detectServiceManagerDetail();
+}
+
 async function resolveManager(deps?: ServiceDeps) {
-  return deps?.manager ?? (await detectServiceManager());
+  return (await resolveDetection(deps)).kind;
 }
 
 export async function installService(
@@ -211,6 +224,11 @@ export async function installService(
 
   if (manager === 'launchd') {
     await installLaunchdService(options, deps);
+    return;
+  }
+
+  if (manager === 'openrc') {
+    await installOpenrcService(options, deps);
     return;
   }
 
@@ -250,7 +268,10 @@ export async function stopService(
 
   if (manager === 'launchd') {
     await stopLaunchdService(serviceName, installDir, opts);
+    return;
   }
+
+  if (manager === 'openrc') await stopOpenrcService(serviceName, opts);
 }
 
 export async function startService(
@@ -274,6 +295,11 @@ export async function startService(
 
   if (manager === 'launchd') {
     await startLaunchdService(serviceName, installDir, deps);
+    return;
+  }
+
+  if (manager === 'openrc') {
+    await startOpenrcService(serviceName, deps);
     return;
   }
 
@@ -304,7 +330,10 @@ export async function uninstallService(
 
   if (manager === 'launchd') {
     await uninstallLaunchdService(options.serviceName, options.installDir, deps);
+    return;
   }
+
+  if (manager === 'openrc') await uninstallOpenrcService(options.serviceName, deps);
 }
 
 async function querySystemdStatus(serviceName: string, deps?: ServiceDeps): Promise<ServiceStatus> {
@@ -329,7 +358,8 @@ export async function getServiceStatus(
   installDir?: string,
   opts?: ServiceIdentityOptions
 ): Promise<ServiceStatus> {
-  const manager = await resolveManager(opts?.deps);
+  const detection = await resolveDetection(opts?.deps);
+  const manager = detection.kind;
 
   if (manager === 'systemd-user') {
     return await querySystemdStatus(serviceName, opts?.deps);
@@ -339,22 +369,32 @@ export async function getServiceStatus(
     return await queryLaunchdStatus(serviceName, installDir, opts);
   }
 
+  if (manager === 'openrc') {
+    return await queryOpenrcStatus(serviceName, opts?.deps);
+  }
+
   return {
     manager: 'none',
     installed: false,
     running: false,
     autostartEnabled: false,
-    detail: t('service.status.none', { platform: process.platform }),
+    detail:
+      detection.reason === 'openrc-not-booted'
+        ? t('service.status.openrcNotBooted')
+        : t('service.status.none', { platform: process.platform }),
   };
 }
 
-export async function serviceHint(serviceName: string): Promise<string> {
-  const manager = await detectServiceManager();
+export async function serviceHint(serviceName: string, deps?: ServiceDeps): Promise<string> {
+  const manager = await resolveManager(deps);
   if (manager === 'systemd-user') {
     return t('service.hint.systemd', { serviceName });
   }
   if (manager === 'launchd') {
     return t('service.hint.launchd', { serviceName });
+  }
+  if (manager === 'openrc') {
+    return t('service.hint.openrc', { serviceName });
   }
   return t('service.hint.none');
 }
@@ -380,6 +420,11 @@ export async function restartService(
 
   if (manager === 'launchd') {
     await restartLaunchdService(serviceName, installDir, deps);
+    return;
+  }
+
+  if (manager === 'openrc') {
+    await restartOpenrcService(serviceName, deps);
     return;
   }
 

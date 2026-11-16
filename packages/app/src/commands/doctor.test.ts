@@ -501,11 +501,40 @@ describe('loopStallCheck', () => {
   });
 });
 
+describe('loopStallCheck per service manager', () => {
+  test('OpenRC points at rc-service and the log file', () => {
+    const checks = loopStallCheck({
+      serviceRunning: true,
+      timedOut: true,
+      url: STALL_URL,
+      installDir: STALL_INSTALL_DIR,
+      serviceManager: 'openrc',
+      serviceName: 'vibeterm',
+    });
+    expect(checks).toHaveLength(1);
+    expect(checks[0]?.message).toContain('rc-service vibeterm status');
+    expect(checks[0]?.message).toContain(`${STALL_INSTALL_DIR}/vibeterm.log`);
+    expect(checks[0]?.message).not.toContain('journalctl');
+  });
+
+  test('systemd keeps the journalctl hint', () => {
+    const checks = loopStallCheck({
+      serviceRunning: true,
+      timedOut: true,
+      url: STALL_URL,
+      installDir: STALL_INSTALL_DIR,
+      serviceManager: 'systemd-user',
+    });
+    expect(checks[0]?.message).toContain('journalctl --user -u vibeterm');
+  });
+});
+
 describe('checkHealth correlation and retry', () => {
   test('running+healthy is pass without loop-stall', async () => {
     const checks = await checkHealth('127.0.0.1', '1', {
       fetchImpl: okFetch(),
       serviceRunning: true,
+      serviceManager: 'systemd-user',
       installDir: STALL_INSTALL_DIR,
       sleep: noSleep,
     });
@@ -520,6 +549,7 @@ describe('checkHealth correlation and retry', () => {
     const checks = await checkHealth('127.0.0.1', '9883', {
       fetchImpl: sequenceFetch([timeoutError(), timeoutError()]),
       serviceRunning: true,
+      serviceManager: 'systemd-user',
       installDir: STALL_INSTALL_DIR,
       sleep: noSleep,
     });
@@ -543,6 +573,7 @@ describe('checkHealth correlation and retry', () => {
     const checks = await checkHealth('127.0.0.1', '9883', {
       fetchImpl: sequenceFetch([refusedError(), refusedError()]),
       serviceRunning: true,
+      serviceManager: 'systemd-user',
       installDir: STALL_INSTALL_DIR,
       sleep: noSleep,
     });
@@ -562,6 +593,7 @@ describe('checkHealth correlation and retry', () => {
     const checks = await checkHealth('127.0.0.1', '1', {
       fetchImpl,
       serviceRunning: true,
+      serviceManager: 'systemd-user',
       installDir: STALL_INSTALL_DIR,
       sleep: noSleep,
     });
@@ -574,6 +606,7 @@ describe('checkHealth correlation and retry', () => {
     const checks = await checkHealth('127.0.0.1', '9883', {
       fetchImpl: sequenceFetch([refusedError(), timeoutError()]),
       serviceRunning: true,
+      serviceManager: 'systemd-user',
       installDir: STALL_INSTALL_DIR,
       sleep: noSleep,
     });
@@ -587,6 +620,7 @@ describe('checkHealth correlation and retry', () => {
     const checks = await checkHealth('127.0.0.1', '9883', {
       fetchImpl: failingFetch(),
       serviceRunning: true,
+      serviceManager: 'systemd-user',
       installDir: STALL_INSTALL_DIR,
       sleep: noSleep,
     });
@@ -599,6 +633,7 @@ describe('checkHealth correlation and retry', () => {
     const checks = await checkHealth('127.0.0.1', '9883', {
       fetchImpl: async () => new Response('no', { status: 503 }),
       serviceRunning: true,
+      serviceManager: 'systemd-user',
       installDir: STALL_INSTALL_DIR,
       sleep: noSleep,
     });
@@ -668,11 +703,34 @@ describe('checkHealth correlation and retry', () => {
     ]);
   });
 
+  test('detects the service manager only when the loop is stalled', async () => {
+    let detections = 0;
+    const detectManager = async () => {
+      detections += 1;
+      return 'openrc' as const;
+    };
+    const stalled = await checkHealth('127.0.0.1', '9883', {
+      fetchImpl: sequenceFetch([timeoutError(), timeoutError()]),
+      serviceRunning: true,
+      sleep: noSleep,
+      detectManager,
+    });
+    expect(stalled.find((check) => check.id === 'loop-stall')?.message).toContain('rc-service');
+    await checkHealth('127.0.0.1', '9883', {
+      fetchImpl: sequenceFetch([timeoutError(), timeoutError()]),
+      serviceRunning: false,
+      sleep: noSleep,
+      detectManager,
+    });
+    expect(detections).toBe(1);
+  });
+
   test('sleeps 1s between the two probe attempts', async () => {
     const slept: number[] = [];
     await checkHealth('127.0.0.1', '9883', {
       fetchImpl: sequenceFetch([timeoutError(), timeoutError()]),
       serviceRunning: true,
+      serviceManager: 'systemd-user',
       sleep: async (ms) => {
         slept.push(ms);
       },

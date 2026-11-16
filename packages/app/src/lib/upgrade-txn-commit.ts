@@ -8,6 +8,7 @@ import { writeInstallMeta } from './install';
 import { createInstallLayout } from './install-layout';
 import { detectInstallSource } from './install-source';
 import { readJsonFile } from './json-file';
+import { refreshServiceManager } from './service-manager-meta';
 import { restoreDbTrio } from './upgrade-db';
 import { finishCommittedCleanup, removeTxnDirs, safeRemoveDir } from './upgrade-gc';
 import type { HealthCheckFn } from './upgrade-health';
@@ -82,6 +83,7 @@ async function persistUpgradeMeta(input: {
   if (input.serviceMode === 'none' || input.serviceMode === 'managed') {
     meta.serviceMode = input.serviceMode;
   }
+  meta.serviceManager = await refreshServiceManager(meta);
   // 服务名只在健康检查通过后才落盘（迁移把默认 tmex 改成 vibeterm）。
   if (input.serviceName) meta.serviceName = input.serviceName;
   await writeInstallMeta(layout, meta);

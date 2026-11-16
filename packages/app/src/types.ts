@@ -1,4 +1,7 @@
+import type { ServiceManagerKind } from './lib/platform';
 import type { VibeTermRoleName } from './lib/roles';
+
+export type { ServiceManagerKind };
 
 export interface ParsedArgs {
   command: string | null;
@@ -54,4 +57,6 @@ export interface InstallMeta {
   linger?: boolean;
   /** 安装来源；老安装没有这一项（网关按 CLI 处理）。升级不覆盖已有值。 */
   installSource?: InstallSource;
+  /** 安装 / 升级时探测到的服务管理器；serviceMode=none 时为 none。老安装没有这一项。 */
+  serviceManager?: ServiceManagerKind;
 }

@@ -11,6 +11,11 @@ import {
   shouldWarnAboutOomPolicy,
 } from '../lib/systemd-oom-policy';
 
+/** OpenRC init 脚本 export 了 VIBETERM_SERVICE_MANAGER=openrc；那里没有 systemd unit 可查。 */
+function underOpenrc(serviceManager: string | undefined): boolean {
+  return (serviceManager ?? process.env.VIBETERM_SERVICE_MANAGER) === 'openrc';
+}
+
 async function readUnit(path: string): Promise<string | null> {
   try {
     return await readFile(path, 'utf8');
@@ -26,10 +31,11 @@ export async function warnOnStaleSystemdUnit(
     unitPath?: string;
     readUnit?: (path: string) => Promise<string | null>;
     warn?: (line: string) => void;
+    serviceManager?: string;
   } = {}
 ): Promise<boolean> {
   const platform = deps.platform ?? process.platform;
-  if (platform !== 'linux') return false;
+  if (platform !== 'linux' || underOpenrc(deps.serviceManager)) return false;
   const content = await (deps.readUnit ?? readUnit)(deps.unitPath ?? vibeTermSystemdUnitPath());
   if (!systemdUnitLacksKillModeProcess(content)) return false;
   (deps.warn ?? console.warn)(SYSTEMD_KILL_MODE_WARNING);
@@ -57,10 +63,11 @@ export async function warnOnSystemdOomPolicy(
     platform?: NodeJS.Platform;
     probe?: (command: string, args: string[]) => Promise<string | null>;
     warn?: (line: string) => void;
+    serviceManager?: string;
   } = {}
 ): Promise<boolean> {
   const platform = deps.platform ?? process.platform;
-  if (platform !== 'linux') return false;
+  if (platform !== 'linux' || underOpenrc(deps.serviceManager)) return false;
   const run = deps.probe ?? probe;
   const policy = parseDefaultOomPolicy(
     await run('systemctl', ['--user', 'show', '-p', 'DefaultOOMPolicy'])

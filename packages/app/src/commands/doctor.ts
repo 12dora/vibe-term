@@ -7,7 +7,7 @@ import {
   type DepInstallPlan,
   type InstallCommand,
   executeDependencyInstall,
-  planBunInstall,
+  planBunInstallForHost,
   planTmuxInstall,
 } from '../lib/dep-install';
 import { pathExists } from '../lib/fs-utils';
@@ -54,7 +54,7 @@ export interface DoctorReporter {
 }
 
 export interface DoctorFixPlanners {
-  bun: () => InstallCommand[];
+  bun: () => InstallCommand[] | Promise<InstallCommand[]>;
   tmux: () => Promise<InstallCommand[]>;
 }
 
@@ -75,7 +75,7 @@ const defaultDoctorReporter: DoctorReporter = {
 };
 
 const defaultFixPlanners: DoctorFixPlanners = {
-  bun: planBunInstall,
+  bun: () => planBunInstallForHost(),
   tmux: planTmuxInstall,
 };
 
@@ -336,7 +336,7 @@ export async function planDoctorFix(
   if (!isInstallableDep(check.id)) {
     return { kind: 'skip', id: check.id };
   }
-  const commands = check.id === 'bun' ? planners.bun() : await planners.tmux();
+  const commands = check.id === 'bun' ? await planners.bun() : await planners.tmux();
   return { kind: 'install', plan: buildDepFixPlan(check.id, check, commands) };
 }
 

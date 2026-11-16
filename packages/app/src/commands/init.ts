@@ -16,7 +16,7 @@ import {
   type DepInstallPlan,
   executeDependencyInstall,
   getInstallHintAsync,
-  planBunInstall,
+  planBunInstallForHost,
   planTmuxInstall,
 } from '../lib/dep-install';
 import { writeEnvFile } from '../lib/env-file';
@@ -37,7 +37,7 @@ import {
   resolvePackageLayout,
 } from '../lib/install-layout';
 import { detectInstallSource } from '../lib/install-source';
-import { detectServiceManager } from '../lib/platform';
+import { type ServiceManagerKind, detectServiceManagerDetail } from '../lib/platform';
 import { promptConfirm, promptText } from '../lib/prompt';
 import { DEFAULT_PEER_PORT, parseVibeTermRoleName } from '../lib/roles';
 import { installService, serviceHint } from '../lib/service';
@@ -326,7 +326,7 @@ async function handleDepFailure(
   errorMessage: string
 ): Promise<void> {
   const hint = await getInstallHintAsync(dep);
-  const commands = dep === 'bun' ? planBunInstall() : await planTmuxInstall();
+  const commands = dep === 'bun' ? await planBunInstallForHost() : await planTmuxInstall();
   const plan: DepInstallPlan = {
     dep,
     commands,
@@ -378,15 +378,52 @@ async function checkInitDependencies(
   return { ...bun, path: bun.path };
 }
 
-async function startInstalledRuntime(config: InitConfig, runScriptPath: string): Promise<void> {
+export async function resolveInitServiceManager(
+  config: Pick<InitConfig, 'noService'>,
+  detect: typeof detectServiceManagerDetail = detectServiceManagerDetail
+): Promise<ServiceManagerKind> {
+  if (config.noService) return 'none';
+  const detection = await detect();
+  if (detection.kind !== 'none') return detection.kind;
+  if (detection.reason === 'openrc-not-booted') throw new Error(t('init.error.openrcNotBooted'));
+  throw new Error(t('init.error.noServiceManager', { platform: process.platform }));
+}
+
+export function buildInitMeta(
+  config: Pick<InitConfig, 'serviceName' | 'autostart' | 'installDir' | 'noService' | 'linger'>,
+  runtime: { cliVersion: string; bunPath: string; manager: ServiceManagerKind }
+): InstallMeta {
+  return {
+    serviceName: config.serviceName,
+    platform: process.platform,
+    autostart: config.autostart,
+    installDir: config.installDir,
+    updatedAt: new Date().toISOString(),
+    cliVersion: runtime.cliVersion,
+    bunPath: runtime.bunPath,
+    serviceMode: config.noService ? 'none' : 'managed',
+    linger: config.linger,
+    installSource: detectInstallSource(),
+    serviceManager: config.noService ? 'none' : runtime.manager,
+  };
+}
+
+async function startInstalledRuntime(
+  config: InitConfig,
+  runScriptPath: string,
+  manager: ServiceManagerKind
+): Promise<void> {
   if (!config.noService) {
-    await installService({
-      serviceName: config.serviceName,
-      installDir: config.installDir,
-      runScriptPath,
-      autostart: config.autostart,
-      linger: config.linger,
-    });
+    await installService(
+      {
+        serviceName: config.serviceName,
+        installDir: config.installDir,
+        runScriptPath,
+        autostart: config.autostart,
+        linger: config.linger,
+      },
+      { manager }
+    );
     return;
   }
   const { createDirectProcessControl, pidFilePath } = await import('../lib/upgrade-apply');
@@ -467,10 +504,7 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   const config = await prepareInitConfig(parsed, {
     onPortFallback: (fallback) => portFallbacks.push(fallback),
   });
-  const manager = await detectServiceManager();
-  if (manager === 'none' && !config.noService) {
-    throw new Error(t('init.error.noServiceManager', { platform: process.platform }));
-  }
+  const manager = await resolveInitServiceManager(config);
 
   const bun = await checkInitDependencies(config, parsed);
 
@@ -513,21 +547,10 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   });
   await writeEnvFile(installLayout.envPath, envValues);
   await writeRunScript(installLayout, bun.path);
-  await startInstalledRuntime(config, installLayout.runScriptPath);
+  await startInstalledRuntime(config, installLayout.runScriptPath, manager);
 
-  const meta: InstallMeta = {
-    serviceName: config.serviceName,
-    platform: process.platform,
-    autostart: config.autostart,
-    installDir: config.installDir,
-    updatedAt: new Date().toISOString(),
-    cliVersion,
-    bunPath: bun.path,
-    serviceMode: config.noService ? 'none' : 'managed',
-    linger: config.linger,
-    installSource: detectInstallSource(),
-  };
+  const meta = buildInitMeta(config, { cliVersion, bunPath: bun.path, manager });
   await writeInstallMeta(installLayout, meta);
 
-  printInitSummary(config, bun, await serviceHint(config.serviceName), shim);
+  printInitSummary(config, bun, await serviceHint(config.serviceName, { manager }), shim);
 }

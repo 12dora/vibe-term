@@ -12,10 +12,14 @@ import { readJsonFile } from '../lib/json-file';
 import { promptConfirm } from '../lib/prompt';
 import { uninstallService } from '../lib/service';
 import { asBoolean, asString } from '../lib/validate';
-import type { InstallMeta, ParsedArgs } from '../types';
+import type { InstallMeta, ParsedArgs, ServiceManagerKind } from '../types';
 
 export type UninstallCommandDeps = {
-  uninstallService?: (opts: { serviceName: string; installDir: string }) => Promise<void>;
+  uninstallService?: (opts: {
+    serviceName: string;
+    installDir: string;
+    serviceManager?: ServiceManagerKind;
+  }) => Promise<void>;
   removeShims?: (opts: { installDir: string }) => Promise<void>;
   sleep?: (ms: number) => Promise<void>;
   argv1?: string;
@@ -54,6 +58,7 @@ type UninstallPlan = {
   installDir: string;
   installLayout: ReturnType<typeof createInstallLayout>;
   serviceName: string;
+  serviceManager?: ServiceManagerKind;
   purge: boolean;
   removeService: boolean;
   removeProgram: boolean;
@@ -81,9 +86,11 @@ export async function runUninstall(
     ((ms: number) => new Promise<void>((resolveSleep) => setTimeout(resolveSleep, ms)));
 
   let serviceName = asString(parsed.flags['service-name']) || DEFAULT_SERVICE_NAME;
+  let serviceManager: ServiceManagerKind | undefined;
   if (await pathExists(installLayout.metaPath)) {
     const meta = await readJsonFile<InstallMeta>(installLayout.metaPath);
     serviceName = meta.serviceName;
+    serviceManager = meta.serviceManager;
   }
 
   const ask = async (message: string, defaultValue: boolean): Promise<boolean> => {
@@ -113,6 +120,7 @@ export async function runUninstall(
     installDir,
     installLayout,
     serviceName,
+    serviceManager,
     purge,
     removeService,
     removeProgram,
@@ -147,11 +155,23 @@ async function executeUninstallPlan(plan: UninstallPlan): Promise<void> {
   }
 }
 
+/** meta 记录的管理器优先；`none`（--no-service 安装）与缺省一样交给探测。 */
+function managerDeps(manager: ServiceManagerKind | undefined): { manager?: ServiceManagerKind } {
+  return manager && manager !== 'none' ? { manager } : {};
+}
+
 async function uninstallServiceStep(plan: UninstallPlan): Promise<void> {
   plan.log('service');
-  const uninstall = plan.deps.uninstallService ?? uninstallService;
+  const uninstall =
+    plan.deps.uninstallService ??
+    ((opts: { serviceName: string; installDir: string; serviceManager?: ServiceManagerKind }) =>
+      uninstallService(opts, managerDeps(opts.serviceManager)));
   try {
-    await uninstall({ serviceName: plan.serviceName, installDir: plan.installDir });
+    await uninstall({
+      serviceName: plan.serviceName,
+      installDir: plan.installDir,
+      serviceManager: plan.serviceManager,
+    });
   } catch (err) {
     plan.log(`service failed: ${errorMessage(err)}`);
   }

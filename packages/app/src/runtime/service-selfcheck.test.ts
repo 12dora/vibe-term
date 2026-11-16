@@ -117,3 +117,37 @@ describe('warnOnSystemdOomPolicy', () => {
     expect(warns).toEqual([]);
   });
 });
+
+describe('OpenRC 下跳过 systemd 自检', () => {
+  test('不读 unit、不告警', async () => {
+    const reads: string[] = [];
+    const lines: string[] = [];
+    const warned = await warnOnStaleSystemdUnit({
+      platform: 'linux',
+      serviceManager: 'openrc',
+      readUnit: async (path) => {
+        reads.push(path);
+        return '[Service]\nRestart=always\n';
+      },
+      warn: (line) => lines.push(line),
+    });
+    expect(warned).toBe(false);
+    expect(reads).toEqual([]);
+    expect(lines).toEqual([]);
+  });
+
+  test('不 spawn systemctl', async () => {
+    const calls: string[] = [];
+    const warned = await warnOnSystemdOomPolicy({
+      platform: 'linux',
+      serviceManager: 'openrc',
+      probe: async (command, args) => {
+        calls.push([command, ...args].join(' '));
+        return 'DefaultOOMPolicy=stop\n';
+      },
+      warn: () => undefined,
+    });
+    expect(warned).toBe(false);
+    expect(calls).toEqual([]);
+  });
+});
