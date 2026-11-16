@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { setLiveServicesEnabled } from '../live-start-gates';
+import { markLiveServicesStopping, setLiveServicesEnabled } from '../live-start-gates';
 import {
   configureTunnelManager,
   ensureTunnelManager,
@@ -7,6 +7,7 @@ import {
   peekTunnelManager,
   peekTunnelPublicUrl,
   resetTunnelManagerLoaderForTests,
+  stopTunnelManagerIfLoaded,
 } from './lazy';
 
 afterEach(() => {
@@ -45,6 +46,54 @@ describe('tunnel/lazy', () => {
       expect(starts).toBe(1);
     } finally {
       tunnelManager.start = original;
+      resetTunnelManagerLoaderForTests();
+    }
+  });
+
+  test('in-process restart and shutdown during the first start', async () => {
+    const { tunnelManager } = await loadTunnelManager();
+    const original = { start: tunnelManager.start, stop: tunnelManager.stop };
+    const calls: string[] = [];
+    let releaseStart: () => void = () => {};
+    tunnelManager.start = () => {
+      calls.push('start');
+      return new Promise<void>((resolve) => {
+        releaseStart = resolve;
+      });
+    };
+    tunnelManager.stop = async () => {
+      calls.push('stop');
+    };
+    try {
+      setLiveServicesEnabled(true);
+      const first = ensureTunnelManager();
+      await Promise.resolve();
+      await Promise.resolve();
+      markLiveServicesStopping();
+      const stopping = stopTunnelManagerIfLoaded();
+      releaseStart();
+      await stopping;
+      await first;
+      // stop 等 start 落定之后才跑
+      expect(calls).toEqual(['start', 'stop']);
+
+      setLiveServicesEnabled(true);
+      tunnelManager.start = async () => {
+        calls.push('restart');
+      };
+      await ensureTunnelManager();
+      expect(calls).toEqual(['start', 'stop', 'restart']);
+
+      resetTunnelManagerLoaderForTests();
+      const loading = ensureTunnelManager();
+      markLiveServicesStopping();
+      await stopTunnelManagerIfLoaded();
+      await loading;
+      expect(calls).toEqual(['start', 'stop', 'restart', 'stop']);
+    } finally {
+      tunnelManager.start = original.start;
+      tunnelManager.stop = original.stop;
+      setLiveServicesEnabled(false);
       resetTunnelManagerLoaderForTests();
     }
   });

@@ -1,11 +1,11 @@
 import { type StateSnapshotPayload, isStandaloneRoles } from '@vibeterm/shared';
-import { peekAgentRuntime } from '../agent/lazy';
+import { ensureAgentSupervisor, peekAgentRuntime } from '../agent/lazy';
 import {
   AgentConfirmationAlreadyDecidedError,
   AgentConfirmationNotFoundError,
 } from '../agent/supervisor-errors';
 import { config } from '../config';
-import { decideAgentConfirmation, getAgentConfirmationById } from '../db/agent';
+import { getAgentConfirmationById } from '../db/agent';
 import { getSiteSettings } from '../db/site-settings';
 import { isPeerReachable } from '../mesh/address-class';
 import { pickMeshNodeName } from '../mesh/node-list-projection';
@@ -55,7 +55,11 @@ export type MessagingRuntimeHookDeps = {
   getSnapshot?: (deviceId: string) => StateSnapshotPayload | null;
   acquireRuntime?: (deviceId: string) => Promise<MessagingDeviceRuntime>;
   releaseRuntime?: (deviceId: string, runtime: MessagingDeviceRuntime) => Promise<void>;
-  resolveConfirmation?: (confirmationId: string, approved: boolean, reason?: string) => void;
+  resolveConfirmation?: (
+    confirmationId: string,
+    approved: boolean,
+    reason?: string
+  ) => void | Promise<void>;
   isStandalone?: () => boolean;
   loadIdentity?: () => {
     nodeId: string | null;
@@ -214,21 +218,21 @@ async function withDeviceRuntime<T>(
 }
 
 /**
- * supervisor 仅在有 running / waiting_confirmation 会话时开机加载，未加载即不存在待决确认；
- * 此时只做与 supervisor 相同的落库判定（含错误类型），不为一条必然失败的决定拉起整个 agent 运行时。
+ * 无效决定（不存在 / 已决）只查库即答，不拉起 agent 运行时；待决确认必须经 supervisor
+ * 落库 tool-approval-response、广播并续跑，否则会话停在悬空的 approval request 上。
  */
-function resolveAgentConfirmation(confirmationId: string, approved: boolean, reason?: string) {
-  const loaded = peekAgentRuntime();
-  if (loaded) {
-    loaded.agentSupervisor.resolveConfirmation(confirmationId, approved, reason);
-    return;
+async function resolveAgentConfirmation(
+  confirmationId: string,
+  approved: boolean,
+  reason?: string
+): Promise<void> {
+  if (!peekAgentRuntime()) {
+    const existing = getAgentConfirmationById(confirmationId);
+    if (!existing) throw new AgentConfirmationNotFoundError();
+    if (existing.status !== 'pending') throw new AgentConfirmationAlreadyDecidedError();
   }
-  if (!getAgentConfirmationById(confirmationId)) throw new AgentConfirmationNotFoundError();
-  const decided = decideAgentConfirmation(confirmationId, {
-    status: approved ? 'approved' : 'denied',
-    reason: reason ?? null,
-  });
-  if (!decided) throw new AgentConfirmationAlreadyDecidedError();
+  const supervisor = await ensureAgentSupervisor();
+  supervisor.resolveConfirmation(confirmationId, approved, reason);
 }
 
 function mapConfirmationError(error: unknown): DecideConfirmationResult {
@@ -301,10 +305,14 @@ function buildSendKeysHook(
 
 function buildDecideConfirmationHook(
   resolveConfirmation: NonNullable<MessagingRuntimeHookDeps['resolveConfirmation']>
-): (confirmationId: string, approved: boolean, reason?: string) => DecideConfirmationResult {
-  return (confirmationId, approved, reason) => {
+): (
+  confirmationId: string,
+  approved: boolean,
+  reason?: string
+) => Promise<DecideConfirmationResult> {
+  return async (confirmationId, approved, reason) => {
     try {
-      resolveConfirmation(confirmationId, approved, reason);
+      await resolveConfirmation(confirmationId, approved, reason);
       return { ok: true };
     } catch (error) {
       return mapConfirmationError(error);
@@ -323,9 +331,8 @@ export function createMessagingRuntimeHooks(
     ((deviceId, runtime) => tmuxRuntimeRegistry.release(deviceId, runtime));
   const resolveConfirmation =
     overrides.resolveConfirmation ??
-    ((confirmationId, approved, reason) => {
-      resolveAgentConfirmation(confirmationId, approved, reason);
-    });
+    ((confirmationId, approved, reason) =>
+      resolveAgentConfirmation(confirmationId, approved, reason));
   const isStandalone = overrides.isStandalone ?? (() => isStandaloneRoles(config.roles));
   const loadIdentity = overrides.loadIdentity ?? loadLocalIdentity;
   const getMesh = overrides.getMesh ?? defaultGetMesh;

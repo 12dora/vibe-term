@@ -217,7 +217,7 @@ describe('createMessagingRuntimeHooks', () => {
     await expect(hooks.sendKeys?.('dev-1', '%1', 'x\r')).rejects.toThrow('device-disconnected');
   });
 
-  test('decideConfirmation routes to supervisor and maps notFound / alreadyDecided', () => {
+  test('decideConfirmation routes to supervisor and maps errors', async () => {
     const calls: Array<[string, boolean, string | undefined]> = [];
     const hooks = createMessagingRuntimeHooks({
       resolveConfirmation: (id, approved, reason) => {
@@ -227,14 +227,20 @@ describe('createMessagingRuntimeHooks', () => {
         if (id === 'boom') throw new Error('unavailable');
       },
     });
-    expect(hooks.decideConfirmation?.('c1', true)).toEqual({ ok: true });
-    expect(hooks.decideConfirmation?.('c2', false, 'nope')).toEqual({ ok: true });
-    expect(hooks.decideConfirmation?.('missing', true)).toEqual({ ok: false, code: 'notFound' });
-    expect(hooks.decideConfirmation?.('done', false)).toEqual({
+    expect(await hooks.decideConfirmation?.('c1', true)).toEqual({ ok: true });
+    expect(await hooks.decideConfirmation?.('c2', false, 'nope')).toEqual({ ok: true });
+    expect(await hooks.decideConfirmation?.('missing', true)).toEqual({
+      ok: false,
+      code: 'notFound',
+    });
+    expect(await hooks.decideConfirmation?.('done', false)).toEqual({
       ok: false,
       code: 'alreadyDecided',
     });
-    expect(hooks.decideConfirmation?.('boom', true)).toEqual({ ok: false, code: 'unavailable' });
+    expect(await hooks.decideConfirmation?.('boom', true)).toEqual({
+      ok: false,
+      code: 'unavailable',
+    });
     expect(calls).toEqual([
       ['c1', true, undefined],
       ['c2', false, 'nope'],

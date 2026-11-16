@@ -11,8 +11,9 @@ import {
   updateWeixinAccount,
 } from '../db';
 import { t } from '../i18n';
+import { liveServicesStopping } from '../live-start-gates';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
-import { loadWeixinService } from '../weixin/lazy';
+import { loadWeixinService, refreshWeixinService } from '../weixin/lazy';
 import type { ConfigFieldSpec, FieldParseResult } from './config-field';
 import { json } from './http';
 import {
@@ -97,13 +98,13 @@ async function persistWeixinUpdate(
 ): Promise<void> {
   updateWeixinAccount(accountId, draft);
   broadcastSettingsUpdate('weixin');
-  await (await weixinService()).refresh();
+  await refreshWeixinService();
 }
 
 async function persistWeixinDelete(accountId: string): Promise<void> {
   deleteWeixinAccount(accountId);
   broadcastSettingsUpdate('weixin');
-  await (await weixinService()).refresh();
+  await refreshWeixinService();
 }
 
 async function afterApproveWeixin(
@@ -131,8 +132,11 @@ async function handleStartWeixinLogin(accountId: string): Promise<Response> {
   if (!existing) {
     return json({ error: t('weixin.accountNotFound') }, 404);
   }
+  const service = await weixinService();
+  // 停机已开始：不再起扫码长轮询（stopAll 已跑过，没人回收）
+  if (liveServicesStopping()) return json({ error: t('weixin.loginFailed') }, 503);
   try {
-    const result = await (await weixinService()).startLogin(accountId);
+    const result = await service.startLogin(accountId);
     return json(result);
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : t('weixin.loginFailed') }, 502);

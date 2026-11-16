@@ -1,7 +1,7 @@
 import type { Server } from 'bun';
 import { runWithFileAccessPrincipal } from '../auth/token-scope';
 import { getMeshRequestContext } from '../mesh/mesh-deps';
-import { ensurePortMapManagerStarted } from '../portmap/lazy';
+import { ensurePortMapManagerStarted, isPortMapManagerReady } from '../portmap/lazy';
 import { shareAccessRoutes, shareRoutes } from '../share';
 import { transferRoutes } from '../transfer/routes';
 import { accessTokenRoutes } from './access-token-routes';
@@ -25,28 +25,29 @@ import { webhookRoutes } from './webhook-routes';
 
 export type { SystemApiHandler };
 
-const tunnelRoutes = lazyRouteGroup('/api/tunnel/', async () => {
+const tunnelRoutes = lazyRouteGroup('/api/tunnel', async () => {
   return (await import('./tunnel-routes')).tunnelRoutes;
 });
-const telegramRoutes = lazyRouteGroup('/api/settings/telegram/', async () => {
+const telegramRoutes = lazyRouteGroup('/api/settings/telegram', async () => {
   return (await import('./telegram-routes')).telegramRoutes;
 });
-const weixinRoutes = lazyRouteGroup('/api/settings/weixin/', async () => {
+const weixinRoutes = lazyRouteGroup('/api/settings/weixin', async () => {
   return (await import('./weixin-routes')).weixinRoutes;
 });
-const llmRoutes = lazyRouteGroup('/api/llm/', async () => {
+const llmRoutes = lazyRouteGroup('/api/llm', async () => {
   return (await import('./llm')).llmRoutes;
 });
-const agentRoutes = lazyRouteGroup('/api/agent/', async () => {
+const agentRoutes = lazyRouteGroup('/api/agent', async () => {
   return (await import('./agent')).agentRoutes;
 });
-const watchRoutes = lazyRouteGroup('/api/watch/', async () => {
+const watchRoutes = lazyRouteGroup('/api/watch', async () => {
   return (await import('./watch')).watchRoutes;
 });
-const portMapRoutes = lazyRouteGroup('/api/portmap', async () => {
-  await ensurePortMapManagerStarted();
-  return (await import('../portmap/routes')).portMapRoutes;
-});
+const portMapRoutes = lazyRouteGroup(
+  '/api/portmap',
+  async () => (await import('../portmap/routes')).portMapRoutes,
+  { ready: isPortMapManagerReady, prepare: ensurePortMapManagerStarted }
+);
 
 const apiRoutes: ApiRoute[] = [
   ...deviceRoutes,

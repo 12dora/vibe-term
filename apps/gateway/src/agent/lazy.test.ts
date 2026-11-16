@@ -1,8 +1,23 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import { setLiveServicesEnabled } from '../live-start-gates';
-import { ensureAgentSupervisor, loadAgentRuntime } from './lazy';
+import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
+import { resolve } from 'node:path';
+import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
+import { getDb as getOrmDb } from '../db/client';
+import { markLiveServicesStopping, setLiveServicesEnabled } from '../live-start-gates';
+import {
+  ensureAgentSupervisor,
+  isAgentSupervisorReady,
+  loadAgentRuntime,
+  resetAgentRuntimeLoaderForTests,
+  startAgentSupervisor,
+  stopAgentSupervisorIfLoaded,
+} from './lazy';
 
-afterEach(() => {
+beforeAll(() => {
+  migrate(getOrmDb(), { migrationsFolder: resolve(import.meta.dir, '../../drizzle') });
+});
+
+afterEach(async () => {
+  await stopAgentSupervisorIfLoaded();
   setLiveServicesEnabled(false);
 });
 
@@ -15,22 +30,43 @@ describe('agent/lazy', () => {
     expect(first.agentSupervisor).toBe(second.agentSupervisor);
   });
 
-  test('ensureAgentSupervisor starts only when live services are enabled', async () => {
+  test('first load while live is disabled, then live enabled: start on demand', async () => {
+    resetAgentRuntimeLoaderForTests();
+    expect(isAgentSupervisorReady()).toBe(false);
+    const supervisor = await ensureAgentSupervisor();
+    expect(supervisor.isStarted()).toBe(false);
+    expect(isAgentSupervisorReady()).toBe(true);
+
+    setLiveServicesEnabled(true);
+    expect(isAgentSupervisorReady()).toBe(false);
+    await ensureAgentSupervisor();
+    expect(supervisor.isStarted()).toBe(true);
+    expect(isAgentSupervisorReady()).toBe(true);
+  });
+
+  test('in-process restart: stopped supervisor is started again on demand', async () => {
+    setLiveServicesEnabled(true);
+    const supervisor = await ensureAgentSupervisor();
+    expect(supervisor.isStarted()).toBe(true);
+
+    markLiveServicesStopping();
+    await stopAgentSupervisorIfLoaded();
+    expect(supervisor.isStarted()).toBe(false);
+
+    setLiveServicesEnabled(true);
+    expect(isAgentSupervisorReady()).toBe(false);
+    await Promise.all([ensureAgentSupervisor(), ensureAgentSupervisor()]);
+    expect(supervisor.isStarted()).toBe(true);
+  });
+
+  test('shutdown during the first load: stop waits for the load and nothing starts', async () => {
+    resetAgentRuntimeLoaderForTests();
+    setLiveServicesEnabled(true);
+    const starting = startAgentSupervisor();
+    markLiveServicesStopping();
+    await stopAgentSupervisorIfLoaded();
+    await starting;
     const { agentSupervisor } = await loadAgentRuntime();
-    const calls: string[] = [];
-    const original = agentSupervisor.start.bind(agentSupervisor);
-    agentSupervisor.start = async () => {
-      calls.push('start');
-    };
-    try {
-      expect(await ensureAgentSupervisor()).toBe(agentSupervisor);
-      expect(calls).toEqual([]);
-      setLiveServicesEnabled(true);
-      await ensureAgentSupervisor();
-      await ensureAgentSupervisor();
-      expect(calls).toEqual(['start', 'start']);
-    } finally {
-      agentSupervisor.start = original;
-    }
+    expect(agentSupervisor.isStarted()).toBe(false);
   });
 });

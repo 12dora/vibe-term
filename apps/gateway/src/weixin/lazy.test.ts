@@ -1,5 +1,17 @@
-import { describe, expect, test } from 'bun:test';
-import { loadWeixinIlink, loadWeixinService } from './lazy';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { markLiveServicesStopping, setLiveServicesEnabled } from '../live-start-gates';
+import {
+  loadWeixinIlink,
+  loadWeixinService,
+  refreshWeixinService,
+  resetWeixinLoadersForTests,
+  stopWeixinServiceIfLoaded,
+} from './lazy';
+import { weixinService } from './service';
+
+afterEach(() => {
+  setLiveServicesEnabled(false);
+});
 
 describe('weixin/lazy', () => {
   test('loadWeixinService memoizes the singleton', async () => {
@@ -14,5 +26,28 @@ describe('weixin/lazy', () => {
     const second = await loadWeixinIlink();
     expect(first).toBe(second);
     expect(typeof first.WeixinClient).toBe('function');
+  });
+
+  test('shutdown during the first load: stop waits and no polling starts', async () => {
+    const calls: string[] = [];
+    const original = { refresh: weixinService.refresh, stopAll: weixinService.stopAll };
+    weixinService.refresh = async () => {
+      calls.push('refresh');
+    };
+    weixinService.stopAll = async () => {
+      calls.push('stopAll');
+    };
+    try {
+      resetWeixinLoadersForTests();
+      setLiveServicesEnabled(true);
+      const refreshing = refreshWeixinService();
+      markLiveServicesStopping();
+      await stopWeixinServiceIfLoaded();
+      await refreshing;
+      expect(calls).toEqual(['stopAll']);
+    } finally {
+      weixinService.refresh = original.refresh;
+      weixinService.stopAll = original.stopAll;
+    }
   });
 });

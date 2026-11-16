@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ensureI18nLocale, i18next, t } from './index';
+import { ensureI18nLocale, i18next, isI18nLanguageReady, syncI18nLanguage, t } from './index';
 
 type TranslationTree = { [key: string]: string | TranslationTree };
 
@@ -58,19 +58,23 @@ describe('i18n', () => {
     }
   });
 
-  test('切换站点语言会触发加载，未知语言回退默认语言', async () => {
+  test('syncI18nLanguage 返回时语言包已就绪，未知语言回退默认语言', async () => {
     try {
-      await i18next.changeLanguage('zh_CN');
-      await ensureI18nLocale('zh_CN');
+      await syncI18nLanguage('ja_JP');
+      expect(i18next.language).toBe('ja_JP');
+      expect(i18next.hasResourceBundle('ja_JP', 'translation')).toBe(true);
+      expect(isI18nLanguageReady('ja_JP')).toBe(true);
       expect(t('apiError.invalidRequest')).toBe(
-        sourceValue('zh_CN', 'apiError.invalidRequest') as string
+        sourceValue('ja_JP', 'apiError.invalidRequest') as string
       );
 
-      await i18next.changeLanguage('fr_FR');
-      await ensureI18nLocale('fr_FR');
+      await syncI18nLanguage('fr_FR');
+      expect(isI18nLanguageReady('fr_FR')).toBe(true);
       expect(t('apiError.notFound')).toBe('Not found');
     } finally {
-      await i18next.changeLanguage('en_US');
+      await syncI18nLanguage('en_US');
     }
+    expect(isI18nLanguageReady('en_US')).toBe(true);
+    expect(isI18nLanguageReady('zh_CN')).toBe(false);
   });
 });

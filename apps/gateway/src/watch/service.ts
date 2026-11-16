@@ -126,10 +126,12 @@ export class WatchService {
     };
   }
 
+  isStarted(): boolean {
+    return this.started;
+  }
+
   async start(): Promise<void> {
-    if (this.started) {
-      return;
-    }
+    if (this.started) return;
     this.started = true;
     for (const rule of this.deps.listEnabledRules()) {
       this.addRule(rule);
@@ -148,9 +150,7 @@ export class WatchService {
 
   async refreshRule(ruleId: string): Promise<void> {
     await this.teardownRuleAndWait(ruleId);
-    if (!this.started) {
-      return;
-    }
+    if (!this.started) return;
     const rule = this.deps.getRule(ruleId);
     if (rule?.enabled) {
       this.addRule(rule);

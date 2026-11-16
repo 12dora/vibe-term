@@ -1,7 +1,7 @@
 // Agent session REST API
 // 用户消息 / 停止 / 确认决策统一走 REST（确认可能来自通知链接等非 WS 渠道）。
 
-import { ensureAgentSupervisor, peekAgentRuntime } from '../agent/lazy';
+import { ensureAgentSupervisor, isAgentSupervisorReady, peekAgentRuntime } from '../agent/lazy';
 import { paneGrantRoutes } from '../agent/pane-grant/routes';
 import type { AgentSupervisor } from '../agent/supervisor';
 import { createAgentConfirmationRoutes } from './agent-confirmation-routes';
@@ -16,7 +16,7 @@ function loadedSupervisor(): AgentSupervisor {
   return loaded.agentSupervisor;
 }
 
-/** 转发到懒加载的单例；写路由先 ensure，读路由（GET）不碰 supervisor，不触发加载。 */
+/** 转发到懒加载的单例；写路由先确保已加载且（live 下）已运行，读路由（GET）不碰 supervisor。 */
 const lazySupervisor = new Proxy({} as AgentSupervisor, {
   get(_target, key) {
     const supervisor = loadedSupervisor();
@@ -30,7 +30,7 @@ function ensureBeforeWrite(entry: ApiRoute): ApiRoute {
   return {
     ...entry,
     handler: (req, params, ctx) => {
-      if (peekAgentRuntime()) return entry.handler(req, params, ctx);
+      if (isAgentSupervisorReady()) return entry.handler(req, params, ctx);
       return ensureAgentSupervisor().then(() => entry.handler(req, params, ctx) ?? routeNotFound());
     },
   };

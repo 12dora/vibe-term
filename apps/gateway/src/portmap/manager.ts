@@ -89,6 +89,10 @@ export class PortMapManager {
     this.sweepIntervalMs = deps.sweepIntervalMs ?? PORT_MAP_LEASE_SWEEP_MS;
   }
 
+  isStarted(): boolean {
+    return this.started;
+  }
+
   /** 开机恢复：已过期的租约行先回收、不恢复；未暂停的行逐条起监听，端口被占的保留行并标 error。 */
   start(): void {
     if (this.started) return;

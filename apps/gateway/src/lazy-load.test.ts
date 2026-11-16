@@ -43,4 +43,27 @@ describe('createMemoizedLoader', () => {
     expect(first).not.toBe(second);
     expect(calls).toBe(2);
   });
+
+  test('settled waits for an in-flight load and swallows failures', async () => {
+    let release: (value: { id: number }) => void = () => {};
+    const loader = createMemoizedLoader(
+      () =>
+        new Promise<{ id: number }>((resolve) => {
+          release = resolve;
+        })
+    );
+    expect(await loader.settled()).toBeUndefined();
+    const loading = loader.load();
+    const settled = loader.settled();
+    release({ id: 7 });
+    expect(await settled).toEqual({ id: 7 });
+    expect(await loading).toEqual({ id: 7 });
+
+    const failing = createMemoizedLoader(async () => {
+      throw new Error('boom');
+    });
+    const attempt = failing.load().catch(() => undefined);
+    expect(await failing.settled()).toBeUndefined();
+    await attempt;
+  });
 });

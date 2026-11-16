@@ -31,6 +31,7 @@ import { ensureI18nLocale, t } from './i18n';
 import {
   type LiveStartGates,
   defaultLiveStartGates,
+  markLiveServicesStopping,
   setLiveServicesEnabled,
 } from './live-start-gates';
 import { logMemoryProfileOnce } from './memory-profile';
@@ -191,19 +192,20 @@ export async function startLiveGatewayServices(deps: LiveGatewayStartDeps = {}):
   armMessagingHooks();
   setLiveServicesEnabled(messaging);
   if (messaging) return startConfiguredServices(resolved);
+  await resolved.ensureLocale();
   if (resolved.gates.tunnel()) await resolved.loadTunnel();
 }
 
 async function stopGatewayLiveServices(): Promise<void> {
   stopGatewayEventLoopLag();
-  setLiveServicesEnabled(false);
+  markLiveServicesStopping();
   resetMessagingHooksIfLoaded();
   connectionAlertNotifier.setBroadcaster(null);
   connectionAlertNotifier.setEventEmitter(null);
   registerSettingsBroadcaster(null);
   registerEventNotifyBroadcaster(null);
   registerTreeOverlayBridge(null);
-  stopPortMapsIfLoaded();
+  await stopPortMapsIfLoaded();
   await stopTunnelManagerIfLoaded();
   await stopWatchServiceIfLoaded();
   await stopAgentSupervisorIfLoaded();

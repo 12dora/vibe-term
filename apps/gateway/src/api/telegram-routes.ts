@@ -14,7 +14,7 @@ import {
 } from '../db';
 import { t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
-import { loadTelegramService } from '../telegram/lazy';
+import { loadTelegramService, refreshTelegramService } from '../telegram/lazy';
 import type { ConfigFieldSpec, FieldParseResult } from './config-field';
 import { json } from './http';
 import {
@@ -94,7 +94,7 @@ async function persistTelegramCreate(
     updatedAt: now,
   });
   broadcastSettingsUpdate('telegram');
-  await (await telegramService()).refresh();
+  await refreshTelegramService();
   return {};
 }
 
@@ -105,13 +105,13 @@ async function persistTelegramUpdate(botId: string, draft: TelegramBotUpdateDraf
     ...(token !== undefined ? { tokenEnc: await encrypt(token) } : {}),
   });
   broadcastSettingsUpdate('telegram');
-  await (await telegramService()).refresh();
+  await refreshTelegramService();
 }
 
 async function persistTelegramDelete(botId: string): Promise<void> {
   deleteTelegramBot(botId);
   broadcastSettingsUpdate('telegram');
-  await (await telegramService()).refresh();
+  await refreshTelegramService();
 }
 
 async function afterApproveTelegram(

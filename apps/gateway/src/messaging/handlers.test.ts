@@ -162,6 +162,14 @@ describe('handlers', () => {
     ]);
   });
 
+  test('approve awaits an async decision', async () => {
+    const ctx = createTestContext({
+      decideConfirmation: async () => ({ ok: false, code: 'alreadyDecided' }),
+    });
+    const result = await handleApprove(inv('approve', ['c1']), ctx);
+    expect(result.error?.code).toBe('messaging.error.confirmationAlreadyDecided');
+  });
+
   test('pane ambiguity lists candidates', async () => {
     const ctx = createTestContext({
       devices: [{ id: 'dev-1', name: 'laptop', type: 'local', connected: true, lastError: null }],

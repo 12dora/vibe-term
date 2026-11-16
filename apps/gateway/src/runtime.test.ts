@@ -73,15 +73,15 @@ describe('relay-only messaging gate', () => {
     expect(shouldStartMessagingServices(parseVibeTermRoles(undefined))).toBe(true);
   });
 
-  test('relay-only starts nothing and only loads the tunnel when configured', async () => {
+  test('relay-only loads the site locale and only loads the tunnel when configured', async () => {
     const idle: string[] = [];
     await startLiveGatewayServices(recordingDeps(idle, 'relay', false));
-    expect(idle).toEqual(['lag']);
+    expect(idle).toEqual(['lag', 'locale']);
     expect(liveServicesEnabled()).toBe(false);
 
     const configured: string[] = [];
     await startLiveGatewayServices(recordingDeps(configured, 'relay', true));
-    expect(configured).toEqual(['lag', 'tunnel-load']);
+    expect(configured).toEqual(['lag', 'locale', 'tunnel-load']);
   });
 
   test('configured node starts every subsystem in the original order', async () => {

@@ -70,7 +70,7 @@ export interface MessagingRuntimeHooks {
     confirmationId: string,
     approved: boolean,
     reason?: string
-  ) => DecideConfirmationResult;
+  ) => DecideConfirmationResult | Promise<DecideConfirmationResult>;
   remoteExecutor?: RemoteCommandExecutor;
 }
 
@@ -92,7 +92,7 @@ export interface CommandContext {
     confirmationId: string,
     approved: boolean,
     reason?: string
-  ): DecideConfirmationResult;
+  ): DecideConfirmationResult | Promise<DecideConfirmationResult>;
   remoteExecutor?: RemoteCommandExecutor;
 }
 
@@ -197,7 +197,7 @@ function defaultDecideConfirmation(
   confirmationId: string,
   approved: boolean,
   reason?: string
-): DecideConfirmationResult {
+): DecideConfirmationResult | Promise<DecideConfirmationResult> {
   if (hooks.decideConfirmation) {
     return hooks.decideConfirmation(confirmationId, approved, reason);
   }

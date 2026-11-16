@@ -2,7 +2,7 @@ import { SITE_SETTING_FIELDS, type SiteSettingField, type SiteSettings } from '@
 import { eq } from 'drizzle-orm';
 import { getSiteSettingsLinkProvider } from '../api/site-settings-link';
 import { config } from '../config';
-import { i18next } from '../i18n';
+import { isI18nLanguageReady, syncI18nLanguage } from '../i18n';
 import { getDb as getOrmDb } from './client';
 import { normalizeLocale, toSiteSettings } from './mappers';
 import { siteSettings } from './schema';
@@ -58,8 +58,8 @@ function refreshSiteSettingsCache(): SiteSettings {
   const settings = toSiteSettings(row);
   siteSettingsCache = { value: settings, expiresAt: Date.now() + SITE_SETTINGS_TTL_MS };
 
-  if (i18next.language !== settings.language) {
-    void i18next.changeLanguage(settings.language);
+  if (!isI18nLanguageReady(settings.language)) {
+    void syncI18nLanguage(settings.language);
   }
 
   return settings;
@@ -120,8 +120,8 @@ export function updateSiteSettings(
 
   siteSettingsCache = { value: next, expiresAt: Date.now() + SITE_SETTINGS_TTL_MS };
 
-  if (i18next.language !== next.language) {
-    void i18next.changeLanguage(next.language);
+  if (!isI18nLanguageReady(next.language)) {
+    void syncI18nLanguage(next.language);
   }
 
   return next;

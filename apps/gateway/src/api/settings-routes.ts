@@ -9,7 +9,7 @@ import {
   updateSiteSettings,
   updateTerminalShortcutSettings,
 } from '../db';
-import { t } from '../i18n';
+import { syncI18nLanguage, t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
 import { meshProxySettingsRoutes } from '../settings/mesh-proxy';
 import { meshRouteSettingsRoutes } from '../settings/mesh-route';
@@ -44,11 +44,13 @@ async function handleUpdateSiteSettings(req: Request): Promise<Response> {
   const parsed = await readJsonBody(req, (body: UpdateSiteSettingsRequest) => {
     const blocked = rejectManagedSiteIdentity(body);
     if (blocked) return blocked;
-    const settings = updateSiteSettings(normalizeSiteSettingsInput(body));
-    broadcastSettingsUpdate('site');
-    return json(toSiteSettingsHttpPayload(settings));
+    return updateSiteSettings(normalizeSiteSettingsInput(body));
   });
-  return parsed.ok ? parsed.value : parsed.response;
+  if (!parsed.ok) return parsed.response;
+  if (parsed.value instanceof Response) return parsed.value;
+  await syncI18nLanguage(parsed.value.language);
+  broadcastSettingsUpdate('site');
+  return json(toSiteSettingsHttpPayload(parsed.value));
 }
 
 async function handleGetTerminalShortcuts(): Promise<Response> {

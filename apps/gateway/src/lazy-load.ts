@@ -1,6 +1,8 @@
 export type MemoizedLoader<T> = {
   load: () => Promise<T>;
   peek: () => T | undefined;
+  /** 等在途 load 落定（忽略失败）后返回当前值；停机前用它避免漏停刚加载完的模块。 */
+  settled: () => Promise<T | undefined>;
   reset: () => void;
 };
 
@@ -10,6 +12,10 @@ export function createMemoizedLoader<T>(importer: () => Promise<T>): MemoizedLoa
   let pending: Promise<T> | undefined;
   return {
     peek: () => value,
+    settled: async () => {
+      if (pending) await pending.catch(() => undefined);
+      return value;
+    },
     reset: () => {
       value = undefined;
       pending = undefined;

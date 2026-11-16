@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import type { Server } from 'bun';
 import { ensureSiteSettingsInitialized, getStoredSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
+import { isI18nLanguageReady, syncI18nLanguage } from '../i18n';
 import { handleApiRequest } from './index';
 import { setSiteAccessOriginsProvider, setSiteSettingsLinkProvider } from './site-settings-link';
 
@@ -174,8 +175,11 @@ describe('PATCH /api/settings/site mesh managed identity', () => {
       expect(status).toBe(200);
       expect(getStoredSiteSettings().siteUrl).toBe('https://other.example');
       expect(getStoredSiteSettings().language).toBe(nextLang);
+      // 响应返回前语言包已就绪：紧随其后的服务端文案不会落回默认语言。
+      expect(isI18nLanguageReady(nextLang)).toBe(true);
     } finally {
       updateSiteSettings({ siteUrl: before.siteUrl, language: before.language });
+      await syncI18nLanguage(before.language);
     }
   });
 

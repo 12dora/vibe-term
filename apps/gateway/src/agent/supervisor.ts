@@ -132,6 +132,10 @@ export class AgentSupervisor {
     return this.activeRuns.has(sessionId);
   }
 
+  isStarted(): boolean {
+    return this.started && !this.stopping;
+  }
+
   async start(): Promise<void> {
     if (this.started) {
       return;

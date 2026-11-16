@@ -1,5 +1,5 @@
 import { createMemoizedLoader } from '../lazy-load';
-import { liveServicesEnabled } from '../live-start-gates';
+import { liveServicesEnabled, liveServicesStopping } from '../live-start-gates';
 
 type TunnelManagerModule = typeof import('./manager');
 
@@ -28,10 +28,12 @@ export function configureTunnelManager(setup: (mod: TunnelManagerModule) => void
   if (loaded) setup(loaded);
 }
 
-/** start 不幂等（autoStart 会再拉一次 cloudflared），这里只跑一次。 */
+/** start 不幂等（autoStart 会再拉一次 cloudflared），这里只跑一次；停机开始后加载完成的不再 start。 */
 export function startTunnelManager(): Promise<void> {
   started ??= loadTunnelManager()
-    .then(({ tunnelManager }) => tunnelManager.start())
+    .then(async ({ tunnelManager }) => {
+      if (!liveServicesStopping()) await tunnelManager.start();
+    })
     .catch((err: unknown) => {
       started = null;
       throw err;
@@ -50,9 +52,12 @@ export function peekTunnelPublicUrl(): string | null {
   return peekTunnelManager()?.tunnelManager.status().process.publicUrl ?? null;
 }
 
+/** 先等在途的加载与 start 落定，再 stop：否则 start 可能在 stop 之后才拉起 cloudflared。 */
 export async function stopTunnelManagerIfLoaded() {
+  const inFlight = started;
   started = null;
-  const loaded = peekTunnelManager();
+  await inFlight?.catch(() => undefined);
+  const loaded = await loader.settled();
   if (loaded) await loaded.tunnelManager.stop();
 }
 

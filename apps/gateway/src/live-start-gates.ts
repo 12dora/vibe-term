@@ -17,14 +17,26 @@ export type LiveStartGates = {
 };
 
 let liveEnabled = false;
+let stopping = false;
 
 /** 启动期 live 子系统是否允许运行（非纯 relay）；路由懒加载据此决定是否顺带 start。 */
 export function setLiveServicesEnabled(enabled: boolean): void {
   liveEnabled = enabled;
+  stopping = false;
 }
 
 export function liveServicesEnabled(): boolean {
   return liveEnabled;
+}
+
+/** 停机开始：之后完成的懒加载不得再起后台工作（轮询、子进程、定时器）。 */
+export function markLiveServicesStopping(): void {
+  liveEnabled = false;
+  stopping = true;
+}
+
+export function liveServicesStopping(): boolean {
+  return stopping;
 }
 
 /** 门闩读库失败时按“已配置”处理，保持旧行为（照常启动）。 */

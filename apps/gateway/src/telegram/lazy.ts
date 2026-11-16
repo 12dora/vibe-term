@@ -1,4 +1,5 @@
 import { createMemoizedLoader } from '../lazy-load';
+import { liveServicesStopping } from '../live-start-gates';
 import { ensureMessagingHooks } from '../messaging/lazy-hooks';
 
 const serviceLoader = createMemoizedLoader(() => import('./service'));
@@ -19,13 +20,21 @@ export function loadGramio() {
   return gramioLoader.load();
 }
 
-export async function refreshTelegramService() {
-  const { telegramService } = await loadTelegramService();
-  return telegramService.refresh();
+let refreshing: Promise<void> = Promise.resolve();
+
+/** 串行化 refresh；停机开始后加载完成的不再拉起轮询。stop 会等最后一次 refresh 落定。 */
+export function refreshTelegramService(): Promise<void> {
+  const run = refreshing.then(async () => {
+    const { telegramService } = await loadTelegramService();
+    if (!liveServicesStopping()) await telegramService.refresh();
+  });
+  refreshing = run.catch(() => undefined);
+  return run;
 }
 
 export async function stopTelegramServiceIfLoaded() {
-  const loaded = peekTelegramService();
+  await refreshing;
+  const loaded = await serviceLoader.settled();
   if (loaded) await loaded.telegramService.stopAll();
 }
 
