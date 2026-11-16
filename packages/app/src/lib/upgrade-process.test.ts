@@ -40,7 +40,7 @@ describe('killPidAndWait', () => {
     expect(isPidAlive(child.pid)).toBe(true);
     await killPidAndWait(child.pid, 8_000);
     expect(isPidAlive(child.pid)).toBe(false);
-  });
+  }, 15_000);
 
   test('does not SIGTERM when ownership check fails immediately before signal', async () => {
     const signals: string[] = [];
@@ -164,6 +164,31 @@ describe('createDirectProcessControl', () => {
     await control.stop();
     expect(isPidAlive(child.pid)).toBe(false);
   });
+
+  test('start launches the run script with sh, not bash', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-direct-sh-'));
+    tempDirs.push(dir);
+    const runScriptPath = join(dir, 'run.sh');
+    const marker = join(dir, 'cmdline');
+    await writeFile(runScriptPath, `#!/bin/sh\ntr '\\000' ' ' < /proc/$$/cmdline > '${marker}'\n`, {
+      mode: 0o755,
+    });
+    const control = createDirectProcessControl({
+      runScriptPath,
+      pidPath: join(dir, 'vibeterm.pid'),
+      installDir: dir,
+    });
+    await control.start();
+    for (let i = 0; i < 250; i += 1) {
+      const file = Bun.file(marker);
+      if ((await file.exists()) && file.size > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const cmdline = (await Bun.file(marker).text()).trim();
+    expect(cmdline.split(/\s+/)[0]).toBe('sh');
+    expect(cmdline).toContain(runScriptPath);
+    expect(cmdline).not.toMatch(/(^|\/)bash(\s|$)/);
+  }, 10_000);
 
   test('legacy pid with vim argv containing server.js is not owned', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'vibeterm-direct-vim-'));

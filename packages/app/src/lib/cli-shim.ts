@@ -143,10 +143,10 @@ function buildShimScript(entryPaths: string[], bunPath: string, installDir: stri
         'fi',
       ];
   return [
-    '#!/usr/bin/env bash',
+    '#!/bin/sh',
     VIBETERM_SHIM_MARKER,
     `${VIBETERM_INSTALL_DIR_PREFIX} ${installDir}`,
-    'set -euo pipefail',
+    'set -eu',
     ...resolveEntry,
     'if command -v node >/dev/null 2>&1; then',
     '  NODE_VER="$(node --version 2>/dev/null || true)"',
@@ -162,7 +162,7 @@ function buildShimScript(entryPaths: string[], bunPath: string, installDir: stri
     '  esac',
     'fi',
     `BUN_PATH=${quotedBun}`,
-    'if [[ -n "$BUN_PATH" && -x "$BUN_PATH" ]]; then',
+    'if [ -n "$BUN_PATH" ] && [ -x "$BUN_PATH" ]; then',
     '  exec "$BUN_PATH" "$CLI_JS" "$@"',
     'fi',
     'if command -v bun >/dev/null 2>&1; then',

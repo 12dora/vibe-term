@@ -149,7 +149,10 @@ describe('installVibeTermShim', () => {
     expect(result.pathHint).toContain(localBinDir);
 
     const shim = await readFile(result.shimPath, 'utf8');
-    expect(shim.startsWith('#!/usr/bin/env bash')).toBe(true);
+    expect(shim.startsWith('#!/bin/sh')).toBe(true);
+    expect(shim).toContain('set -eu');
+    expect(shim).not.toContain('pipefail');
+    expect(shim).not.toContain('[[');
     expect(shim).toContain(VIBETERM_SHIM_MARKER);
     expect(shim).toContain(`# vibeterm-install-dir: ${installDir}`);
     expect(shim).toContain('command -v node');
@@ -160,7 +163,7 @@ describe('installVibeTermShim', () => {
     const mode = (await stat(result.shimPath)).mode;
     expect((mode & 0o111) !== 0).toBe(true);
 
-    const syntax = spawnSync('bash', ['-n', result.shimPath], { encoding: 'utf8' });
+    const syntax = spawnSync('sh', ['-n', result.shimPath], { encoding: 'utf8' });
     expect(syntax.status).toBe(0);
     expect(syntax.stderr).toBe('');
   });
@@ -761,7 +764,7 @@ describe('vibeterm-rsh launcher shim', () => {
     expect(shim).not.toContain('tmex.js');
     expect(shim).not.toContain('CLI_JS_LEGACY');
     expect(((await stat(result.rshShimPath)).mode & 0o111) !== 0).toBe(true);
-    expect(spawnSync('bash', ['-n', result.rshShimPath], { encoding: 'utf8' }).status).toBe(0);
+    expect(spawnSync('sh', ['-n', result.rshShimPath], { encoding: 'utf8' }).status).toBe(0);
     expect(await readlink(join(bunBinDir, 'vibeterm-rsh'))).toBe(result.rshShimPath);
   });
 

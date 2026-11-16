@@ -150,6 +150,26 @@ function ghosttyWasmPathExport(runtimeDir: string): string[] {
   return [`export VIBETERM_GHOSTTY_WASM_PATH=${quotePosixShellArg(wasmPath)}`];
 }
 
+function posixAppEnvLoadLines(envPath: string): string[] {
+  return [
+    'while IFS= read -r line || [ -n "$line" ]; do',
+    '  line=${line%"$(printf \'\\r\')"}',
+    '  rest=$line',
+    '  while :; do',
+    '    case "$rest" in',
+    "      ' '*) rest=${rest# } ;;",
+    "      '\t'*) rest=${rest#\t} ;;",
+    '      *) break ;;',
+    '    esac',
+    '  done',
+    '  case "$rest" in',
+    "    ''|'#'*) continue ;;",
+    '  esac',
+    '  export "$line"',
+    `done < ${quotePosixShellArg(envPath)}`,
+  ];
+}
+
 export function buildRunScriptContent(installDir: string, bunPath: string): string {
   const homeBunBin = join(homedir(), '.bun', 'bin');
   const bunDir = isAbsolute(bunPath) ? dirname(bunPath) : '';
@@ -166,18 +186,13 @@ export function buildRunScriptContent(installDir: string, bunPath: string): stri
   const current = currentRuntimePaths(installDir);
   const envPath = join(installDir, 'app.env');
   const lines = [
-    '#!/usr/bin/env bash',
-    'set -euo pipefail',
+    '#!/bin/sh',
+    'set -eu',
     '',
     'SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"',
-    'while IFS= read -r line || [[ -n "$line" ]]; do',
-    '  line="${line%$\'\\r\'}"',
-    '  [[ "$line" =~ ^[[:space:]]*$ ]] && continue',
-    '  [[ "$line" =~ ^[[:space:]]*# ]] && continue',
-    '  export "$line"',
-    `done < ${quotePosixShellArg(envPath)}`,
+    ...posixAppEnvLoadLines(envPath),
     '',
-    'if [[ -n "${HOME:-}" ]] && [[ -d "${HOME}/.bun/bin" ]]; then',
+    'if [ -n "${HOME:-}" ] && [ -d "${HOME}/.bun/bin" ]; then',
     '  export PATH="${HOME}/.bun/bin:${PATH:-}"',
     'fi',
     pathExport,

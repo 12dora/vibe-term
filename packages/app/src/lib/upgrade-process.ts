@@ -320,7 +320,7 @@ export function createDirectProcessControl(opts: {
       await rm(opts.pidPath, { force: true }).catch(() => null);
     },
     async start() {
-      const child = spawn('bash', [opts.runScriptPath], {
+      const child = spawn('sh', [opts.runScriptPath], {
         detached: true,
         stdio: 'ignore',
         env: opts.env ?? process.env,

@@ -129,9 +129,12 @@ describe('writeRunScript', () => {
     await writeRunScript(installLayout, '/usr/bin/bun');
 
     const script = await readFile(installLayout.runScriptPath, 'utf8');
-    expect(script).toContain('#!/usr/bin/env bash');
+    expect(script.startsWith('#!/bin/sh\n')).toBe(true);
+    expect(script).toContain('set -eu');
+    expect(script).not.toContain('pipefail');
+    expect(script).not.toContain('[[');
     expect(script).toContain('SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"');
-    expect(script).toContain('while IFS= read -r line || [[ -n "$line" ]]; do');
+    expect(script).toContain('while IFS= read -r line || [ -n "$line" ]; do');
     expect(script).toContain('export "$line"');
     expect(script).toContain(`done < ${posixQuote(installLayout.envPath)}`);
     expect(script).not.toContain('source ');
@@ -143,7 +146,7 @@ describe('writeRunScript', () => {
     expect(script).toContain('chmod 600 "$SCRIPT_DIR/vibeterm.pid"');
     // run.sh 只导出 VIBETERM_*：迁移后不支持降级到 2.0 以下，事务回滚会还原旧 run.sh。
     expect(script).not.toContain('TMEX_');
-    expect(spawnSync('bash', ['-n', '-c', script], { encoding: 'utf8' }).status).toBe(0);
+    expect(spawnSync('sh', ['-n', '-c', script], { encoding: 'utf8' }).status).toBe(0);
     expect(script).toContain(
       `export VIBETERM_NATIVE_DIR=${posixQuote(join(installDir, 'current', 'native'))}`
     );
@@ -167,9 +170,9 @@ describe('writeRunScript', () => {
 
     const script = await readFile(installLayout.runScriptPath, 'utf8');
     expect(script).toContain(`export VIBETERM_GHOSTTY_WASM_PATH=${posixQuote(wasmPath)}`);
-    expect(
-      spawnSync('bash', ['-n', installLayout.runScriptPath], { encoding: 'utf8' }).status
-    ).toBe(0);
+    expect(spawnSync('sh', ['-n', installLayout.runScriptPath], { encoding: 'utf8' }).status).toBe(
+      0
+    );
   });
 
   test('POSIX-quotes interpolated paths that contain quotes, $(...), spaces, and apostrophes', async () => {
@@ -206,7 +209,7 @@ describe('writeRunScript', () => {
     expect(script).not.toContain(`"${join(installDir, 'current', 'resources', 'fe-dist')}"`);
     expect(script).not.toContain(`"${bunPath}"`);
 
-    const syntax = spawnSync('bash', ['-n', installLayout.runScriptPath], { encoding: 'utf8' });
+    const syntax = spawnSync('sh', ['-n', installLayout.runScriptPath], { encoding: 'utf8' });
     expect(syntax.status).toBe(0);
     expect(syntax.stderr).toBe('');
 
@@ -214,9 +217,87 @@ describe('writeRunScript', () => {
     const probePath = join(parent, 'run.probe.sh');
     const probe = script.replace(/^exec (.+)$/m, 'printf "%s\\0%s" $1');
     await writeFile(probePath, probe, { mode: 0o755 });
-    const ran = spawnSync('bash', [probePath], { encoding: 'utf8' });
+    const ran = spawnSync('sh', [probePath], { encoding: 'utf8' });
     expect(ran.status).toBe(0);
     expect(ran.stderr).toBe('');
     expect(ran.stdout).toBe(`${bunPath}\0${join(installDir, 'current', 'runtime', 'server.js')}`);
+  });
+
+  test('sh executes generated run.sh and exports mixed app.env lines verbatim', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-runsh-posix-'));
+    tempDirs.push(installDir);
+    const isolatedHome = join(installDir, 'home');
+    await mkdir(isolatedHome, { recursive: true });
+
+    const fakeOut = join(installDir, 'fake-bun-out.txt');
+    const fakeBun = join(installDir, 'fake-bun');
+    await writeFile(
+      fakeBun,
+      [
+        '#!/bin/sh',
+        '{',
+        '  printf "arg1=%s\\n" "$1"',
+        '  printf "VT_G3_SPACE=%s\\n" "$VT_G3_SPACE"',
+        '  printf "VT_G3_EQ=%s\\n" "$VT_G3_EQ"',
+        '  printf "VT_G3_QUOTE=%s\\n" "$VT_G3_QUOTE"',
+        '  printf "VT_G3_CRLF=%s\\n" "$VT_G3_CRLF"',
+        '  printf "VT_G3_LF=%s\\n" "$VT_G3_LF"',
+        '  printf "VT_G3_HASH=%s\\n" "$VT_G3_HASH"',
+        '  printf "COMMENTED=%s\\n" "${COMMENTED-unset}"',
+        `} > ${posixQuote(fakeOut)}`,
+        '',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+
+    const installLayout = createInstallLayout(installDir);
+    await writeRunScript(installLayout, fakeBun);
+    await writeFile(
+      installLayout.envPath,
+      `${[
+        '# leading comment\r',
+        '\r',
+        'VT_G3_SPACE=hello world\r',
+        'VT_G3_EQ=foo=bar=baz\r',
+        'VT_G3_QUOTE=it\'s "quoted" value\r',
+        'VT_G3_CRLF=crlf-value\r',
+        '   \r',
+        '  # indented comment\r',
+        '# COMMENTED=should-not-appear\r',
+        'VT_G3_HASH=foo#bar\r',
+        '',
+      ].join('\n')}VT_G3_LF=lf-value\n`
+    );
+
+    const serverJs = join(installDir, 'current', 'runtime', 'server.js');
+    const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: isolatedHome };
+    const expected = [
+      `arg1=${serverJs}`,
+      'VT_G3_SPACE=hello world',
+      'VT_G3_EQ=foo=bar=baz',
+      'VT_G3_QUOTE=it\'s "quoted" value',
+      'VT_G3_CRLF=crlf-value',
+      'VT_G3_LF=lf-value',
+      'VT_G3_HASH=foo#bar',
+      'COMMENTED=unset',
+      '',
+    ].join('\n');
+
+    const interpreters: string[][] = [['sh']];
+    const busybox = spawnSync('busybox', ['sh', '-c', 'exit 0'], { encoding: 'utf8' });
+    if (busybox.status === 0) interpreters.push(['busybox', 'sh']);
+
+    for (const argv of interpreters) {
+      await rm(fakeOut, { force: true });
+      const ran = spawnSync(argv[0], [...argv.slice(1), installLayout.runScriptPath], {
+        encoding: 'utf8',
+        env,
+      });
+      expect(ran.status).toBe(0);
+      expect(ran.stderr).toBe('');
+      expect(await readFile(fakeOut, 'utf8')).toBe(expected);
+      const pidText = await readFile(join(installDir, 'vibeterm.pid'), 'utf8');
+      expect(pidText.trim().length).toBeGreaterThan(0);
+    }
   });
 });
