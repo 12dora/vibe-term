@@ -84,6 +84,22 @@ function memLine(mem: SystemFacts['mem']): string {
   return `${formatBytes(mem.totalBytes)} total, ${formatBytes(mem.freeBytes)} free`;
 }
 
+function deploymentLabel(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) return '-';
+  switch (value) {
+    case 'openrc':
+      return 'OpenRC';
+    case 'launchd':
+      return 'launchd';
+    case 'systemd':
+      return 'systemd';
+    case 'none':
+      return 'none';
+    default:
+      return value;
+  }
+}
+
 function printFacts(ctx: CliContext, info: Record<string, unknown>, facts: SystemFacts): void {
   const rows: Array<[string, string]> = [
     ['os', String(facts.os ?? '-')],
@@ -96,7 +112,7 @@ function printFacts(ctx: CliContext, info: Record<string, unknown>, facts: Syste
     diskLine('disk $HOME', facts.disk?.home),
     ['tmux', tmuxLine(facts.tmux)],
     ['docker', dockerLine(facts.docker)],
-    ['deployment', String(facts.install?.deployment ?? info.deployment ?? '-')],
+    ['deployment', deploymentLabel(facts.install?.deployment ?? info.deployment)],
     ['memory profile', String(facts.memoryProfile ?? '-')],
     ['version', String(info.version ?? facts.install?.cliVersion ?? '-')],
   ];

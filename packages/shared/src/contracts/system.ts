@@ -2,8 +2,8 @@
 
 import type { TransferCapability } from './transfer';
 
-/** 部署方式：launchd（macOS）/ systemd（Linux）/ none（非 CLI 安装，如手动部署/dev） */
-export type GatewayDeployment = 'launchd' | 'systemd' | 'none';
+/** 部署方式：launchd（macOS）/ systemd（Linux）/ openrc（Linux）/ none（非 CLI 安装，如手动部署/dev） */
+export type GatewayDeployment = 'launchd' | 'systemd' | 'openrc' | 'none';
 
 /** 升级状态机：仅这三态 */
 export type UpgradeState = 'idle' | 'downloading' | 'executing';

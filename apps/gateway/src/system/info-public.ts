@@ -3,7 +3,7 @@
  */
 import { type SystemInfo, TRANSFER_CAPABILITIES } from '@vibeterm/shared';
 import { config } from '../config';
-import { getInstallInfo } from './install-info';
+import { getInstallInfo, isManagedDeployment } from './install-info';
 import {
   canSelfUpdate as canSelfUpdateManaged,
   getManagementMode,
@@ -30,8 +30,10 @@ export { TRANSFER_CAPABILITIES };
 export function getSystemInfo(): SystemInfo {
   const install = getInstallInfo();
   const canSelfUpdate =
-    canSelfUpdateManaged(install.installedViaCli && install.deployment !== 'none', config.isProd) &&
-    getManagementMode() === 'none';
+    canSelfUpdateManaged(
+      install.installedViaCli && isManagedDeployment(install.deployment),
+      config.isProd
+    ) && getManagementMode() === 'none';
 
   return {
     version: getDisplayVersion(),

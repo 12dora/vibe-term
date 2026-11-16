@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from 'bun:test';
+import * as installInfo from '../system/install-info';
 import { handleApiRequest } from './index';
 import { handleSystemApiRequest } from './system';
 import { collectSystemFacts } from './system-facts';
@@ -81,6 +82,26 @@ describe('GET /api/system/facts', () => {
       expect(probe).toHaveBeenCalled();
     } finally {
       probe.mockRestore();
+    }
+  });
+
+  test('passes through openrc deployment from install-info', async () => {
+    const spy = spyOn(installInfo, 'getInstallInfo').mockReturnValue({
+      installedViaCli: true,
+      installSource: 'cli',
+      deployment: 'openrc',
+      installDir: '/opt/vt',
+      serviceName: 'vibeterm',
+      cliVersion: '2.16.0',
+      bunPath: process.execPath,
+    });
+    try {
+      const facts = await collectSystemFacts();
+      expect(facts.install.deployment).toBe('openrc');
+      expect(facts.install.installDir).toBe('/opt/vt');
+      expect(facts.install.cliVersion).toBe('2.16.0');
+    } finally {
+      spy.mockRestore();
     }
   });
 

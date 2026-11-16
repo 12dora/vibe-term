@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statfsSync } from 'node:fs';
 import { cpus, freemem, homedir, hostname, loadavg, release, totalmem, uptime } from 'node:os';
-import type { MeshPortReach } from '@vibeterm/shared';
+import type { GatewayDeployment, MeshPortReach } from '@vibeterm/shared';
 import { getMemoryProfile } from '../memory-profile';
 import { getInstallInfo } from '../system/install-info';
 import { json } from './http';
@@ -30,7 +30,7 @@ export type SystemFacts = {
   tmux: { healthy: boolean; serverVersion?: string; clientVersion?: string; reason?: string };
   docker: { present: boolean; socket: boolean };
   install: {
-    deployment: string;
+    deployment: GatewayDeployment;
     installDir: string | null;
     cliVersion: string | null;
   };

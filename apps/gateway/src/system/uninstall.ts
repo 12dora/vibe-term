@@ -9,7 +9,7 @@ import { json } from '../api/http';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
 import { requestDispatchContext } from '../mesh/types';
 import { isManagedExternally } from './info-public';
-import { type InstallInfo, getInstallInfo } from './install-info';
+import { type InstallInfo, getInstallInfo, isManagedDeployment } from './install-info';
 import { upgradeController, waitForSpawnAndDetach } from './upgrade';
 
 export const UNINSTALL_SPAWN_DELAY_MS = 1500;
@@ -120,7 +120,7 @@ export class UninstallController {
     if (!install.installedViaCli) {
       return json({ code: 'UNINSTALL_NOT_ALLOWED', reason: 'not_cli_install' }, 409);
     }
-    if (install.deployment === 'none') {
+    if (!isManagedDeployment(install.deployment)) {
       return json({ code: 'UNINSTALL_NOT_ALLOWED', reason: 'no_service_manager' }, 409);
     }
     const upgradeState = this.deps.getUpgradeState?.() ?? upgradeController.status().state;

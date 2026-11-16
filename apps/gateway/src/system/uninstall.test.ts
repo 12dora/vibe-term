@@ -67,6 +67,39 @@ describe('UninstallController', () => {
     });
   });
 
+  test('schedules uninstall for openrc the same way as other managed deployments', async () => {
+    const installDir = tempDir('vibeterm-uninst-openrc-');
+    writeCliInstall(installDir);
+    const copyRoot = tempDir('vibeterm-uninst-openrc-tmp-');
+    const spawned: Array<{ cmd: string; args: string[] }> = [];
+    uninstallController.setDepsForTests({
+      getInstallInfo: () => cliInstallInfo(installDir, { deployment: 'openrc' }),
+      tmpdir: () => copyRoot,
+      randomId: () => 'openrc1',
+      spawn: (cmd, args) => {
+        spawned.push({ cmd, args: [...args] });
+        return fakeChild();
+      },
+    });
+    const res = await uninstallController.start();
+    expect(res.status).toBe(202);
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]?.cmd).toBe(process.execPath);
+    expect(spawned[0]?.args).toEqual([
+      join(copyRoot, 'vibeterm-uninstall-openrc1', 'bin', 'vibeterm.js'),
+      'uninstall',
+      '--yes',
+      '--purge',
+      '--install-dir',
+      installDir,
+      '--service-name',
+      'vibeterm',
+      '--delay-ms',
+      '1500',
+    ]);
+    expect(spawned[0]?.args.some((arg) => arg.includes('systemctl'))).toBe(false);
+  });
+
   test('rejects when deployment is none', async () => {
     const dir = tempDir('vibeterm-uninst-none-');
     uninstallController.setDepsForTests({

@@ -13,6 +13,8 @@ export interface InstallMetaShape {
   cliVersion?: string;
   bunPath?: string;
   installSource?: string;
+  serviceManager?: string;
+  serviceMode?: string;
 }
 
 export interface InstallInfo {
@@ -70,6 +72,51 @@ function deploymentFromPlatform(platform: string | undefined): GatewayDeployment
   return 'none';
 }
 
+function deploymentFromServiceManager(manager: string): GatewayDeployment | undefined {
+  switch (manager) {
+    case 'systemd-user':
+      return 'systemd';
+    case 'launchd':
+      return 'launchd';
+    case 'openrc':
+      return 'openrc';
+    case 'none':
+      return 'none';
+    default:
+      return undefined;
+  }
+}
+
+/** launchd / systemd / openrc 视为托管部署；未知值按托管处理，避免旧客户端对新增枚举崩溃。 */
+export function isManagedDeployment(deployment: string): boolean {
+  switch (deployment) {
+    case 'launchd':
+    case 'systemd':
+    case 'openrc':
+      return true;
+    case 'none':
+      return false;
+    default:
+      return true;
+  }
+}
+
+/**
+ * 从 install-meta 推导部署方式。`serviceMode=none` 优先；有 `serviceManager` 时按它映射，
+ * 缺省（老 meta）才回退平台启发式。
+ */
+export function deploymentFromMeta(
+  meta: Pick<InstallMetaShape, 'serviceManager' | 'serviceMode' | 'platform'>,
+  fallbackPlatform: string = process.platform
+): GatewayDeployment {
+  if (meta.serviceMode === 'none') return 'none';
+  if (meta.serviceManager) {
+    const mapped = deploymentFromServiceManager(meta.serviceManager);
+    if (mapped) return mapped;
+  }
+  return deploymentFromPlatform(meta.platform ?? fallbackPlatform);
+}
+
 /**
  * 判定安装方式。仅 production 才可能存在 CLI 安装产物（install-meta.json）；
  * dev/test 一律视为非 CLI（自更新本就在非 production 禁用）。
@@ -104,7 +151,7 @@ export function getInstallInfo(): InstallInfo {
   return {
     installedViaCli: true,
     installSource: installSourceFromMeta(meta),
-    deployment: deploymentFromPlatform(meta.platform ?? process.platform),
+    deployment: deploymentFromMeta(meta),
     installDir: meta.installDir ?? resolveInstallDir(),
     serviceName: meta.serviceName ?? null,
     cliVersion: meta.cliVersion ?? null,

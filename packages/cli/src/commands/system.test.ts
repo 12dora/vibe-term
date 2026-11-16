@@ -59,5 +59,54 @@ describe('vibeterm system info', () => {
     expect(text).toContain('standard');
     expect(text).toContain('docker');
     expect(text).toContain('present');
+    expect(text).toContain('launchd');
+  });
+
+  test('human output labels openrc as OpenRC', async () => {
+    const { ctx, stdout } = await testContext(
+      routeFetch({
+        'GET /api/system/info': () => ({ ...INFO, deployment: 'openrc' }),
+        'GET /api/system/facts': () => ({
+          ...FACTS,
+          install: { ...FACTS.install, deployment: 'openrc' },
+        }),
+      })
+    );
+    await system.run(ctx, ['info']);
+    expect(stdout.text()).toContain('OpenRC');
+    expect(stdout.text()).not.toMatch(/\bopenrc\b/);
+  });
+
+  test('human output keeps unknown deployment strings unchanged', async () => {
+    const { ctx, stdout } = await testContext(
+      routeFetch({
+        'GET /api/system/info': () => ({ ...INFO, deployment: 'runit' }),
+        'GET /api/system/facts': () => ({
+          ...FACTS,
+          install: { ...FACTS.install, deployment: 'runit' },
+        }),
+      })
+    );
+    await system.run(ctx, ['info']);
+    expect(stdout.text()).toContain('runit');
+  });
+
+  test('--json keeps the wire value openrc', async () => {
+    const { ctx, stdout } = await testContext(
+      routeFetch({
+        'GET /api/system/info': () => ({ ...INFO, deployment: 'openrc' }),
+        'GET /api/system/facts': () => ({
+          ...FACTS,
+          install: { ...FACTS.install, deployment: 'openrc' },
+        }),
+      }),
+      { json: true }
+    );
+    await system.run(ctx, ['info']);
+    const payload = JSON.parse(stdout.text()) as {
+      deployment?: string;
+      install?: { deployment?: string };
+    };
+    expect(payload.install?.deployment ?? payload.deployment).toBe('openrc');
   });
 });
