@@ -47,7 +47,7 @@ export class ChallengeStore {
     );
     const entry: ChallengeEntry = {
       challengeId,
-      nonce: Uint8Array.from(nonce),
+      nonce: new Uint8Array(nonce),
       uid: input.uid,
       entryNodeId: input.entryNodeId,
       kind: input.kind,
@@ -55,7 +55,7 @@ export class ChallengeStore {
       payload: input.payload,
     };
     this.entries.set(challengeId, entry);
-    return { challengeId, nonce: Uint8Array.from(nonce) };
+    return { challengeId, nonce: new Uint8Array(nonce) };
   }
 
   consume(challengeId: string): ChallengeEntry | null {
@@ -83,6 +83,6 @@ export class ChallengeStore {
 function cloneEntry(entry: ChallengeEntry): ChallengeEntry {
   return {
     ...entry,
-    nonce: Uint8Array.from(entry.nonce),
+    nonce: new Uint8Array(entry.nonce),
   };
 }

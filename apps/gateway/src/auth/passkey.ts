@@ -95,7 +95,7 @@ export async function createRegistrationOptions(
     rpName: 'VibeTerm',
     rpID: input.rpId,
     userName: input.uid,
-    userID: Uint8Array.from(new TextEncoder().encode(input.userId)),
+    userID: new Uint8Array(new TextEncoder().encode(input.userId)),
     challenge: input.challenge.slice(),
     attestationType: 'none',
     excludeCredentials: input.existingCredentialIds.map((id) => ({ id })),

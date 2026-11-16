@@ -1,5 +1,5 @@
 export function copyBytes(value: Uint8Array): Uint8Array {
-  return Uint8Array.from(value);
+  return new Uint8Array(value);
 }
 
 export function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {

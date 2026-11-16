@@ -67,11 +67,11 @@ export class CanonicalLiveReplay {
       return;
     }
     this.panes.set(key, {
-      paneEpoch: Uint8Array.from(snapshot.paneEpoch),
+      paneEpoch: new Uint8Array(snapshot.paneEpoch),
       nextSeq: snapshot.baseSeq,
       historyCursor: {
-        paneEpoch: Uint8Array.from(snapshot.historyCursor.paneEpoch),
-        historyEpoch: Uint8Array.from(snapshot.historyCursor.historyEpoch),
+        paneEpoch: new Uint8Array(snapshot.historyCursor.paneEpoch),
+        historyEpoch: new Uint8Array(snapshot.historyCursor.historyEpoch),
         beforeLine: snapshot.historyCursor.beforeLine,
       },
       frames: [],
@@ -120,10 +120,10 @@ export class CanonicalLiveReplay {
     }
     state.frames.push({
       ...frame,
-      paneEpoch: Uint8Array.from(frame.paneEpoch),
+      paneEpoch: new Uint8Array(frame.paneEpoch),
       seqStart,
       seqEnd: frame.seqEnd,
-      data: Uint8Array.from(data),
+      data: new Uint8Array(data),
     });
     state.bytes += data.byteLength;
     this.totalBytes += data.byteLength;
@@ -157,8 +157,8 @@ export class CanonicalLiveReplay {
     state.historyBytes += page.data.byteLength;
     if (page.nextCursor) {
       state.historyCursor = {
-        paneEpoch: Uint8Array.from(page.nextCursor.paneEpoch),
-        historyEpoch: Uint8Array.from(page.nextCursor.historyEpoch),
+        paneEpoch: new Uint8Array(page.nextCursor.paneEpoch),
+        historyEpoch: new Uint8Array(page.nextCursor.historyEpoch),
         beforeLine: page.nextCursor.beforeLine,
       };
     } else {

@@ -276,5 +276,5 @@ export function takeDcsBytes(state: ParserState): Uint8Array {
   if (state.dcsBytes.length === 0) {
     return EMPTY_UINT8;
   }
-  return Uint8Array.from(state.dcsBytes);
+  return new Uint8Array(state.dcsBytes);
 }

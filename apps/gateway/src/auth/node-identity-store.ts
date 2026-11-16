@@ -101,5 +101,5 @@ async function decryptKey(
     entityId: nodeId,
     field,
   });
-  return Uint8Array.from(Buffer.from(encoded, 'base64'));
+  return new Uint8Array(Buffer.from(encoded, 'base64'));
 }

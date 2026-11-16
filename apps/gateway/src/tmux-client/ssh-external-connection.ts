@@ -125,7 +125,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
         timeoutMs: () => this.getInputCommandTimeoutMs(),
       },
       paneId,
-      Uint8Array.from(data),
+      new Uint8Array(data),
       ...completion
     );
   }

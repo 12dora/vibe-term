@@ -464,7 +464,7 @@ async function connectNode(
 }
 
 function decodeNonce(value: string): Uint8Array {
-  return Uint8Array.from(Buffer.from(value, 'base64url'));
+  return new Uint8Array(Buffer.from(value, 'base64url'));
 }
 
 function hexToBytes(hex: string): Uint8Array {

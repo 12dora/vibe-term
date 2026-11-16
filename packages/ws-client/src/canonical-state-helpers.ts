@@ -141,7 +141,7 @@ export function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 export function copyBytes(bytes: Uint8Array): Uint8Array {
-  return Uint8Array.from(bytes);
+  return new Uint8Array(bytes);
 }
 
 export function discardSupersededMetadataAssemblies(

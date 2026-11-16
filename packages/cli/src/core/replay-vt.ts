@@ -96,7 +96,7 @@ export class ReplayVtFilter {
   push(input: Uint8Array): Uint8Array {
     const out: number[] = [];
     for (let index = 0; index < input.length; index += 1) this.consume(input[index], out);
-    return Uint8Array.from(out);
+    return new Uint8Array(out);
   }
 
   flush(): Uint8Array {

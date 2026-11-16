@@ -87,7 +87,7 @@ export function extractTarGzipFile(tarball: Uint8Array, pathInTar: string): Uint
     const content = tar.subarray(offset, offset + size);
     offset += size + padBlock(size);
     if ((typeflag === '0' || typeflag === '\0') && fullName === wanted) {
-      return Uint8Array.from(content);
+      return new Uint8Array(content);
     }
   }
   return null;

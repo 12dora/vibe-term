@@ -91,8 +91,8 @@ export interface TerminalSurfaceOptions<Target extends TerminalSurfaceTarget> {
 function copyHistoryCursor(cursor: GatewayHistoryCursor | null): GatewayHistoryCursor | null {
   return cursor
     ? {
-        paneEpoch: Uint8Array.from(cursor.paneEpoch),
-        historyEpoch: Uint8Array.from(cursor.historyEpoch),
+        paneEpoch: new Uint8Array(cursor.paneEpoch),
+        historyEpoch: new Uint8Array(cursor.historyEpoch),
         beforeLine: cursor.beforeLine,
       }
     : null;
@@ -101,9 +101,9 @@ function copyHistoryCursor(cursor: GatewayHistoryCursor | null): GatewayHistoryC
 function copySnapshot(snapshot: GatewayPaneScreenSnapshot): GatewayPaneScreenSnapshot {
   return {
     ...snapshot,
-    requestId: snapshot.requestId ? Uint8Array.from(snapshot.requestId) : undefined,
-    paneEpoch: Uint8Array.from(snapshot.paneEpoch),
-    data: Uint8Array.from(snapshot.data),
+    requestId: snapshot.requestId ? new Uint8Array(snapshot.requestId) : undefined,
+    paneEpoch: new Uint8Array(snapshot.paneEpoch),
+    data: new Uint8Array(snapshot.data),
     historyCursor: copyHistoryCursor(snapshot.historyCursor),
   };
 }
@@ -111,10 +111,10 @@ function copySnapshot(snapshot: GatewayPaneScreenSnapshot): GatewayPaneScreenSna
 function copyHistoryPage(page: GatewayPaneHistoryPage): GatewayPaneHistoryPage {
   return {
     ...page,
-    requestId: page.requestId ? Uint8Array.from(page.requestId) : undefined,
-    paneEpoch: Uint8Array.from(page.paneEpoch),
-    historyEpoch: Uint8Array.from(page.historyEpoch),
-    data: Uint8Array.from(page.data),
+    requestId: page.requestId ? new Uint8Array(page.requestId) : undefined,
+    paneEpoch: new Uint8Array(page.paneEpoch),
+    historyEpoch: new Uint8Array(page.historyEpoch),
+    data: new Uint8Array(page.data),
     nextCursor: copyHistoryCursor(page.nextCursor),
   };
 }
@@ -184,9 +184,9 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
 
   getDiagnosticState(): TerminalSurfaceDiagnosticState {
     return {
-      paneEpoch: this.latestSnapshot ? Uint8Array.from(this.latestSnapshot.paneEpoch) : null,
+      paneEpoch: this.latestSnapshot ? new Uint8Array(this.latestSnapshot.paneEpoch) : null,
       historyEpoch: this.nextHistoryCursor
-        ? Uint8Array.from(this.nextHistoryCursor.historyEpoch)
+        ? new Uint8Array(this.nextHistoryCursor.historyEpoch)
         : null,
       historyBeforeLine: this.nextHistoryCursor?.beforeLine ?? null,
       recoveryState: this.disposed

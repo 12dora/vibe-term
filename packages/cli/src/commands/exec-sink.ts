@@ -110,7 +110,7 @@ export class StreamCollector {
     if (!this.options.inline) return;
     const room = Math.max(0, this.options.maxBytes - this.kept);
     if (chunk.byteLength > room) this.truncated = true;
-    const piece = Uint8Array.from(chunk.subarray(0, room));
+    const piece = new Uint8Array(chunk.subarray(0, room));
     if (piece.byteLength === 0) return;
     this.kept += piece.byteLength;
     const limit = this.options.tailBytes;

@@ -6,7 +6,7 @@ export function toBuffer(bytes: Uint8Array): Buffer {
 }
 
 export function toBytes(value: Buffer | Uint8Array): Uint8Array {
-  return Uint8Array.from(value);
+  return new Uint8Array(value);
 }
 
 export function toBase64Url(bytes: Uint8Array): string {

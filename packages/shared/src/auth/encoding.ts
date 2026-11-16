@@ -541,7 +541,7 @@ export function decodeBase32(input: string): Uint8Array {
       bits -= 8;
     }
   }
-  return Uint8Array.from(out);
+  return new Uint8Array(out);
 }
 
 export function nodeIdToHex(nodeId: Uint8Array): string {
