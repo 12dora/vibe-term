@@ -13,6 +13,7 @@ import {
   parsePidRecord,
   pidFilePath,
   processCommandLine,
+  runScriptInterpreter,
 } from './upgrade-process';
 
 const tempDirs: string[] = [];
@@ -263,5 +264,19 @@ describe('pidFilePath', () => {
     // 新名出现后一律用新名
     await writeFile(join(dir, 'vibeterm.pid'), '2\n');
     expect(pidFilePath(dir)).toBe(join(dir, 'vibeterm.pid'));
+  });
+});
+
+describe('runScriptInterpreter', () => {
+  test('uses bash for legacy bash run.sh and sh otherwise', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-interp-'));
+    tempDirs.push(dir);
+    const legacy = join(dir, 'legacy.sh');
+    const posix = join(dir, 'posix.sh');
+    await writeFile(legacy, '#!/usr/bin/env bash\nset -euo pipefail\n');
+    await writeFile(posix, '#!/bin/sh\nset -eu\n');
+    expect(runScriptInterpreter(legacy)).toBe('bash');
+    expect(runScriptInterpreter(posix)).toBe('sh');
+    expect(runScriptInterpreter(join(dir, 'missing.sh'))).toBe('sh');
   });
 });

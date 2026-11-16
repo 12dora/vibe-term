@@ -282,6 +282,16 @@ export async function waitForServiceRelease(opts: {
 
 const STOP_TIMEOUT_MS = 20_000;
 
+/** 2.15.x 及更早的 run.sh 是 bash 脚本；升级回滚或 --repair 还原它时必须仍用 bash 启动。 */
+export function runScriptInterpreter(runScriptPath: string): 'bash' | 'sh' {
+  try {
+    const firstLine = readFileSync(runScriptPath, 'utf8').split('\n', 1)[0] ?? '';
+    return /^#!.*\bbash\b/.test(firstLine) ? 'bash' : 'sh';
+  } catch {
+    return 'sh';
+  }
+}
+
 export function createDirectProcessControl(opts: {
   runScriptPath: string;
   pidPath: string;
@@ -320,7 +330,7 @@ export function createDirectProcessControl(opts: {
       await rm(opts.pidPath, { force: true }).catch(() => null);
     },
     async start() {
-      const child = spawn('sh', [opts.runScriptPath], {
+      const child = spawn(runScriptInterpreter(opts.runScriptPath), [opts.runScriptPath], {
         detached: true,
         stdio: 'ignore',
         env: opts.env ?? process.env,

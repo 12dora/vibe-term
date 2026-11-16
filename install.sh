@@ -116,12 +116,14 @@ vibeterm_http_status_from_headers() {
     END { if (code != "") { print code; exit 0 } exit 1 }'
 }
 vibeterm_http_get_code() {
-  local url="$1" dest="$2" hdr code
+  local url="$1" dest="$2" hdr code rc
   case "$(vibeterm_http_client)" in
     curl) curl -sS -L -o "$dest" -w '%{http_code}' -H "$VIBETERM_INSTALL_UA" "$url" || return 1 ;;
     wget)
       hdr="${dest}.hdr"
-      wget -S -O "$dest" --header "$VIBETERM_INSTALL_UA" "$url" >"$hdr" 2>&1 || true
+      rc=0
+      wget -S -O "$dest" --header "$VIBETERM_INSTALL_UA" -T 15 "$url" >"$hdr" 2>&1 || rc=$?
+      [ "$rc" -eq 0 ] || [ "$rc" -eq 8 ] || return 1
       code="$(vibeterm_http_status_from_headers "$(cat "$hdr")")" || return 1
       printf '%s' "$code"
       ;;
@@ -190,6 +192,8 @@ vibeterm_install_bun_zip() {
     work="$VIBETERM_INSTALL_TMP"
   else
     work="$(mktemp -d "${TMPDIR:-/tmp}/vibeterm-bun.XXXXXX")"
+    VIBETERM_INSTALL_TMP="$work"
+    trap vibeterm_cleanup_tmp EXIT
     own_tmp=1
   fi
   zip="${work}/bun.zip"; sums="${work}/SHASUMS256.txt"
@@ -205,7 +209,9 @@ vibeterm_install_bun_zip() {
   mv "${dest_dir}/bun-${target}/bun" "${dest_dir}/bun"
   chmod +x "${dest_dir}/bun"
   rm -rf "${dest_dir}/bun-${target}"
-  [ "$own_tmp" -eq 1 ] && rm -rf "$work"
+  if [ "$own_tmp" -eq 1 ]; then
+    rm -rf "$work"
+  fi
 }
 vibeterm_ensure_bun() {
   local ver
@@ -224,9 +230,12 @@ vibeterm_ensure_bun() {
   fi
   export PATH="${HOME}/.bun/bin:${PATH:-}"
   command -v bun >/dev/null 2>&1 || vibeterm_die "Bun install failed"
-  ver="$(bun --version 2>/dev/null || true)"
-  if [ -z "$ver" ] || ! vibeterm_version_ge "$ver" "$VIBETERM_MIN_BUN_VERSION"; then
-    vibeterm_die "Bun ${ver:-unknown} is still older than ${VIBETERM_MIN_BUN_VERSION}"
+  if ! ver="$(bun --version 2>&1)"; then
+    printf '%s\n' "$ver" >&2
+    vibeterm_die "bun --version failed; on Alpine: apk add libstdc++ libgcc"
+  fi
+  if ! vibeterm_version_ge "$ver" "$VIBETERM_MIN_BUN_VERSION"; then
+    vibeterm_die "Bun ${ver} is still older than ${VIBETERM_MIN_BUN_VERSION}"
   fi
 }
 vibeterm_tag_from_latest_redirect() {
@@ -413,10 +422,10 @@ vibeterm_install() {
   command -v tar >/dev/null 2>&1 || vibeterm_die "missing required command: tar"
   vibeterm_detect_os
   vibeterm_hint_alpine
-  vibeterm_ensure_bun
-  version="$(vibeterm_resolve_version)"
   VIBETERM_INSTALL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/vibeterm-install.XXXXXX")"
   trap vibeterm_cleanup_tmp EXIT
+  vibeterm_ensure_bun
+  version="$(vibeterm_resolve_version)"
   tgz="${VIBETERM_INSTALL_TMP}/package.tgz"
   vibeterm_download_cli "$version" "$tgz"
   vibeterm_verify_cli_tarball "$version" "$VIBETERM_CLI_ASSET" "$tgz" "$allow_unverified"
@@ -436,14 +445,17 @@ vibeterm_install() {
   vibeterm_print_path_hint
 }
 vibeterm_init_role_is_relay() {
-  local prev="" arg
+  local prev="" arg value
   for arg in "$@"; do
-    if [ "$prev" = "--role" ]; then
-      case "$arg" in
-        relay | relay,node) return 0 ;;
-      esac
-    fi
+    value=""
+    case "$arg" in
+      --role=*) value="${arg#--role=}" ;;
+    esac
+    if [ "$prev" = "--role" ]; then value="$arg"; fi
     prev="$arg"
+    case ",${value}," in
+      *,relay,*) return 0 ;;
+    esac
   done
   return 1
 }
@@ -453,10 +465,10 @@ vibeterm_extract_port_list() {
 }
 vibeterm_print_relay_turn_firewall_hint() {
   local list control range
-  list="$(vibeterm_extract_port_list "${1:-}")"
+  list="$(vibeterm_extract_port_list "${1:-}" || true)"
   [ -n "$list" ] || return 0
-  control="$(printf '%s' "$list" | grep -oE '(^|, )[0-9]+/udp' | head -n 1 | grep -oE '[0-9]+')"
-  range="$(printf '%s' "$list" | grep -oE '[0-9]+-[0-9]+/udp' | head -n 1 | cut -d/ -f1)"
+  control="$(printf '%s' "$list" | grep -oE '(^|, )[0-9]+/udp' | head -n 1 | grep -oE '[0-9]+' || true)"
+  range="$(printf '%s' "$list" | grep -oE '[0-9]+-[0-9]+/udp' | head -n 1 | cut -d/ -f1 || true)"
   [ -n "$control" ] && [ -n "$range" ] || return 0
   echo "open UDP ${control} and UDP ${range} on the cloud security group / ufw"
 }

@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -26,9 +27,9 @@ afterEach(() => {
 function sourceEval(
   fnCall: string,
   extra = '',
-  options?: { env?: NodeJS.ProcessEnv }
+  options?: { env?: NodeJS.ProcessEnv; setEu?: boolean }
 ): { status: number; stdout: string; stderr: string } {
-  const script = `${extra}
+  const script = `${options?.setEu ? 'set -eu\n' : ''}${extra}
 VIBETERM_INSTALL_LIB=1
 . ${JSON.stringify(installSh)}
 ${fnCall}
@@ -239,25 +240,63 @@ describe('install.sh helpers', () => {
     expect(result.stderr).toBe('');
   });
 
+  test.skipIf(!hasBusybox)(
+    'busybox ash set -eu: missing single UDP does not abort the hint',
+    () => {
+      const script = `set -eu
+VIBETERM_INSTALL_LIB=1
+. ${JSON.stringify(installSh)}
+vibeterm_print_relay_turn_firewall_hint "Inbound ports: 443/tcp, 9883/tcp"
+`;
+      const result = spawnSync('busybox', ['sh', '-c', script], { encoding: 'utf8' });
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe('');
+    }
+  );
+
   test('prints the TURN firewall hint for relay-role init args', () => {
-    const relay = sourceEval('vibeterm_init_role_is_relay --role relay --no-interactive');
+    const eu = { setEu: true };
+    const relay = sourceEval('vibeterm_init_role_is_relay --role relay --no-interactive', '', eu);
     expect(relay.status).toBe(0);
-    const node = sourceEval('vibeterm_init_role_is_relay --role node');
+    const node = sourceEval('vibeterm_init_role_is_relay --role node', '', eu);
     expect(node.status).toBe(1);
+    expect(sourceEval('vibeterm_init_role_is_relay --role=relay', '', eu).status).toBe(0);
+    expect(sourceEval('vibeterm_init_role_is_relay --role=relay,node', '', eu).status).toBe(0);
+    expect(sourceEval('vibeterm_init_role_is_relay --role=node,relay', '', eu).status).toBe(0);
+    expect(sourceEval('vibeterm_init_role_is_relay --role node,relay', '', eu).status).toBe(0);
+    expect(sourceEval('vibeterm_init_role_is_relay --role=node', '', eu).status).toBe(1);
     const hint = sourceEval(
-      'vibeterm_print_relay_turn_firewall_hint "Inbound ports: 443/tcp, 40000/udp, 40001-40049/udp"'
+      'vibeterm_print_relay_turn_firewall_hint "Inbound ports: 443/tcp, 40000/udp, 40001-40049/udp"',
+      '',
+      eu
     );
     expect(hint.status).toBe(0);
     expect(hint.stdout).toContain('UDP 40000');
     expect(hint.stdout).toContain('UDP 40001-40049');
     const custom = sourceEval(
-      'vibeterm_print_relay_turn_firewall_hint "443/tcp, 3479/udp, 50000-50099/udp"'
+      'vibeterm_print_relay_turn_firewall_hint "443/tcp, 3479/udp, 50000-50099/udp"',
+      '',
+      eu
     );
     expect(custom.stdout).toContain('UDP 3479');
     expect(custom.stdout).toContain('UDP 50000-50099');
-    const empty = sourceEval('vibeterm_print_relay_turn_firewall_hint');
+    const empty = sourceEval('vibeterm_print_relay_turn_firewall_hint', '', eu);
     expect(empty.status).toBe(0);
     expect(empty.stdout.trim()).toBe('');
+    const tcpOnly = sourceEval(
+      'vibeterm_print_relay_turn_firewall_hint "Inbound ports: 443/tcp, 9883/tcp"',
+      '',
+      eu
+    );
+    expect(tcpOnly.status).toBe(0);
+    expect(tcpOnly.stdout.trim()).toBe('');
+    const rangeOnly = sourceEval(
+      'vibeterm_print_relay_turn_firewall_hint "443/tcp, 40001-40049/udp"',
+      '',
+      eu
+    );
+    expect(rangeOnly.status).toBe(0);
+    expect(rangeOnly.stdout.trim()).toBe('');
   });
 
   test('running the script (not sourcing it) reaches the installer', () => {
@@ -682,18 +721,30 @@ describe('http client selection', () => {
   const wgetStub = `#!/bin/sh
 out=""
 url=""
+timeout=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -O) out="$2"; shift 2 ;;
-    --header|-T|-H) shift 2 ;;
+    --header|-H) shift 2 ;;
+    -T) timeout="$2"; shift 2 ;;
     -q|-S|--spider|-s|-L|-f) shift ;;
     -*) shift ;;
     *) url="$1"; shift ;;
   esac
 done
+if [ -n "\${FAKE_WGET_T_MARK:-}" ]; then
+  printf '%s' "$timeout" > "\$FAKE_WGET_T_MARK"
+fi
 if [ -n "\${FAKE_WGET_LOCATION:-}" ]; then
   printf '  HTTP/1.1 302 Found\\n  Location: %s\\n' "\$FAKE_WGET_LOCATION" >&2
   exit 0
+fi
+if [ -n "\${FAKE_WGET_RC:-}" ]; then
+  printf '  HTTP/1.1 200 OK\\n' >&2
+  if [ -n "\$out" ] && [ "\$out" != /dev/null ] && [ -n "\${FAKE_WGET_BODY:-}" ]; then
+    cp "\$FAKE_WGET_BODY" "\$out"
+  fi
+  exit "\$FAKE_WGET_RC"
 fi
 if [ -n "\${FAKE_WGET_CODE:-}" ]; then
   printf '  HTTP/1.1 %s x\\n' "\$FAKE_WGET_CODE" >&2
@@ -768,6 +819,50 @@ exit 1
     expect(result.status).toBe(0);
     expect(result.stdout).toBe('404');
   });
+
+  test('wget get_code uses -T 15 and only parses status when wget exits 0 or 8', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-http-code-rc-'));
+    sandboxDirs.push(root);
+    const bin = isolatedBin(root, ['sh', 'awk', 'cat', 'tr', 'cp']);
+    writeExec(join(bin, 'wget'), wgetStub);
+    const dest = join(root, 'body');
+    const body = join(root, 'sums');
+    const tMark = join(root, 'wget.t');
+    writeFileSync(body, 'unused\n');
+    const eu = { setEu: true as const };
+    const interrupted = sourceEval(
+      `vibeterm_http_get_code https://example.test/SHA256SUMS ${JSON.stringify(dest)}`,
+      '',
+      {
+        ...eu,
+        env: {
+          PATH: bin,
+          FAKE_WGET_RC: '4',
+          FAKE_WGET_BODY: body,
+          FAKE_WGET_T_MARK: tMark,
+        },
+      }
+    );
+    expect(interrupted.status).toBe(1);
+    expect(interrupted.stdout).toBe('');
+    expect(readFileSync(tMark, 'utf8')).toBe('15');
+
+    const httpErr = sourceEval(
+      `vibeterm_http_get_code https://example.test/SHA256SUMS ${JSON.stringify(dest)}`,
+      '',
+      { ...eu, env: { PATH: bin, FAKE_WGET_CODE: '503', FAKE_WGET_BODY: body } }
+    );
+    expect(httpErr.status).toBe(0);
+    expect(httpErr.stdout).toBe('503');
+
+    const ok = sourceEval(
+      `vibeterm_http_get_code https://example.test/SHA256SUMS ${JSON.stringify(dest)}`,
+      '',
+      { ...eu, env: { PATH: bin, FAKE_WGET_CODE: '200', FAKE_WGET_BODY: body } }
+    );
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toBe('200');
+  });
 });
 
 describe('init tee path', () => {
@@ -800,5 +895,153 @@ exit 7
     expect(result.status).toBe(7);
     expect(result.stdout).toContain('init-output');
     expect(readFileSync(log, 'utf8')).toContain('init-output');
+  });
+});
+
+describe('vibeterm_install_bun_zip and ensure_bun', () => {
+  const isLinux = process.platform === 'linux';
+
+  function bunZipBin(root: string): string {
+    const bin = isolatedBin(root, [
+      'sh',
+      'uname',
+      'mktemp',
+      'mkdir',
+      'mv',
+      'chmod',
+      'rm',
+      'cp',
+      'cat',
+      'awk',
+      'tr',
+      'grep',
+      'ldd',
+      'sha256sum',
+      'shasum',
+    ]);
+    writeExec(
+      join(bin, 'unzip'),
+      `#!/bin/sh
+dest="."
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -d) dest="$2"; shift 2 ;;
+    -oq|-o|-q) shift ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$dest/bun-$FAKE_BUN_TARGET"
+printf '%s\\n' '#!/bin/sh' 'echo 1.3.1' > "$dest/bun-$FAKE_BUN_TARGET/bun"
+chmod +x "$dest/bun-$FAKE_BUN_TARGET/bun"
+`
+    );
+    return bin;
+  }
+
+  test.skipIf(!isLinux)('reuses VIBETERM_INSTALL_TMP and returns 0 under set -eu', () => {
+    const target = sourceEval('vibeterm_bun_release_target "$(uname -m)"').stdout.trim();
+    expect(target.length).toBeGreaterThan(0);
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-bun-zip-keep-'));
+    sandboxDirs.push(root);
+    const home = join(root, 'home');
+    const work = join(root, 'keep-tmp');
+    mkdirSync(home);
+    mkdirSync(work);
+    const bin = bunZipBin(root);
+    const zip = join(root, 'bun.zip');
+    writeFileSync(zip, 'fake-bun-zip\n');
+    const sums = join(root, 'SHASUMS256.txt');
+    writeFileSync(sums, `${sha256Hex(readFileSync(zip))}  bun-${target}.zip\n`);
+    writeExec(
+      join(bin, 'curl'),
+      `#!/bin/sh
+out=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -H|--header) shift 2 ;;
+    -s|-S|-L|-f|-sS|-fsSL|-q) shift ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+case "$url" in
+  *SHASUMS256.txt*) cp "$FAKE_BUN_SUMS" "$out" ;;
+  *.zip*) cp "$FAKE_BUN_ZIP" "$out" ;;
+  *) echo "fake-curl: $url" >&2; exit 1 ;;
+esac
+`
+    );
+    const result = sourceEval(
+      `VIBETERM_INSTALL_TMP=${JSON.stringify(work)}\nvibeterm_install_bun_zip`,
+      '',
+      {
+        setEu: true,
+        env: {
+          PATH: bin,
+          HOME: home,
+          FAKE_BUN_TARGET: target,
+          FAKE_BUN_ZIP: zip,
+          FAKE_BUN_SUMS: sums,
+        },
+      }
+    );
+    expect(result.status).toBe(0);
+    expect(existsSync(work)).toBe(true);
+    expect(existsSync(join(home, '.bun/bin/bun'))).toBe(true);
+  });
+
+  test.skipIf(!isLinux)('failed download cleans the temp dir via EXIT trap', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-bun-zip-leak-'));
+    sandboxDirs.push(root);
+    const tmp = join(root, 'tmp');
+    mkdirSync(tmp);
+    const bin = bunZipBin(root);
+    writeExec(join(bin, 'curl'), '#!/bin/sh\nexit 1\n');
+    const result = sourceEval('vibeterm_install_bun_zip', 'unset VIBETERM_INSTALL_TMP', {
+      setEu: true,
+      env: {
+        PATH: bin,
+        HOME: join(root, 'home'),
+        TMPDIR: tmp,
+      },
+    });
+    expect(result.status).not.toBe(0);
+    const leftover = existsSync(tmp)
+      ? readdirSync(tmp).filter((name) => name.startsWith('vibeterm-bun.'))
+      : [];
+    expect(leftover).toEqual([]);
+  });
+
+  test('after install, a failing bun --version prints stderr and the libstdc++ hint', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-bun-ver-'));
+    sandboxDirs.push(root);
+    const home = join(root, 'home');
+    mkdirSync(home);
+    const bin = isolatedBin(root, ['sh', 'mkdir', 'chmod', 'cat']);
+    writeExec(join(bin, 'bash'), '#!/bin/sh\nexec sh\n');
+    writeExec(
+      join(bin, 'curl'),
+      `#!/bin/sh
+cat <<'EOS'
+mkdir -p "$HOME/.bun/bin"
+cat > "$HOME/.bun/bin/bun" <<'BUN'
+#!/bin/sh
+echo "Error loading shared library libstdc++.so.6: No such file or directory" >&2
+exit 1
+BUN
+chmod +x "$HOME/.bun/bin/bun"
+EOS
+`
+    );
+    const result = sourceEval('vibeterm_ensure_bun', '', {
+      setEu: true,
+      env: { PATH: bin, HOME: home },
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('libstdc++.so.6');
+    expect(result.stderr).toContain('apk add libstdc++ libgcc');
+    expect(result.stderr).not.toMatch(/Bun unknown is still older/);
   });
 });
