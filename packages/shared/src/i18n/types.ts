@@ -1065,6 +1065,7 @@ export type TranslationKey =
   | 'settings.version.projectLine'
   | 'settings.version.deploymentLaunchd'
   | 'settings.version.deploymentSystemd'
+  | 'settings.version.deploymentOpenrc'
   | 'settings.version.checkUpdate'
   | 'settings.version.checking'
   | 'settings.version.upToDate'

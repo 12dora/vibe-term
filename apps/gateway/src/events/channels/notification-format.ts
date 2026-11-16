@@ -1,4 +1,5 @@
-import { type EventType, type SiteSettings, type WebhookEvent, toBCP47 } from '@vibeterm/shared';
+import type { EventType, SiteSettings, WebhookEvent } from '@vibeterm/shared';
+import { toBCP47 } from '@vibeterm/shared/i18n/meta';
 import { eq } from 'drizzle-orm';
 import { isRelayOnly, resolveLiveRoles } from '../../config';
 import { getSiteSettings } from '../../db';

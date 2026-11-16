@@ -1,6 +1,6 @@
 // 按站点语言渲染日期/时间：非法或缺省值统一返回空串，占位文案交给调用方。
 
-import { type LocaleCode, toBCP47 } from './i18n/resources';
+import { type LocaleCode, toBCP47 } from './i18n/locales/generated/meta';
 
 export type DateInput = string | number | Date | null | undefined;
 

@@ -5,7 +5,14 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { I18N_CORE_KEY_PREFIXES, isCoreI18nKey, splitTranslation } from './core-keys';
+import { AVAILABLE_LOCALES, DEFAULT_LOCALE } from './locales/generated/meta';
+import {
+  SERVER_I18N_FALLBACK,
+  SERVER_I18N_FALLBACK_LOCALE,
+  SERVER_I18N_LOADERS,
+} from './locales/generated/server';
 import { I18N_RESOURCES } from './resources';
+import { pickServerTranslation } from './server-keys';
 
 type TranslationTree = { [key: string]: string | TranslationTree };
 
@@ -77,6 +84,28 @@ describe('i18n locales', () => {
       expect([...coreLeaves, ...restLeaves].sort()).toEqual(leafKeys(source[lng]).sort());
       expect(coreLeaves.every(isCoreI18nKey)).toBe(true);
       expect(restLeaves.some(isCoreI18nKey)).toBe(false);
+    }
+  });
+
+  test('locales/generated 的 meta 与 manifest 同步', () => {
+    const manifest = JSON.parse(readFileSync(join(LOCALES_DIR, 'manifest.json'), 'utf8'));
+    expect(DEFAULT_LOCALE).toBe(manifest.defaultLocale);
+    expect([...AVAILABLE_LOCALES].sort()).toEqual([...LOCALES].sort());
+  });
+
+  test('locales/generated 的服务端语言包与源文件、前缀表同步', async () => {
+    expect(SERVER_I18N_FALLBACK_LOCALE).toBe(DEFAULT_LOCALE);
+    expect(SERVER_I18N_FALLBACK).toEqual(pickServerTranslation(source[DEFAULT_LOCALE]));
+    for (const lng of LOCALES) {
+      if (lng === DEFAULT_LOCALE) {
+        expect(SERVER_I18N_LOADERS[lng]).toBeUndefined();
+        continue;
+      }
+      const load = SERVER_I18N_LOADERS[lng];
+      expect(load).toBeDefined();
+      const mod = await load?.();
+      const expected = pickServerTranslation(source[lng]);
+      expect({ lng, tree: mod?.default }).toEqual({ lng, tree: expected });
     }
   });
 

@@ -7,10 +7,13 @@ const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.
 const packageJson = await Bun.file(path.join(pkgRoot, 'package.json')).json();
 
 describe('@vibeterm/shared i18n package exports', () => {
-  test('export map 覆盖 resources/types/manifest 与三语 JSON', () => {
+  test('export map 覆盖 resources/types/meta/server/manifest 与三语 JSON', () => {
     const exports = packageJson.exports as Record<string, string>;
     expect(exports['./i18n/resources']).toBe('./src/i18n/resources.ts');
     expect(exports['./i18n/types']).toBe('./src/i18n/types.ts');
+    expect(exports['./i18n/meta']).toBe('./src/i18n/locales/generated/meta.ts');
+    expect(exports['./i18n/server']).toBe('./src/i18n/locales/generated/server.ts');
+    expect(exports['./i18n/server-keys']).toBe('./src/i18n/server-keys.ts');
     expect(exports['./i18n/locales/manifest.json']).toBe('./src/i18n/locales/manifest.json');
     expect(exports['./i18n/locales/en_US.json']).toBe('./src/i18n/locales/en_US.json');
     expect(exports['./i18n/locales/zh_CN.json']).toBe('./src/i18n/locales/zh_CN.json');

@@ -12,16 +12,16 @@
 
 // Types
 export type { LocaleInfo, Manifest, TranslationKey } from './i18n/types';
-export type { LocaleCode } from './i18n/resources';
+export type { LocaleCode } from './i18n/locales/generated/meta';
 
 // Runtime values (generated from manifest)
+export { I18N_RESOURCES } from './i18n/resources';
 export {
-  I18N_RESOURCES,
   I18N_MANIFEST,
   DEFAULT_LOCALE,
   AVAILABLE_LOCALES as SUPPORTED_LOCALES,
   toBCP47,
-} from './i18n/resources';
+} from './i18n/locales/generated/meta';
 
 // ==================== Version ====================
 

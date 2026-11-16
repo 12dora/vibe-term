@@ -1,10 +1,7 @@
 import {
-  DEFAULT_LOCALE,
   DEFAULT_TERMINAL_SHORTCUTS,
   type Device,
   type EventType,
-  I18N_MANIFEST,
-  type LocaleCode,
   type SiteSettings,
   type TelegramBotChat,
   type TelegramChatStatus,
@@ -15,6 +12,7 @@ import {
   type WeixinAccountUser,
   type WeixinUserStatus,
 } from '@vibeterm/shared';
+import { DEFAULT_LOCALE, I18N_MANIFEST, type LocaleCode } from '@vibeterm/shared/i18n/meta';
 import type {
   devices,
   siteSettings,

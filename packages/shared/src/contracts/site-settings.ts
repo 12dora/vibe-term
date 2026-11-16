@@ -1,7 +1,7 @@
 // 站点设置契约。字段以 SITE_SETTING_FIELDS 为单一真源：
 // 契约类型、PATCH 归一化、merge、CLI key/旗标/USAGE 行均从此表派生。
 
-import { AVAILABLE_LOCALES, DEFAULT_LOCALE, type LocaleCode } from '../i18n/resources';
+import { AVAILABLE_LOCALES, DEFAULT_LOCALE, type LocaleCode } from '../i18n/locales/generated/meta';
 import type { ShareOriginCandidate } from '../share/types';
 
 export const THEME_MODES = ['dark', 'light'] as const;

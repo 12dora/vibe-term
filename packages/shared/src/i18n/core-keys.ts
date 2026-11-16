@@ -55,36 +55,47 @@ export interface SplitTranslation {
   rest: TranslationTree;
 }
 
-/** 按 `I18N_CORE_KEY_PREFIXES` 把一棵翻译树拆成互斥的两棵，叶子总数守恒。 */
-export function splitTranslation(tree: TranslationTree): SplitTranslation {
-  const core: TranslationTree = {};
-  const rest: TranslationTree = {};
+/** 按前缀表判定 key 是否命中：等于前缀，或以 `前缀.` / `前缀_`（复数后缀）开头。 */
+export function matchesI18nPrefix(prefixes: readonly string[], key: string): boolean {
+  return prefixes.some(
+    (prefix) => key === prefix || key.startsWith(`${prefix}.`) || key.startsWith(`${prefix}_`)
+  );
+}
 
+/** 按谓词把一棵翻译树拆成互斥的两棵（matched / rest），叶子总数守恒。 */
+export function partitionTranslation(
+  tree: TranslationTree,
+  isMatch: (key: string) => boolean
+): { matched: TranslationTree; rest: TranslationTree } {
   const walk = (
     node: TranslationTree,
     path: string,
-    coreOut: TranslationTree,
+    matchedOut: TranslationTree,
     restOut: TranslationTree
   ): void => {
     for (const [key, value] of Object.entries(node)) {
       const full = path ? `${path}.${key}` : key;
-      const target = isCoreI18nKey(full) ? coreOut : null;
-      if (typeof value === 'string') {
-        (target ?? restOut)[key] = value;
+      const hit = isMatch(full);
+      if (typeof value === 'string' || hit) {
+        (hit ? matchedOut : restOut)[key] = value;
         continue;
       }
-      if (target) {
-        target[key] = value;
-        continue;
-      }
-      const nestedCore: TranslationTree = {};
+      const nestedMatched: TranslationTree = {};
       const nestedRest: TranslationTree = {};
-      walk(value, full, nestedCore, nestedRest);
-      if (Object.keys(nestedCore).length > 0) coreOut[key] = nestedCore;
+      walk(value, full, nestedMatched, nestedRest);
+      if (Object.keys(nestedMatched).length > 0) matchedOut[key] = nestedMatched;
       if (Object.keys(nestedRest).length > 0) restOut[key] = nestedRest;
     }
   };
 
-  walk(tree, '', core, rest);
-  return { core, rest };
+  const matched: TranslationTree = {};
+  const rest: TranslationTree = {};
+  walk(tree, '', matched, rest);
+  return { matched, rest };
+}
+
+/** 按 `I18N_CORE_KEY_PREFIXES` 把一棵翻译树拆成互斥的两棵，叶子总数守恒。 */
+export function splitTranslation(tree: TranslationTree): SplitTranslation {
+  const { matched, rest } = partitionTranslation(tree, isCoreI18nKey);
+  return { core: matched, rest };
 }
