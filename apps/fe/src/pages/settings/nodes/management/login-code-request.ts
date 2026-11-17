@@ -1,0 +1,44 @@
+// 「登录命令」对话框的打开请求：卡头按钮与行内菜单各自发请求，由卡里唯一一份
+// `LoginCodeDialogHost` 接收，免得把开关一路传进表格与卡片列表。
+
+import { useSyncExternalStore } from 'react';
+
+/** `'all'` = 全部节点；其余为单个节点的 mesh id。 */
+export type LoginCodeSelection = 'all' | string;
+
+export interface LoginCodeRequest {
+  selection: LoginCodeSelection;
+  /** 每次请求自增：同一选择重复打开时对话框也要重置。 */
+  seq: number;
+}
+
+let current: LoginCodeRequest | null = null;
+let seq = 0;
+const listeners = new Set<() => void>();
+
+function emit(): void {
+  for (const listener of listeners) listener();
+}
+
+export function requestLoginCode(selection: LoginCodeSelection): void {
+  seq += 1;
+  current = { selection, seq };
+  emit();
+}
+
+export function closeLoginCodeRequest(): void {
+  if (current === null) return;
+  current = null;
+  emit();
+}
+
+export function useLoginCodeRequest(): LoginCodeRequest | null {
+  return useSyncExternalStore(
+    (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    () => current,
+    () => null
+  );
+}

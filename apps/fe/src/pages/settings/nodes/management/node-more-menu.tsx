@@ -8,8 +8,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@vibeterm/ui/dropdown-menu';
-import { Ellipsis, Loader2, MemoryStick, Pause, Play } from 'lucide-react';
+import { Ellipsis, Loader2, MemoryStick, Pause, Play, SquareTerminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { loginCodeIneligibleReason, loginCodeMenuTitle } from './login-code-eligibility';
+import { requestLoginCode } from './login-code-request';
 import { memoryLimitsSkipReason } from './node-memory-limits';
 import { pauseBlockReason, pauseBlockTitle } from './pause-eligibility';
 import { defaultPauseIo, useNodePause } from './use-node-pause';
@@ -23,10 +25,14 @@ export interface NodeMoreMenuListProps {
   /** 该节点当前改不了内存限额（离线 / 未登录 / 已暂停 / 版本过旧）。 */
   memoryDisabled: boolean;
   memoryTitle?: string;
-  labels: { detail: string; memory: string; pause: string };
+  /** 「登录命令」项；不传 `onLoginCode` 就不出现这一项。 */
+  loginCodeDisabled?: boolean;
+  loginCodeTitle?: string;
+  labels: { detail: string; memory: string; pause: string; loginCode?: string };
   onDetail: () => void;
   onMemory: () => void;
   onPause: () => void;
+  onLoginCode?: () => void;
 }
 
 export function NodeMoreMenuList({
@@ -37,10 +43,13 @@ export function NodeMoreMenuList({
   pauseBusy,
   memoryDisabled,
   memoryTitle,
+  loginCodeDisabled,
+  loginCodeTitle,
   labels,
   onDetail,
   onMemory,
   onPause,
+  onLoginCode,
 }: NodeMoreMenuListProps) {
   return (
     <>
@@ -56,6 +65,17 @@ export function NodeMoreMenuList({
         <MemoryStick className="size-4" />
         {labels.memory}
       </DropdownMenuItem>
+      {onLoginCode && (
+        <DropdownMenuItem
+          disabled={loginCodeDisabled}
+          title={loginCodeTitle}
+          onClick={onLoginCode}
+          data-testid={`nodes-login-code-${row.id}`}
+        >
+          <SquareTerminal className="size-4" />
+          {labels.loginCode}
+        </DropdownMenuItem>
+      )}
       <DropdownMenuItem
         disabled={pauseDisabled}
         title={pauseTitle}
@@ -95,6 +115,7 @@ export function NodeMoreMenu({
   const blocked = reason !== null;
   // 暂停态以本地 toggle 的结果为准：刚点完暂停、列表还没刷新时也要立刻锁住内存限额。
   const memorySkip = memoryLimitsSkipReason({ ...row, paused });
+  const loginCodeSkip = loginCodeIneligibleReason(row);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -124,13 +145,17 @@ export function NodeMoreMenu({
               ? t('nodes.memory.unavailable', { reason: t(`nodes.memory.skip.${memorySkip}`) })
               : undefined
           }
+          loginCodeDisabled={loginCodeSkip !== null}
+          loginCodeTitle={loginCodeMenuTitle(loginCodeSkip, t)}
           labels={{
             detail: t('nodes.actions.detail'),
             memory: t('nodes.actions.memory'),
             pause: t(paused ? 'nodes.actions.resume' : 'nodes.actions.pause'),
+            loginCode: t('nodes.loginCode.title'),
           }}
           onDetail={onDetail}
           onMemory={onMemory}
+          onLoginCode={() => requestLoginCode(row.id)}
           onPause={() => void toggle()}
         />
       </DropdownMenuContent>

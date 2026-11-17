@@ -1040,7 +1040,8 @@
           "passwordTotp": "パスワード + 認証アプリ",
           "passwordPasskey": "パスワード + パスキー",
           "passwordWaived": "パスワード（二段階認証免除）",
-          "passkey": "パスキー"
+          "passkey": "パスキー",
+          "code": "ログインコマンド"
         },
         "reason": {
           "unknown": "不明な理由",
@@ -2239,6 +2240,67 @@
         "bulkConfirm": "次の {{count}} 個のノードを削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
         "bulkDone": "{{count}} 個のノードを削除しました",
         "bulkFailed": "{{count}} 個を削除、{{failed}} 個が失敗しました（{{names}}）"
+      },
+      "loginCode": {
+        "title": "ログインコマンド",
+        "description": "エージェントがターミナルからノードにログインするための、1 回限りのコマンドを生成します。",
+        "menuOffline": "ノードがオフラインのため、ログインコマンドを生成できません",
+        "menuOutdated": "ノードのバージョンが {{version}} 未満のため、ログインコマンドを生成できません",
+        "target": {
+          "label": "対象",
+          "all": "すべてのノード",
+          "one": "ノードを指定",
+          "placeholder": "ノードを選択",
+          "none": "利用可能なノードがありません",
+          "count": "{{count}} 台のノード",
+          "skipped": "{{count}} 台をスキップ（オフラインまたはバージョン不足）",
+          "offline": "オフライン",
+          "outdated": "バージョン不足",
+          "paused": "一時停止中"
+        },
+        "proof": {
+          "label": "認証",
+          "totp": "認証コード",
+          "passkey": "パスキー",
+          "passkeyHint": "［生成］をクリックした後、パスキーで確認します。",
+          "password": "パスワード"
+        },
+        "generate": "生成",
+        "loadError": "アカウント情報を読み込めません",
+        "errors": {
+          "TOTP_INVALID": "認証コードが正しくありません",
+          "TOTP_ALREADY_USED": "このコードは使用済みです。次のコードをお待ちください",
+          "TOTP_REQUIRED": "認証コードが必要です",
+          "PASSKEY_CANCELLED": "パスキー認証をキャンセルしました",
+          "PASSKEY_FAILED": "パスキー認証に失敗しました",
+          "INVALID_CREDENTIALS": "パスワードが正しくありません",
+          "STEP_UP_REQUIRED": "本人確認をやり直してください",
+          "rateLimited": "試行回数が多すぎます。{{time}}後に再試行してください",
+          "NODE_PK_MISMATCH": "ノードの本人確認に失敗しました",
+          "NETWORK_ERROR": "ネットワークエラー",
+          "unknown": "生成に失敗しました（{{code}}）"
+        },
+        "result": {
+          "validity": "{{minutes}} 分間有効。各ノードで 1 回のみ使用できます",
+          "remaining": "残り {{time}}",
+          "expired": "期限切れ",
+          "revoke": "無効化",
+          "done": "完了"
+        },
+        "status": {
+          "pending": "未使用",
+          "used": "ログイン済み",
+          "expired": "期限切れ",
+          "revoked": "無効化済み"
+        },
+        "reason": {
+          "offline": "オフライン",
+          "outdated": "バージョン不足",
+          "paused": "一時停止中",
+          "unreachable": "接続できません",
+          "identity": "本人確認に失敗",
+          "failed": "失敗（{{code}}）"
+        }
       },
       "upgrade": {
         "action": "アップグレード",

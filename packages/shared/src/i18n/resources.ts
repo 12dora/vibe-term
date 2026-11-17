@@ -1266,7 +1266,8 @@ export const I18N_RESOURCES = {
           "passwordTotp": "Password + authenticator",
           "passwordPasskey": "Password + passkey",
           "passwordWaived": "Password (2FA waived)",
-          "passkey": "Passkey"
+          "passkey": "Passkey",
+          "code": "Login command"
         },
         "reason": {
           "unknown": "Unknown reason",
@@ -3085,6 +3086,69 @@ export const I18N_RESOURCES = {
         "bulkDone_one": "{{count}} node removed",
         "bulkDone_other": "{{count}} nodes removed",
         "bulkFailed": "{{count}} removed, {{failed}} failed ({{names}})"
+      },
+      "loginCode": {
+        "title": "Login command",
+        "description": "Generate a one-time command for an agent to sign in to nodes from a terminal.",
+        "menuOffline": "Node is offline; a login command can't be generated",
+        "menuOutdated": "Node is older than {{version}}; a login command can't be generated",
+        "target": {
+          "label": "Target",
+          "all": "All nodes",
+          "one": "Specific node",
+          "placeholder": "Select a node",
+          "none": "No eligible nodes",
+          "count_one": "{{count}} node",
+          "count_other": "{{count}} nodes",
+          "skipped_one": "{{count}} skipped (offline or outdated)",
+          "skipped_other": "{{count}} skipped (offline or outdated)",
+          "offline": "Offline",
+          "outdated": "Outdated",
+          "paused": "Paused"
+        },
+        "proof": {
+          "label": "Verification",
+          "totp": "Code",
+          "passkey": "Passkey",
+          "passkeyHint": "Confirm with your passkey after you click Generate.",
+          "password": "Password"
+        },
+        "generate": "Generate",
+        "loadError": "Couldn't load account information",
+        "errors": {
+          "TOTP_INVALID": "Incorrect code",
+          "TOTP_ALREADY_USED": "This code was already used. Wait for the next one.",
+          "TOTP_REQUIRED": "A code is required",
+          "PASSKEY_CANCELLED": "Passkey verification cancelled",
+          "PASSKEY_FAILED": "Passkey verification failed",
+          "INVALID_CREDENTIALS": "Incorrect password",
+          "STEP_UP_REQUIRED": "Please verify your identity again",
+          "rateLimited": "Too many attempts. Try again in {{time}}.",
+          "NODE_PK_MISMATCH": "Node identity check failed",
+          "NETWORK_ERROR": "Network error",
+          "unknown": "Couldn't generate ({{code}})"
+        },
+        "result": {
+          "validity": "Valid for {{minutes}} minutes; each node accepts it once",
+          "remaining": "{{time}} left",
+          "expired": "Expired",
+          "revoke": "Revoke",
+          "done": "Done"
+        },
+        "status": {
+          "pending": "Unused",
+          "used": "Signed in",
+          "expired": "Expired",
+          "revoked": "Revoked"
+        },
+        "reason": {
+          "offline": "Offline",
+          "outdated": "Outdated",
+          "paused": "Paused",
+          "unreachable": "Unreachable",
+          "identity": "Identity check failed",
+          "failed": "Failed ({{code}})"
+        }
       },
       "upgrade": {
         "action": "Upgrade",
@@ -5406,7 +5470,8 @@ export const I18N_RESOURCES = {
           "passwordTotp": "密码 + 验证码",
           "passwordPasskey": "密码 + 通行密钥",
           "passwordWaived": "密码（免二次验证）",
-          "passkey": "通行密钥"
+          "passkey": "通行密钥",
+          "code": "登录命令"
         },
         "reason": {
           "unknown": "未知原因",
@@ -7213,6 +7278,67 @@ export const I18N_RESOURCES = {
         "bulkConfirm": "移除以下 {{count}} 个节点？它们将立即失去访问权限，须重新添加。",
         "bulkDone": "已移除 {{count}} 个节点",
         "bulkFailed": "已移除 {{count}} 个，{{failed}} 个失败（{{names}}）"
+      },
+      "loginCode": {
+        "title": "登录命令",
+        "description": "生成一次性命令，供 agent 在终端登录节点。",
+        "menuOffline": "节点离线，无法生成登录命令",
+        "menuOutdated": "节点版本低于 {{version}}，无法生成登录命令",
+        "target": {
+          "label": "目标",
+          "all": "全部节点",
+          "one": "指定节点",
+          "placeholder": "选择节点",
+          "none": "没有可用的节点",
+          "count": "{{count}} 台节点",
+          "skipped": "跳过 {{count}} 台（离线或版本过低）",
+          "offline": "离线",
+          "outdated": "版本过低",
+          "paused": "已暂停"
+        },
+        "proof": {
+          "label": "验证",
+          "totp": "验证码",
+          "passkey": "通行密钥",
+          "passkeyHint": "点击生成后使用通行密钥确认。",
+          "password": "密码"
+        },
+        "generate": "生成",
+        "loadError": "无法读取账户信息",
+        "errors": {
+          "TOTP_INVALID": "验证码错误",
+          "TOTP_ALREADY_USED": "该验证码已使用，请等待下一个",
+          "TOTP_REQUIRED": "需要验证码",
+          "PASSKEY_CANCELLED": "已取消通行密钥验证",
+          "PASSKEY_FAILED": "通行密钥验证失败",
+          "INVALID_CREDENTIALS": "密码错误",
+          "STEP_UP_REQUIRED": "请重新验证身份",
+          "rateLimited": "尝试过于频繁，请 {{time}} 后重试",
+          "NODE_PK_MISMATCH": "节点身份校验失败",
+          "NETWORK_ERROR": "网络错误",
+          "unknown": "生成失败（{{code}}）"
+        },
+        "result": {
+          "validity": "{{minutes}} 分钟内有效，每台节点限用一次",
+          "remaining": "剩余 {{time}}",
+          "expired": "已过期",
+          "revoke": "作废",
+          "done": "完成"
+        },
+        "status": {
+          "pending": "待使用",
+          "used": "已登录",
+          "expired": "已过期",
+          "revoked": "已作废"
+        },
+        "reason": {
+          "offline": "离线",
+          "outdated": "版本过低",
+          "paused": "已暂停",
+          "unreachable": "无法连接",
+          "identity": "身份校验失败",
+          "failed": "失败（{{code}}）"
+        }
       },
       "upgrade": {
         "action": "升级",
@@ -9529,7 +9655,8 @@ export const I18N_RESOURCES = {
           "passwordTotp": "パスワード + 認証アプリ",
           "passwordPasskey": "パスワード + パスキー",
           "passwordWaived": "パスワード（二段階認証免除）",
-          "passkey": "パスキー"
+          "passkey": "パスキー",
+          "code": "ログインコマンド"
         },
         "reason": {
           "unknown": "不明な理由",
@@ -11336,6 +11463,67 @@ export const I18N_RESOURCES = {
         "bulkConfirm": "次の {{count}} 個のノードを削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
         "bulkDone": "{{count}} 個のノードを削除しました",
         "bulkFailed": "{{count}} 個を削除、{{failed}} 個が失敗しました（{{names}}）"
+      },
+      "loginCode": {
+        "title": "ログインコマンド",
+        "description": "エージェントがターミナルからノードにログインするための、1 回限りのコマンドを生成します。",
+        "menuOffline": "ノードがオフラインのため、ログインコマンドを生成できません",
+        "menuOutdated": "ノードのバージョンが {{version}} 未満のため、ログインコマンドを生成できません",
+        "target": {
+          "label": "対象",
+          "all": "すべてのノード",
+          "one": "ノードを指定",
+          "placeholder": "ノードを選択",
+          "none": "利用可能なノードがありません",
+          "count": "{{count}} 台のノード",
+          "skipped": "{{count}} 台をスキップ（オフラインまたはバージョン不足）",
+          "offline": "オフライン",
+          "outdated": "バージョン不足",
+          "paused": "一時停止中"
+        },
+        "proof": {
+          "label": "認証",
+          "totp": "認証コード",
+          "passkey": "パスキー",
+          "passkeyHint": "［生成］をクリックした後、パスキーで確認します。",
+          "password": "パスワード"
+        },
+        "generate": "生成",
+        "loadError": "アカウント情報を読み込めません",
+        "errors": {
+          "TOTP_INVALID": "認証コードが正しくありません",
+          "TOTP_ALREADY_USED": "このコードは使用済みです。次のコードをお待ちください",
+          "TOTP_REQUIRED": "認証コードが必要です",
+          "PASSKEY_CANCELLED": "パスキー認証をキャンセルしました",
+          "PASSKEY_FAILED": "パスキー認証に失敗しました",
+          "INVALID_CREDENTIALS": "パスワードが正しくありません",
+          "STEP_UP_REQUIRED": "本人確認をやり直してください",
+          "rateLimited": "試行回数が多すぎます。{{time}}後に再試行してください",
+          "NODE_PK_MISMATCH": "ノードの本人確認に失敗しました",
+          "NETWORK_ERROR": "ネットワークエラー",
+          "unknown": "生成に失敗しました（{{code}}）"
+        },
+        "result": {
+          "validity": "{{minutes}} 分間有効。各ノードで 1 回のみ使用できます",
+          "remaining": "残り {{time}}",
+          "expired": "期限切れ",
+          "revoke": "無効化",
+          "done": "完了"
+        },
+        "status": {
+          "pending": "未使用",
+          "used": "ログイン済み",
+          "expired": "期限切れ",
+          "revoked": "無効化済み"
+        },
+        "reason": {
+          "offline": "オフライン",
+          "outdated": "バージョン不足",
+          "paused": "一時停止中",
+          "unreachable": "接続できません",
+          "identity": "本人確認に失敗",
+          "failed": "失敗（{{code}}）"
+        }
       },
       "upgrade": {
         "action": "アップグレード",

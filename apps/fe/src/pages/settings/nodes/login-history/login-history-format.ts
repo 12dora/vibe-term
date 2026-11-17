@@ -15,6 +15,8 @@ export function clientText(t: Translate, client: LoginRecord['client'] | null | 
 
 /** 主凭证 + 二次验证合成一句；免二次验证（本机 / 局域网）单独点出来。 */
 export function methodText(t: Translate, record: Pick<LoginRecord, 'method' | 'second'>): string {
+  // 经登录命令兑换：签发时的主凭证不再重要，直接标「登录命令」。
+  if (record.second === 'code') return t(`${NS}.method.code`);
   if (record.method === 'passkey') return t(`${NS}.method.passkey`);
   if (record.method !== 'root') return '—';
   switch (record.second) {

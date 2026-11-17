@@ -1254,7 +1254,8 @@
           "passwordTotp": "密码 + 验证码",
           "passwordPasskey": "密码 + 通行密钥",
           "passwordWaived": "密码（免二次验证）",
-          "passkey": "通行密钥"
+          "passkey": "通行密钥",
+          "code": "登录命令"
         },
         "reason": {
           "unknown": "未知原因",
@@ -3061,6 +3062,67 @@
         "bulkConfirm": "移除以下 {{count}} 个节点？它们将立即失去访问权限，须重新添加。",
         "bulkDone": "已移除 {{count}} 个节点",
         "bulkFailed": "已移除 {{count}} 个，{{failed}} 个失败（{{names}}）"
+      },
+      "loginCode": {
+        "title": "登录命令",
+        "description": "生成一次性命令，供 agent 在终端登录节点。",
+        "menuOffline": "节点离线，无法生成登录命令",
+        "menuOutdated": "节点版本低于 {{version}}，无法生成登录命令",
+        "target": {
+          "label": "目标",
+          "all": "全部节点",
+          "one": "指定节点",
+          "placeholder": "选择节点",
+          "none": "没有可用的节点",
+          "count": "{{count}} 台节点",
+          "skipped": "跳过 {{count}} 台（离线或版本过低）",
+          "offline": "离线",
+          "outdated": "版本过低",
+          "paused": "已暂停"
+        },
+        "proof": {
+          "label": "验证",
+          "totp": "验证码",
+          "passkey": "通行密钥",
+          "passkeyHint": "点击生成后使用通行密钥确认。",
+          "password": "密码"
+        },
+        "generate": "生成",
+        "loadError": "无法读取账户信息",
+        "errors": {
+          "TOTP_INVALID": "验证码错误",
+          "TOTP_ALREADY_USED": "该验证码已使用，请等待下一个",
+          "TOTP_REQUIRED": "需要验证码",
+          "PASSKEY_CANCELLED": "已取消通行密钥验证",
+          "PASSKEY_FAILED": "通行密钥验证失败",
+          "INVALID_CREDENTIALS": "密码错误",
+          "STEP_UP_REQUIRED": "请重新验证身份",
+          "rateLimited": "尝试过于频繁，请 {{time}} 后重试",
+          "NODE_PK_MISMATCH": "节点身份校验失败",
+          "NETWORK_ERROR": "网络错误",
+          "unknown": "生成失败（{{code}}）"
+        },
+        "result": {
+          "validity": "{{minutes}} 分钟内有效，每台节点限用一次",
+          "remaining": "剩余 {{time}}",
+          "expired": "已过期",
+          "revoke": "作废",
+          "done": "完成"
+        },
+        "status": {
+          "pending": "待使用",
+          "used": "已登录",
+          "expired": "已过期",
+          "revoked": "已作废"
+        },
+        "reason": {
+          "offline": "离线",
+          "outdated": "版本过低",
+          "paused": "已暂停",
+          "unreachable": "无法连接",
+          "identity": "身份校验失败",
+          "failed": "失败（{{code}}）"
+        }
       },
       "upgrade": {
         "action": "升级",

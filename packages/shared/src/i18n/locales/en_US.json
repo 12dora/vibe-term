@@ -1254,7 +1254,8 @@
           "passwordTotp": "Password + authenticator",
           "passwordPasskey": "Password + passkey",
           "passwordWaived": "Password (2FA waived)",
-          "passkey": "Passkey"
+          "passkey": "Passkey",
+          "code": "Login command"
         },
         "reason": {
           "unknown": "Unknown reason",
@@ -3073,6 +3074,69 @@
         "bulkDone_one": "{{count}} node removed",
         "bulkDone_other": "{{count}} nodes removed",
         "bulkFailed": "{{count}} removed, {{failed}} failed ({{names}})"
+      },
+      "loginCode": {
+        "title": "Login command",
+        "description": "Generate a one-time command for an agent to sign in to nodes from a terminal.",
+        "menuOffline": "Node is offline; a login command can't be generated",
+        "menuOutdated": "Node is older than {{version}}; a login command can't be generated",
+        "target": {
+          "label": "Target",
+          "all": "All nodes",
+          "one": "Specific node",
+          "placeholder": "Select a node",
+          "none": "No eligible nodes",
+          "count_one": "{{count}} node",
+          "count_other": "{{count}} nodes",
+          "skipped_one": "{{count}} skipped (offline or outdated)",
+          "skipped_other": "{{count}} skipped (offline or outdated)",
+          "offline": "Offline",
+          "outdated": "Outdated",
+          "paused": "Paused"
+        },
+        "proof": {
+          "label": "Verification",
+          "totp": "Code",
+          "passkey": "Passkey",
+          "passkeyHint": "Confirm with your passkey after you click Generate.",
+          "password": "Password"
+        },
+        "generate": "Generate",
+        "loadError": "Couldn't load account information",
+        "errors": {
+          "TOTP_INVALID": "Incorrect code",
+          "TOTP_ALREADY_USED": "This code was already used. Wait for the next one.",
+          "TOTP_REQUIRED": "A code is required",
+          "PASSKEY_CANCELLED": "Passkey verification cancelled",
+          "PASSKEY_FAILED": "Passkey verification failed",
+          "INVALID_CREDENTIALS": "Incorrect password",
+          "STEP_UP_REQUIRED": "Please verify your identity again",
+          "rateLimited": "Too many attempts. Try again in {{time}}.",
+          "NODE_PK_MISMATCH": "Node identity check failed",
+          "NETWORK_ERROR": "Network error",
+          "unknown": "Couldn't generate ({{code}})"
+        },
+        "result": {
+          "validity": "Valid for {{minutes}} minutes; each node accepts it once",
+          "remaining": "{{time}} left",
+          "expired": "Expired",
+          "revoke": "Revoke",
+          "done": "Done"
+        },
+        "status": {
+          "pending": "Unused",
+          "used": "Signed in",
+          "expired": "Expired",
+          "revoked": "Revoked"
+        },
+        "reason": {
+          "offline": "Offline",
+          "outdated": "Outdated",
+          "paused": "Paused",
+          "unreachable": "Unreachable",
+          "identity": "Identity check failed",
+          "failed": "Failed ({{code}})"
+        }
       },
       "upgrade": {
         "action": "Upgrade",
