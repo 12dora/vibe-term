@@ -24,6 +24,16 @@ vibeterm login --entry https://vt.example.com --user admin
 - 只在本 origin 注册了通行密钥、又没开 TOTP 的账号，CLI 登不上（不实现 WebAuthn），会退出码 3 并说明补救办法：在网页端开 TOTP。
 - challenge / login 带 `x-vibeterm-client: cli`。密码派生开始前 stderr 打 `Deriving key…`（`--quiet` / `--json` 也打），避免 argon2 看起来像卡住。IP 锁定是 `RATE_LIMITED`，账号暂停密码登录是 `PASSWORD_LOGIN_PAUSED`；通行密钥直接登录不受暂停影响。策略与历史见下一节。
 
+### 一次性登录命令
+
+```bash
+vibeterm login --code vtl1_…      # 网页「设置 → 节点 → 登录命令」生成，复制到 agent 终端执行
+```
+
+- 免密码与验证码：网页端生成时已用验证码或通行密钥确认身份；兑换结果与 `vibeterm login` 相同（每节点一条 PoP 会话，私钥本机生成）。
+- 命令 10 分钟内有效，每台节点只能兑换一次；`-` 表示从 stdin 读命令码（避免出现在进程参数里）。与 `--password-stdin` / `--totp` / `--user` / `--all-nodes` / `--node` 互斥。
+- 输出与退出码同 `login`：`LOGIN_CODE_USED` / `EXPIRED` / `REVOKED` / `INVALID` 退出码 3，需在网页端重新生成。设计见 [一次性登录命令](../security/login-codes.md)。
+
 ```bash
 vibeterm whoami           # 当前 entry、账号与各节点会话状态
 vibeterm logout           # 对每个已登录节点各撤销一次会话，并删掉本地记录
