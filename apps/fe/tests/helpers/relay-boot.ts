@@ -392,6 +392,8 @@ async function joinNodeB(input: {
       '--name',
       NODE_B_NAME,
       '--no-restart',
+      // 2.15.0 起加入要现有设备批准：只提交申请，批准由下面的 admitRelayNode 完成。
+      '--no-wait',
       '--install-dir',
       input.bDir,
     ],
@@ -479,7 +481,7 @@ async function main(): Promise<void> {
   const publicUrl = `http://127.0.0.1:${ports.relay}`;
   const adminToken = encodeBase64url(crypto.getRandomValues(new Uint8Array(32)));
   const meshPassword = randomSecret('VibeTermRelayE2e!');
-  const relayNodePassword = randomSecret('VibeTermRelayOps!');
+  const relayNodePassword = randomSecret('VibeTermMeshAdm!');
   const relayPassword = randomSecret('VibeTermRelayPw!');
   await writeEnvFiles(dirs, ports, { publicUrl, adminToken });
   for (const socket of Object.values(TMUX_SOCKETS)) killTmuxSocket(socket);
