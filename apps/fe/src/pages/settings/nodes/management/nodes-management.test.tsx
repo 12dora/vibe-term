@@ -717,7 +717,8 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     });
     const html = renderTable([blocked], '1.2.0');
     expect(html).toContain('data-testid="nodes-ports-warning-pb"');
-    expect(html).toContain('aria-label="nodes.ports.blocked"');
+    expect(html).toContain('aria-label="nodes.ports.label nodes.ports.status.blocked"');
+    expect(html).toContain('nodes.ports.blocked');
     expect(html).not.toContain('nodes.ports.hint');
 
     const unknown = Object.assign(nodeRow({ id: 'pu' }), {

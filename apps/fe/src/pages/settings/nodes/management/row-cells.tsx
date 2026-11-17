@@ -101,12 +101,14 @@ export function PortsWarning({
   const blocked = blockedPortReaches(ports);
   if (blocked.length === 0) return null;
   const text = t('nodes.ports.blocked', { list: blocked.map(formatPortReach).join(', ') });
+  // 短标签只报「端口 不可达」；详情由 Tooltip 的 aria-describedby 承担，避免读屏重复朗读。
+  const label = `${t('nodes.ports.label')} ${t('nodes.ports.status.blocked')}`;
   return (
     <Tooltip content={text}>
       <button
         type="button"
         className="inline-flex shrink-0 items-center text-amber-600 dark:text-amber-400"
-        aria-label={text}
+        aria-label={label}
         data-testid={`nodes-ports-warning-${nodeId}`}
       >
         <TriangleAlert className="size-3.5" aria-hidden="true" />

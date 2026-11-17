@@ -69,7 +69,9 @@ describe('PortsWarning', () => {
     const html = renderToStaticMarkup(<PortsWarning nodeId="aa" ports={[blocked, unknown]} />);
     expect(html).toContain('nodes-ports-warning-aa');
     expect(html).toContain('<button type="button"');
-    expect(html).toContain('aria-label="nodes.ports.blocked"');
+    expect(html).toContain('aria-label="nodes.ports.label nodes.ports.status.blocked"');
+    expect(html).toContain('aria-describedby=');
+    expect(html).toContain('>nodes.ports.blocked</span>');
     expect(html).toContain('role="tooltip"');
     expect(html).toContain('<svg');
     expect(html).not.toContain('nodes.ports.hint');
