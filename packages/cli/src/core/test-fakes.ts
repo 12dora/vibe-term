@@ -1,11 +1,14 @@
 // 各测试套共用的假件：一个实现 mode/challenge/login/logout 的内存网关。
 // 仅供 *.test.ts 使用，不从包入口导出，也不进 bundle。
 
+import { LOGIN_CODE_REDEEM_PATH } from '@vibeterm/shared';
 import {
   type KdfParams,
+  bytesEqual,
   decodeBase64url,
   decodeDelegation,
   decodeLogin,
+  deriveNodeLoginCode,
   deriveSeed,
   deriveTotpKey,
   encodeBase64url,
@@ -76,6 +79,10 @@ export interface FakeGatewayOptions {
   selfPublicKeyOverride?: string;
   /** 会话下发方式：内部头（entry 转发前）或 Set-Cookie（浏览器看到的形态）。 */
   sessionVia?: 'header' | 'cookie';
+  /** 待兑换的一次性登录命令；未设时 redeem 回 404（节点过旧）。 */
+  loginCode?: { secret: Uint8Array; allow?: string[] };
+  /** 只让某些 node 的 redeem 失败（键为 addressing id，`self` 表示 entry）。 */
+  forceRedeemErrorFor?: Record<string, string>;
 }
 
 export interface FakeGateway {
@@ -90,6 +97,8 @@ export interface FakeGateway {
   }>;
   /** 收到的每个登录体（按顺序），用来断言 `totp` / `k_totp` 真的发了。 */
   loginBodies: Array<{ nodeId: string; body: Record<string, unknown> }>;
+  /** 收到的每个登录命令兑换体（按顺序）。 */
+  redeemBodies: Array<{ nodeId: string; body: Record<string, unknown> }>;
   /** 已签发的会话：nodeId → sid。 */
   issued: Map<string, string>;
   /** 当前有效的 TOTP 码（没开两步验证时为 null）。 */
@@ -126,6 +135,7 @@ interface GatewayState {
   issued: Map<string, string>;
   requests: FakeGateway['requests'];
   loginBodies: FakeGateway['loginBodies'];
+  redeemBodies: FakeGateway['redeemBodies'];
   counter: number;
 }
 
@@ -201,12 +211,53 @@ function issueSession(state: GatewayState, target: string): Response {
   const sid = `sid-${target}-${state.counter}`;
   state.issued.set(target, sid);
   const expiresAt = Date.now() + 3_600_000;
+  const payload = {
+    expires_at: expiresAt,
+    uid: state.options.user.uid,
+    username: state.options.user.username,
+  };
   if ((state.options.sessionVia ?? 'cookie') === 'cookie') {
-    return json({ expires_at: expiresAt }, 200, {
+    return json(payload, 200, {
       'set-cookie': `vibeterm_s_${target}=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600`,
     });
   }
-  return json({ expires_at: expiresAt }, 200, { [SET_SESSION_HEADER.name]: `${sid};3600` });
+  return json(payload, 200, { [SET_SESSION_HEADER.name]: `${sid};3600` });
+}
+
+async function handleRedeem(
+  state: GatewayState,
+  target: string,
+  request: Request
+): Promise<Response> {
+  const grant = state.options.loginCode;
+  if (!grant) return json({ error: 'Not found' }, 404);
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return json({ code: 'MALFORMED' }, 400);
+  }
+  state.redeemBodies.push({ nodeId: target, body });
+  const forced = state.options.forceRedeemErrorFor?.[target];
+  if (forced) return json({ code: forced }, 401);
+  if (typeof body.code !== 'string' || typeof body.sess_pk !== 'string') {
+    return json({ code: 'MALFORMED' }, 400);
+  }
+  const realId = target === SELF ? state.nodeId : target;
+  let presented: Uint8Array;
+  try {
+    presented = decodeBase64url(body.code);
+  } catch {
+    return json({ code: 'LOGIN_CODE_INVALID' }, 401);
+  }
+  if (!bytesEqual(presented, deriveNodeLoginCode(grant.secret, realId))) {
+    return json({ code: 'LOGIN_CODE_INVALID' }, 401);
+  }
+  const allow = grant.allow;
+  if (allow && !allow.includes(target) && !allow.includes(realId)) {
+    return json({ code: 'LOGIN_CODE_INVALID' }, 401);
+  }
+  return issueSession(state, target);
 }
 
 async function handleChallenge(
@@ -292,6 +343,7 @@ async function route(state: GatewayState, target: string, path: string, request:
   if (path === '/api/auth/mode') return json(modeBody(state));
   if (path === '/api/auth/challenge') return await handleChallenge(state, target, request);
   if (path === '/api/auth/login') return await handleLogin(state, target, request);
+  if (path === LOGIN_CODE_REDEEM_PATH) return await handleRedeem(state, target, request);
   if (path === '/api/auth/logout') {
     if (!state.issued.has(target)) return json({ error: 'UNAUTHORIZED' }, 401);
     state.issued.delete(target);
@@ -310,6 +362,7 @@ export function createFakeGateway(options: FakeGatewayOptions): FakeGateway {
     issued: new Map(),
     requests: [],
     loginBodies: [],
+    redeemBodies: [],
     counter: 0,
   };
 
@@ -331,6 +384,7 @@ export function createFakeGateway(options: FakeGatewayOptions): FakeGateway {
     fetch: fetchImpl,
     requests: state.requests,
     loginBodies: state.loginBodies,
+    redeemBodies: state.redeemBodies,
     issued: state.issued,
     currentTotp: () =>
       options.user.totpSecret

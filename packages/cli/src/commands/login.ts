@@ -17,6 +17,7 @@ import {
 } from '../core/auth';
 import type { CliContext } from '../core/context';
 import { AuthError, UsageError } from '../core/errors';
+import { loginWithCode } from '../core/login-code';
 import {
   DEFAULT_LOGIN_CONCURRENCY,
   DEFAULT_NODE_TIMEOUT_MS,
@@ -34,6 +35,7 @@ import { isInteractive, promptHidden, promptLine, readAllStdin } from '../core/p
 import type { Command } from './types';
 
 const FLAGS = {
+  code: 'string',
   user: 'string',
   totp: 'string',
   'password-stdin': 'boolean',
@@ -257,10 +259,33 @@ export async function loginWithPassword(
   }
 }
 
+function rejectCodeConflicts(
+  flags: ReturnType<typeof parseArgv>['flags'],
+  nodeRef: string | null
+): void {
+  if (flagBool(flags, 'password-stdin')) {
+    throw new UsageError('--code and --password-stdin are mutually exclusive');
+  }
+  if (flagString(flags, 'totp') !== undefined) {
+    throw new UsageError('--code and --totp are mutually exclusive');
+  }
+  if (flagString(flags, 'user') !== undefined) {
+    throw new UsageError('--code and --user are mutually exclusive');
+  }
+  if (flagBool(flags, 'all-nodes')) {
+    throw new UsageError('--code and --all-nodes are mutually exclusive');
+  }
+  if (nodeRef) {
+    throw new UsageError('--code and --node are mutually exclusive');
+  }
+}
+
 async function run(ctx: CliContext, argv: string[]): Promise<number | undefined> {
   const { flags } = parseArgv(argv, FLAGS);
   const nodeRef = ctx.globals.node;
-  if (nodeRef && flagBool(flags, 'all-nodes')) {
+  const codeFlag = flagString(flags, 'code');
+  if (codeFlag !== undefined) rejectCodeConflicts(flags, nodeRef);
+  else if (nodeRef && flagBool(flags, 'all-nodes')) {
     throw new UsageError('--node and --all-nodes are mutually exclusive');
   }
   const timeoutMs = requirePositiveInt(
@@ -273,6 +298,10 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
     flagNumber(flags, 'concurrency'),
     DEFAULT_LOGIN_CONCURRENCY
   );
+  if (codeFlag !== undefined) {
+    const raw = codeFlag === '-' ? (await readAllStdin()).trim() : codeFlag;
+    return loginWithCode(ctx, { code: raw, timeoutMs, concurrency });
+  }
   const mode = await fetchAuthMode(ctx.http, SELF_NODE_ID);
   if (!mode || !requiresLogin(mode)) {
     emitOpenStandalone(ctx);
@@ -302,6 +331,8 @@ export const command: Command = {
     '<config dir>/session.json (mode 0600), or to $VIBETERM_SESSION_FILE when set',
     '(the file holds a private key, protect it).',
     '',
+    '--code redeems a one-time login command generated in the web UI (Settings → Nodes → Login command); each node accepts it once within 10 minutes.',
+    '',
     'The entry is logged in first (other nodes need that session). Remaining nodes run with',
     'bounded concurrency (default 4). Each node has a wall-clock deadline (default 25000 ms);',
     'when it fires the in-flight request is aborted and the row is TIMEOUT, counted as a',
@@ -320,6 +351,7 @@ export const command: Command = {
     '(5xx/404) exits 1, including when mixed with auth rejections.',
     '',
     'Options:',
+    '  --code <code|->       redeem a one-time login command (`-` reads the code from stdin)',
     '  --user <name>         verify the entry serves this account before asking for a password',
     '  --totp <code>         two-step verification code (or set VIBETERM_TOTP)',
     '  --password-stdin      read the password from stdin instead of prompting',

@@ -57,9 +57,9 @@ function assignFlag(
   flags[key] = value;
 }
 
-/** 下一个 token 能不能当作本旗标的值：以 `-` 开头的都不能，否则 `--node --json` 会吞掉后一个旗标。 */
+/** 下一个 token 能不能当作本旗标的值：以 `-` 开头的都不能（否则 `--node --json` 会吞掉后一个旗标），孤立的 `-` 除外（stdin 约定）。 */
 function takesNext(next: string | undefined): boolean {
-  return next !== undefined && !next.startsWith('-');
+  return next !== undefined && (next === '-' || !next.startsWith('-'));
 }
 
 interface FlagToken {

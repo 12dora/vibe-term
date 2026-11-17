@@ -346,6 +346,19 @@ export async function listMeshNodes(http: HttpClient): Promise<MeshNode[]> {
   return result.ok ? result.nodes : [];
 }
 
+const LOGIN_CODE_HINTS: Record<string, (nodeId: string) => string> = {
+  LOGIN_CODE_USED: (nodeId) =>
+    `this login command was already used on ${nodeId}; generate a new one in the web UI`,
+  LOGIN_CODE_EXPIRED: () => 'the login command expired; generate a new one in the web UI',
+  LOGIN_CODE_REVOKED: () => 'the login command was revoked',
+  LOGIN_CODE_INVALID: (nodeId) => `the login command is not valid for ${nodeId}`,
+};
+
+function loginCodeFailure(nodeId: string, code: string): AuthError | null {
+  const hint = LOGIN_CODE_HINTS[code];
+  return hint ? new AuthError(`login to node ${nodeId} failed: ${code}`, hint(nodeId), code) : null;
+}
+
 /** 登录失败码 → 面向用户的错误（退出码 3）。 */
 export function loginFailure(nodeId: string, code: string, policy?: SecondFactorPolicy): CliError {
   if (code === 'TOTP_REQUIRED') {
@@ -389,6 +402,8 @@ export function loginFailure(nodeId: string, code: string, policy?: SecondFactor
       code
     );
   }
+  const codeFailure = loginCodeFailure(nodeId, code);
+  if (codeFailure) return codeFailure;
   if (code === 'NODE_PK_MISMATCH') {
     return new AuthError(
       `node ${nodeId} presented a public key that does not match the mesh roster; aborting`,

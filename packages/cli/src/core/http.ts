@@ -52,7 +52,8 @@ const AUTH_FLOW_PATHS: ReadonlySet<string> = new Set([
   '/api/auth/challenge',
   '/api/auth/login',
 ]);
-const AUTH_FLOW_PREFIXES = ['/api/auth/passkey/', '/api/share-access/'];
+const LOGIN_CODE_PATH_PREFIX = '/api/auth/login-code';
+const AUTH_FLOW_PREFIXES = ['/api/auth/passkey/', '/api/share-access/', LOGIN_CODE_PATH_PREFIX];
 
 export function isAuthFlowPath(path: string): boolean {
   const pathname = path.split(/[?#]/, 1)[0];
@@ -201,6 +202,11 @@ export class HttpClient {
     return parts.join('; ');
   }
 
+  private requestCookie(nodeId: string, path: string, extraNodeIds: readonly string[]): string {
+    if (path.split(/[?#]/, 1)[0].startsWith(LOGIN_CODE_PATH_PREFIX)) return '';
+    return this.cookieHeader(nodeId, extraNodeIds, !isAuthFlowPath(path));
+  }
+
   /** 名册不可用时，按保存令牌时记下的节点名找节点（见 `Resolver.resolveNode`）。 */
   tokenNodeByName(name: string): { id: string; name: string } | null {
     return this.options.tokens?.nodeByName?.(name) ?? null;
@@ -212,8 +218,7 @@ export class HttpClient {
     const requestHeaders = new Headers(headers);
     requestHeaders.set('origin', this.origin);
     requestHeaders.set('accept', requestHeaders.get('accept') ?? 'application/json, */*');
-    const cookie =
-      cookieOverride ?? this.cookieHeader(nodeId, withNodeCookies ?? [], !isAuthFlowPath(path));
+    const cookie = cookieOverride ?? this.requestCookie(nodeId, path, withNodeCookies ?? []);
     if (cookie) requestHeaders.set('cookie', cookie);
 
     const effectiveTimeout = timeoutMs === undefined ? this.options.timeoutMs : timeoutMs;

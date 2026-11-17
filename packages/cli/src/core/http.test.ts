@@ -479,6 +479,10 @@ describe('token cookies', () => {
   test('isAuthFlowPath ignores query strings and covers share-access', () => {
     expect(isAuthFlowPath('/api/auth/login?x=1')).toBe(true);
     expect(isAuthFlowPath('/api/share-access/abc/login')).toBe(true);
+    expect(isAuthFlowPath('/api/auth/login-code')).toBe(true);
+    expect(isAuthFlowPath('/api/auth/login-code/redeem')).toBe(true);
+    expect(isAuthFlowPath('/api/auth/login-code/status?x=1')).toBe(true);
+    expect(isAuthFlowPath('/api/auth/login-code/revoke')).toBe(true);
     expect(isAuthFlowPath('/api/auth/mode')).toBe(false);
     expect(isAuthFlowPath('/api/auth/tokens')).toBe(false);
   });
