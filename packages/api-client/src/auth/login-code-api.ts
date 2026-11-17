@@ -1,6 +1,7 @@
-// 一次性登录命令的节点接口（签发 / 查询 / 作废）。由 `AuthApi` 薄封装后对外暴露。
+// 一次性登录命令的节点接口（签发 / 查询 / 作废）。独立函数而非 `AuthApi` 方法：只有按需加载的签发模块引用，不进首屏。
 
 import {
+  LOGIN_CODE_CHALLENGE_PURPOSE,
   LOGIN_CODE_PATH,
   LOGIN_CODE_REVOKE_PATH,
   LOGIN_CODE_STATUS_PATH,
@@ -8,8 +9,8 @@ import {
   type LoginCodeIssueResponse,
   type LoginCodeStatusResponse,
 } from '@vibeterm/shared';
-import type { ApiClient } from '../client';
-import { resolveNodeUrl } from '../node-url';
+import type { AuthApi } from './auth-api';
+import type { AuthChallengeResponse } from './types';
 
 export type { LoginCodeIssueRequest };
 export type LoginCodeStatusResult = LoginCodeStatusResponse | null;
@@ -38,28 +39,35 @@ async function failureOf(
     : { code };
 }
 
-function post(
-  client: ApiClient,
-  headers: Record<string, string>,
+type LoginCodeTransport = Pick<AuthApi, 'postAuth'>;
+
+/** 签发登录命令专用的 challenge；失败抛带 `code` / `status` / `retryAfterMs` 的错误（与 `AuthApi.challenge` 同形）。 */
+export async function requestLoginCodeChallenge(
+  api: LoginCodeTransport,
   nodeId: string,
-  path: string,
-  body: unknown
-): Promise<Response> {
-  return client.fetch(resolveNodeUrl(nodeId, path), {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
+  uid: string
+): Promise<AuthChallengeResponse> {
+  const res = await api.postAuth(nodeId, '/api/auth/challenge', {
+    uid,
+    purpose: LOGIN_CODE_CHALLENGE_PURPOSE,
   });
+  if (!res.ok) {
+    const failure = await failureOf(res, `HTTP_${res.status}`);
+    throw Object.assign(new Error(`login code challenge failed: ${failure.code}`), {
+      ...failure,
+      status: res.status,
+    });
+  }
+  return (await res.json()) as AuthChallengeResponse;
 }
 
 /** `POST /api/auth/login-code`：4xx 不抛异常，网络错误照常抛。 */
 export async function requestIssueLoginCode(
-  client: ApiClient,
-  headers: Record<string, string>,
+  api: LoginCodeTransport,
   nodeId: string,
   body: LoginCodeIssueRequest
 ): Promise<LoginCodeIssueResult> {
-  const res = await post(client, headers, nodeId, LOGIN_CODE_PATH, body);
+  const res = await api.postAuth(nodeId, LOGIN_CODE_PATH, body);
   if (!res.ok) {
     const fallback = res.status === 429 ? 'RATE_LIMITED' : `HTTP_${res.status}`;
     return { ok: false, status: res.status, ...(await failureOf(res, fallback)) };
@@ -70,14 +78,13 @@ export async function requestIssueLoginCode(
 
 /** `status` / `revoke`：404（码不存在或旧节点没有该接口）为 null，其余失败抛带 `code` 的错误。 */
 export async function requestLoginCodeLookup(
-  client: ApiClient,
-  headers: Record<string, string>,
+  api: LoginCodeTransport,
   nodeId: string,
   action: 'status' | 'revoke',
   code: string
 ): Promise<LoginCodeStatusResult> {
   const path = action === 'status' ? LOGIN_CODE_STATUS_PATH : LOGIN_CODE_REVOKE_PATH;
-  const res = await post(client, headers, nodeId, path, { code });
+  const res = await api.postAuth(nodeId, path, { code });
   if (res.status === 404) return null;
   if (!res.ok) {
     const failure = await failureOf(res, `HTTP_${res.status}`);

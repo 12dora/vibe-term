@@ -4,7 +4,6 @@ import { LOGIN_RECORD_CLIENT_HEADER } from '@vibeterm/shared';
 import { assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { type ApiClient, defaultApiClient, parseApiError } from '../client';
 import { SELF_NODE_ID, resolveNodeUrl } from '../node-url';
-import * as loginCode from './login-code-api';
 import { CONNECTION_HEADER, NoPasskeyForOriginError } from './types';
 import type {
   AuthChallengeResponse,
@@ -233,16 +232,11 @@ export class AuthApi {
     return { ok: true, connectionId: payload.connectionId };
   }
 
-  /** `purpose: 'login-code'` 取签发登录命令专用的 challenge；缺省为登录 challenge。 */
-  async challenge(
-    nodeId: string,
-    uid: string,
-    opts?: { purpose?: 'login-code' }
-  ): Promise<AuthChallengeResponse> {
+  async challenge(nodeId: string, uid: string): Promise<AuthChallengeResponse> {
     const res = await this.client.fetch(nodeAuthPath(nodeId, '/api/auth/challenge'), {
       method: 'POST',
       headers: this.loginHeaders,
-      body: JSON.stringify(opts?.purpose ? { uid, purpose: opts.purpose } : { uid }),
+      body: JSON.stringify({ uid }),
     });
     if (!res.ok) {
       const envelope = await readErrorEnvelope(res, 'Failed to obtain login challenge');
@@ -265,19 +259,13 @@ export class AuthApi {
     return { ok: true, response: (await res.json()) as AuthLoginResponse };
   }
 
-  issueLoginCode(
-    nodeId: string,
-    body: loginCode.LoginCodeIssueRequest
-  ): Promise<loginCode.LoginCodeIssueResult> {
-    return loginCode.requestIssueLoginCode(this.client, this.loginHeaders, nodeId, body);
-  }
-
-  loginCodeStatus(nodeId: string, code: string): Promise<loginCode.LoginCodeStatusResult> {
-    return loginCode.requestLoginCodeLookup(this.client, this.loginHeaders, nodeId, 'status', code);
-  }
-
-  revokeLoginCode(nodeId: string, code: string): Promise<loginCode.LoginCodeStatusResult> {
-    return loginCode.requestLoginCodeLookup(this.client, this.loginHeaders, nodeId, 'revoke', code);
+  /** 登录前公开面的 POST（带客户端类型头），供按需加载的登录命令接口复用。 */
+  postAuth(nodeId: string, path: string, body: unknown): Promise<Response> {
+    return this.client.fetch(nodeAuthPath(nodeId, path), {
+      method: 'POST',
+      headers: this.loginHeaders,
+      body: JSON.stringify(body),
+    });
   }
 
   async logout(nodeId: string): Promise<void> {

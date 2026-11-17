@@ -1,7 +1,8 @@
 // 单台节点上的签发：取 login-code challenge → 核对节点公钥 → 签 login → 登记 sha256(节点码)。
 
 import type { AuthApi, AuthChallengeResponse } from '@vibeterm/api-client/auth/index';
-import { LOGIN_CODE_CHALLENGE_PURPOSE, type LoginCodeIssueRequest } from '@vibeterm/shared';
+import { requestIssueLoginCode, requestLoginCodeChallenge } from '@vibeterm/api-client/auth/index';
+import type { LoginCodeIssueRequest } from '@vibeterm/shared';
 import {
   buildLogin,
   bytesEqual,
@@ -78,9 +79,7 @@ export async function issueOnTarget(args: LoginCodeIssueTarget): Promise<NodeOut
   const { api, material, target } = args;
   let challenge: AuthChallengeResponse;
   try {
-    challenge = await api.challenge(target.runtimeId, material.uid, {
-      purpose: LOGIN_CODE_CHALLENGE_PURPOSE,
-    });
+    challenge = await requestLoginCodeChallenge(api, target.runtimeId, material.uid);
   } catch (err) {
     return thrownFailure(target, err);
   }
@@ -95,7 +94,7 @@ export async function issueOnTarget(args: LoginCodeIssueTarget): Promise<NodeOut
     return failed(target, 'SIGN_FAILED');
   }
   try {
-    const result = await api.issueLoginCode(target.runtimeId, body);
+    const result = await requestIssueLoginCode(api, target.runtimeId, body);
     if (result.ok)
       return { meshId: target.meshId, name: target.name, ok: true, expiresAt: result.expiresAt };
     if (isMissingRoute(result.status)) return failed(target, 'OUTDATED');

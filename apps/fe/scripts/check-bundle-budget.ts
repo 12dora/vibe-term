@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
 const DIST = join(import.meta.dir, '..', 'dist');
-// 2.0.8 起首屏多了 SW 逃生通道 + 门禁探测（~1 KB gzip），上调 10 KB；2.2.0 起默认 locale core 也算首屏（modulepreload，~10 KB），再上调 20 KB；再涨先拆 chunk。
-const BUDGET_GZIP_BYTES = { entryJs: 330_000, entryCss: 30_000 };
+// 2.0.8 起首屏多了 SW 逃生通道 + 门禁探测（~1 KB gzip），上调 10 KB；2.2.0 起默认 locale core 也算首屏（modulepreload，~10 KB），再上调 20 KB；2.17.0 起懒加载分包增多（入口依赖表 + 登录命令接口 ~0.15 KB），上调 1 KB；再涨先拆 chunk。
+const BUDGET_GZIP_BYTES = { entryJs: 331_000, entryCss: 30_000 };
 
 const ASSET = /\/?(assets\/[A-Za-z0-9._-]+\.(?:js|css))/;
 

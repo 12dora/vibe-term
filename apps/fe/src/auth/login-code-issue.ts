@@ -3,7 +3,7 @@
 
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type { AuthApi, AuthModeResponse, MeshNode } from '@vibeterm/api-client/auth/index';
-import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi, requestLoginCodeLookup } from '@vibeterm/api-client/auth/index';
 import type { LoginCodeState } from '@vibeterm/shared';
 import { compareSemver } from '@vibeterm/shared';
 import {
@@ -229,7 +229,7 @@ function revokeNodes(
     code: encodeBase64url(deriveNodeLoginCode(secret, node.meshId)),
   }));
   return runLimited(codes, LOGIN_CODE_CONCURRENCY, (node) =>
-    api.revokeLoginCode(node.runtimeId, node.code).catch(() => null)
+    requestLoginCodeLookup(api, node.runtimeId, 'revoke', node.code).catch(() => null)
   );
 }
 
@@ -302,7 +302,9 @@ export async function pollLoginCodeStates(
   await runLimited(state.nodes, LOGIN_CODE_CONCURRENCY, async (node) => {
     if (handles.get(handle) !== state) return;
     const code = encodeBase64url(deriveNodeLoginCode(state.secret, node.meshId));
-    const status = await state.api.loginCodeStatus(node.runtimeId, code).catch(() => null);
+    const status = await requestLoginCodeLookup(state.api, node.runtimeId, 'status', code).catch(
+      () => null
+    );
     // 轮询途中句柄被销毁：secret 已清零，派生出的码不可信，结果一律作废。
     if (status && handles.get(handle) === state) states[node.meshId] = status.state;
   });
