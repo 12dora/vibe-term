@@ -204,9 +204,7 @@ function warnEntryNotCovered(
 ): void {
   if (nodeIds.includes(entryNodeId)) return;
   ctx.out.warn(
-    `this login command does not include the entry ${ctx.globals.entry} (node ${entryNodeId.slice(0, 8)}); ` +
-      'commands through this entry will need its session. Generate the command for all nodes, ' +
-      'or pass --entry pointing at a node it includes.'
+    `this login command does not include the entry ${ctx.globals.entry} (node ${entryNodeId.slice(0, 8)}); commands through this entry will need its session. Generate the command for all nodes, or pass --entry pointing at a node it includes.`
   );
 }
 
