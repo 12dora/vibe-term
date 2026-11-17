@@ -179,6 +179,7 @@ function TargetSection(props: LoginCodeFormProps) {
 
 function OtpField({
   label,
+  hideLabel,
   labelId,
   value,
   onChange,
@@ -188,6 +189,8 @@ function OtpField({
   testId,
 }: {
   label: string;
+  /** 外层已有「验证」标题时只留给读屏器。 */
+  hideLabel?: boolean;
   labelId: string;
   value: string;
   onChange: (next: string) => void;
@@ -204,7 +207,7 @@ function OtpField({
   }, [focusSeq]);
   return (
     <div className="flex flex-col gap-1.5 text-sm">
-      <span className="text-muted-foreground" id={labelId}>
+      <span className={hideLabel ? 'sr-only' : 'text-muted-foreground'} id={labelId}>
         {label}
       </span>
       <OtpInput
@@ -247,6 +250,7 @@ function ProofSection(props: LoginCodeFormProps) {
       {kind === 'totp' && (
         <OtpField
           label={t(`${NS}.proof.totp`)}
+          hideLabel
           labelId={otpLabelId}
           value={draft.totp}
           onChange={(totp) => onDraft({ totp })}

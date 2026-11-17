@@ -168,13 +168,14 @@ export function CopyableCode({
   value,
   testId,
 }: {
-  label: string;
+  /** 外层已有标题时省略。 */
+  label?: string;
   value: string;
   testId: string;
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[11px] text-muted-foreground">{label}</span>
+      {label && <span className="text-[11px] text-muted-foreground">{label}</span>}
       <div className="flex items-start gap-1">
         <code
           className="min-w-0 flex-1 break-all rounded bg-background p-2 text-[11px]"

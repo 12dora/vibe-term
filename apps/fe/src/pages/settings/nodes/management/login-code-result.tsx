@@ -86,11 +86,7 @@ export function LoginCodeResultView({ result, now }: LoginCodeResultViewProps) {
   const rows = buildResultRows(result, expired);
   return (
     <div className="flex min-w-0 flex-col gap-3" data-testid="login-code-result">
-      <CopyableCode
-        label={t(`${NS}.title`)}
-        value={result.handle.command}
-        testId="login-code-command"
-      />
+      <CopyableCode value={result.handle.command} testId="login-code-command" />
       <p className="flex flex-wrap items-center justify-between gap-x-3 text-xs text-muted-foreground">
         <span>{t(`${NS}.result.validity`, { minutes: TTL_MINUTES })}</span>
         <span className="tabular-nums" data-testid="login-code-remaining">
