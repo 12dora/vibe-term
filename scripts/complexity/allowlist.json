@@ -386,10 +386,6 @@
     "reason": "WebRTC 直连生命周期状态机（S2 判定）；2.0 改名桥接（新旧名双读/双发、别名回退）+行",
     "fileLines": 1113
   },
-  "apps/fe/src/auth/session-login.ts": {
-    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告；2.0 改名后 biome 重排 +行",
-    "fileLines": 703
-  },
   "apps/fe/src/node/enrollment.ts": {
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告；2.0 改名桥接（新旧名双读/双发、别名回退）+行",
     "fileLines": 661
@@ -705,10 +701,6 @@
   "packages/ghostty-terminal/src/render-state-read.ts": {
     "reason": "round46 收紧门禁时冻结的存量",
     "fileLines": 585
-  },
-  "apps/fe/src/auth/session-login.ts:establishSessionFromPasskey": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "lines": 90
   },
   "apps/fe/src/auth/credential-prompt-dialog.tsx:CredentialPromptFields": {
     "reason": "round46 收紧门禁时冻结的存量",

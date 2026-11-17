@@ -93,3 +93,16 @@ export function loginFailureMessage(
 ): string {
   return loginFailureTextFromException(t, source, method, pausedPasskeyHint(mode));
 }
+
+/**
+ * 请求抛异常时该报哪个码。
+ *
+ * `RATE_LIMITED` 这类**服务端的业务结论**必须原样透出：一律压成 `NETWORK_ERROR` 会让用户看到
+ * 「检查网络后重试」，然后继续猛点重试，把限流撞得更死。只有真的没拿到响应（断网、DNS、
+ * CORS）以及网关层的 `HTTP_<status>`（502/504 之类，没有业务含义）才算网络错误。
+ */
+export function transportFailureCode(err: unknown): string {
+  const code = (err as { code?: string } | null)?.code;
+  if (!code || code.startsWith('HTTP_')) return 'NETWORK_ERROR';
+  return code;
+}

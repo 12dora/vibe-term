@@ -6,38 +6,30 @@ import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type {
   AuthApi,
   AuthChallengeResponse,
-  AuthenticationResponseJSON,
   MeshNode,
   PasskeySummary,
-  PublicKeyCredentialRequestOptionsJSON,
 } from '@vibeterm/api-client/auth/index';
-import {
-  WebAuthnError,
-  defaultAuthApi,
-  startAuthentication,
-} from '@vibeterm/api-client/auth/index';
-import type { Login, RootKey } from '@vibeterm/shared/auth';
+import { WebAuthnError, defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import type { RootKey } from '@vibeterm/shared/auth';
 import {
   buildLogin,
-  buildPasskeyDelegation,
   bytesEqual,
   createDelegation,
   decodeBase64url,
   deriveSeed,
   deriveTotpKey,
   encodeBase64url,
-  encodeDelegation,
   encodeLogin,
-  encodePasskeyAssertion,
-  generateEd25519KeyPair,
-  generateWebCryptoEd25519KeyPair,
   rootKeyFromSeed,
-  signLogin,
-  signWithWebCryptoEd25519,
 } from '@vibeterm/shared/auth';
-import { withRetryAfter } from './login-throttle';
+import { transportFailureCode, withRetryAfter } from './login-throttle';
 import { clearLocalDeviceCaches } from './logout-local-caches';
-import { selectPasskeyCredential } from './passkey-credential-select';
+import { buildPasskeyDelegationForKey, runPasskeySecondFactor } from './passkey-ceremony';
+import {
+  type SessionKeyMaterial,
+  generateSessionKeyMaterial,
+  signSessionLogin,
+} from './session-key-material';
 import {
   adoptSessionSecrets,
   clearSessionKey,
@@ -50,76 +42,7 @@ import {
 import type { LoginNodeResult, SessionKeyInfo, SessionKeySecrets } from './session-key-types';
 import { loginWithPop } from './session-pop-login';
 
-/**
- * WebAuthn 断言仪式。真实实现来自 `@vibeterm/api-client`，测试用 `setPasskeyCeremonyForTest()`
- * 换掉——bun 里没有认证器，没有这个接缝就只能测失败路径。
- */
-let passkeyCeremony: (
-  options: PublicKeyCredentialRequestOptionsJSON
-) => Promise<AuthenticationResponseJSON> = startAuthentication;
-
-/** 仅测试使用：替换 WebAuthn 断言仪式，不传则还原成真实实现。 */
-export function setPasskeyCeremonyForTest(
-  fn?: (options: PublicKeyCredentialRequestOptionsJSON) => Promise<AuthenticationResponseJSON>
-): void {
-  passkeyCeremony = fn ?? startAuthentication;
-}
-
-// ---------------------------------------------------------------------------
-// 会话密钥材料
-// ---------------------------------------------------------------------------
-
-interface SessionKeyMaterial {
-  publicKey: Uint8Array;
-  /** WebCrypto 路径的不可导出私钥。 */
-  cryptoKey: CryptoKey | null;
-  /** `@noble` 回退路径的原始私钥。 */
-  secretKey: Uint8Array | null;
-  /** 没能交给 session store 时就地清零（只有 `@noble` 路径有字节要清）。 */
-  destroy(): void;
-}
-
-/** WebCrypto 的 Ed25519 是否可用；不可用（老 Safari / 老 Chrome）探测一次就记住。 */
-let webCryptoEd25519 = true;
-
-/**
- * 生成 `sk_sess`。
- *
- * 首选 WebCrypto 的**不可导出**私钥：私钥字节从不进 JS，因而可以整把存进 IndexedDB，让 PWA
- * 冷启动后还能静默登录别的 node。不支持 Ed25519 的环境回退到 `@noble` 的原始私钥——那条路径
- * 只留内存，行为与改造前完全一致。
- */
-async function generateSessionKeyMaterial(
-  override?: () => { publicKey: Uint8Array; secretKey: Uint8Array }
-): Promise<SessionKeyMaterial> {
-  if (!override && webCryptoEd25519) {
-    try {
-      const pair = await generateWebCryptoEd25519KeyPair();
-      return {
-        publicKey: pair.publicKey,
-        cryptoKey: pair.privateKey,
-        secretKey: null,
-        destroy: () => undefined,
-      };
-    } catch {
-      webCryptoEd25519 = false;
-    }
-  }
-  const pair = (override ?? generateEd25519KeyPair)();
-  return {
-    publicKey: pair.publicKey,
-    cryptoKey: null,
-    secretKey: pair.secretKey,
-    destroy: () => pair.secretKey.fill(0),
-  };
-}
-
-/** 两条私钥形态共用的 login 签名；输出都是标准 64 字节 Ed25519 签名，node 侧无差别。 */
-function signSessionLogin(secrets: SessionKeySecrets, login: Login): Promise<Uint8Array> {
-  if (secrets.sessKey) return signWithWebCryptoEd25519(secrets.sessKey, encodeLogin(login));
-  if (!secrets.sessSk) return Promise.reject(new Error('session key material is gone'));
-  return Promise.resolve(signLogin(secrets.sessSk, login));
-}
+export { setPasskeyCeremonyForTest } from './passkey-ceremony';
 
 // ---------------------------------------------------------------------------
 // 建立会话钥
@@ -283,32 +206,11 @@ interface EstablishFromPasskeyOptions {
   generateSessionKeyPair?: () => { publicKey: Uint8Array; secretKey: Uint8Array };
 }
 
-class PasskeyCredentialUnknownError extends Error {
-  readonly code = 'PASSKEY_CREDENTIAL_UNKNOWN';
-  constructor() {
-    super('no passkey credential available for this entry');
-    this.name = 'PasskeyCredentialUnknownError';
-  }
-}
-
 export { selectPasskeyCredential } from './passkey-credential-select';
 
-function currentOrigin(override?: string): string {
-  if (override) return override;
-  return (globalThis as { location?: { origin?: string } }).location?.origin ?? '';
-}
-
 /**
- * passkey 路径：delegation 里必须先写死 credential_id（challenge = sha256(borsh(delegation))），
- * 而凭证列表只有 entry 知道——所以先用一个探测 delegation 换回 `allowCredentials`，
- * 选定凭证后再用最终 delegation 换一次 options。
- * 断言整体以 Borsh `PasskeyAssertion` 编码作为 `delegation_sig`。
- *
- * 凭证由 `selectPasskeyCredential()` 决定，前端**不做**「取第一把」这种猜测。候选不唯一且没有
- * 可信 origin 元数据时（登录前多半如此），先把服务端那份 `allowCredentials` **原样**交给
- * WebAuthn 做一次探测仪式，由浏览器 / 认证器选出用户手上真正有的那把，再用它绑定最终
- * delegation 做正式仪式——协议要求 challenge 覆盖 credential_id，这一步换不掉。
- * 单候选（后端按精确 origin 过滤后的常态）只做一次仪式。
+ * passkey 路径：凭证选择与仪式见 `buildPasskeyDelegationForKey()`；断言整体以 Borsh
+ * `PasskeyAssertion` 编码作为 `delegation_sig`。
  *
  * `sk_sess` 从生成起就在 `try/finally` 里：用户取消仪式、options 请求失败、origin 选不出凭证，
  * 都会立刻清零，只有成功交给全局 session store 才转移所有权（见 F4-fix 评审 Minor）。
@@ -322,52 +224,16 @@ export async function establishSessionFromPasskey(
   let owned = false;
 
   try {
-    const buildFor = (credentialId: string) =>
-      buildPasskeyDelegation({ uid: opts.uid, sessPk: sess.publicKey, now, credentialId });
-
-    let credentialId = opts.credentialId ?? '';
-    let delegation = buildFor(credentialId);
-    let options = await api.passkeyLoginOptions(
-      opts.uid,
-      encodeBase64url(encodeDelegation(delegation))
-    );
-    if (!credentialId) {
-      // 登录前通常没有会话，`/api/auth/passkeys` 会失败——那时只能信后端的 origin 过滤。
-      let passkeys = opts.passkeys ?? null;
-      if (passkeys === null && opts.passkeys === undefined) {
-        passkeys = await api.listPasskeys().catch(() => null);
-      }
-      const selection = selectPasskeyCredential({
-        allowCredentials: options.allowCredentials,
-        passkeys,
-        origin: currentOrigin(opts.origin),
+    const { delegation, delegationBytes, delegationSig, credentialId } =
+      await buildPasskeyDelegationForKey({
+        api,
+        uid: opts.uid,
+        sessPk: sess.publicKey,
+        now,
+        credentialId: opts.credentialId,
+        origin: opts.origin,
+        passkeys: opts.passkeys,
       });
-      if (selection.kind === 'none') throw new PasskeyCredentialUnknownError();
-      if (selection.kind === 'browser') {
-        // 探测仪式：列表原样下发，浏览器选谁我们就绑谁。这份断言签的是探测 delegation
-        // （credential_id 为空），服务端一定拒绝，拿来当凭证也没用。
-        const probe = await passkeyCeremony({
-          ...options,
-          allowCredentials: selection.allowCredentials,
-        });
-        credentialId = probe.id;
-      } else {
-        credentialId = selection.credentialId;
-      }
-      delegation = buildFor(credentialId);
-      options = await api.passkeyLoginOptions(
-        opts.uid,
-        encodeBase64url(encodeDelegation(delegation))
-      );
-    }
-    // 只允许用 delegation 里绑定的那把凭证，否则断言与 credential_id 对不上。
-    const assertion = await passkeyCeremony({
-      ...options,
-      allowCredentials: [{ id: credentialId }],
-    });
-    if (assertion.id !== credentialId) {
-      throw new Error('passkey assertion credential mismatch');
-    }
 
     const info = adoptSessionSecrets({
       info: {
@@ -383,13 +249,8 @@ export async function establishSessionFromPasskey(
       sessSk: sess.secretKey,
       sessPk: sess.publicKey,
       delegation,
-      delegationBytes: encodeDelegation(delegation),
-      delegationSig: encodePasskeyAssertion({
-        credential_id: assertion.id,
-        client_data_json: decodeBase64url(assertion.response.clientDataJSON),
-        authenticator_data: decodeBase64url(assertion.response.authenticatorData),
-        signature: decodeBase64url(assertion.response.signature),
-      }),
+      delegationBytes,
+      delegationSig,
       // passkey 直接登录本身就是通行密钥授权，不需要再叠一层二次验证。
       passkeyCredentialId: null,
       passkeySig: null,
@@ -402,64 +263,6 @@ export async function establishSessionFromPasskey(
   } finally {
     if (!owned) sess.destroy();
   }
-}
-
-/** 一次通行密钥二次验证的产物：断言字节与它绑定的凭证 id。 */
-interface PasskeySecondFactor {
-  credentialId: string;
-  /** borsh(PasskeyAssertion)，与登录体的 `passkey.sig` 同一份编码。 */
-  sig: Uint8Array;
-}
-
-/**
- * 密码登录的通行密钥二次验证。
- *
- * challenge 就是 `delegationChallenge(delegation)` = sha256(borsh(delegation))，与 passkey 直接
- * 登录完全相同——所以一次仪式产出的断言，在 delegation 的 18 小时里对**所有** node 都有效，
- * 用户不会每登录一台就被弹一次指纹。
- *
- * 这里**不拉** `/api/auth/passkeys`：这一步发生在拿到会话之前，那个接口必然 401。凭证范围由
- * 服务端按精确 origin 过滤过的 `allowCredentials` 决定，候选不唯一时原样交给浏览器选，
- * 绝不盲取第一把（见 `selectPasskeyCredential`）。root delegation 不绑 credential_id，
- * 因此不需要 passkey 直接登录那套「探测 + 绑定」两次仪式。
- *
- * 本地址一把凭证都没有（`NO_PASSKEY_FOR_ORIGIN`）时返回 null：服务端的二次验证同样按 origin
- * 判定，此时它不会要求断言。这条只是 mode 快照过期时的兜底，避免把用户卡在一个做不完的仪式上。
- */
-async function runPasskeySecondFactor(args: {
-  api: AuthApi;
-  uid: string;
-  delegationBytes: Uint8Array;
-  origin?: string;
-  onPrompt?: () => void;
-}): Promise<PasskeySecondFactor | null> {
-  const options = await args.api
-    .passkeyLoginOptions(args.uid, encodeBase64url(args.delegationBytes))
-    .catch((err: unknown) => {
-      if ((err as { code?: string } | null)?.code === 'NO_PASSKEY_FOR_ORIGIN') return null;
-      throw err;
-    });
-  if (!options) return null;
-  const selection = selectPasskeyCredential({
-    allowCredentials: options.allowCredentials,
-    passkeys: null,
-    origin: currentOrigin(args.origin),
-  });
-  if (selection.kind === 'none') throw new PasskeyCredentialUnknownError();
-  const allowCredentials =
-    selection.kind === 'bind' ? [{ id: selection.credentialId }] : selection.allowCredentials;
-
-  args.onPrompt?.();
-  const assertion = await passkeyCeremony({ ...options, allowCredentials });
-  return {
-    credentialId: assertion.id,
-    sig: encodePasskeyAssertion({
-      credential_id: assertion.id,
-      client_data_json: decodeBase64url(assertion.response.clientDataJSON),
-      authenticator_data: decodeBase64url(assertion.response.authenticatorData),
-      signature: decodeBase64url(assertion.response.signature),
-    }),
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -588,19 +391,6 @@ function secondFactorFailureCode(err: unknown): string {
     return err.code === 'aborted' ? 'PASSKEY_ABORTED' : 'PASSKEY_VERIFY_FAILED';
   }
   return (err as { code?: string } | null)?.code ?? 'PASSKEY_REQUIRED';
-}
-
-/**
- * 请求抛异常时该报哪个码。
- *
- * `RATE_LIMITED` 这类**服务端的业务结论**必须原样透出：一律压成 `NETWORK_ERROR` 会让用户看到
- * 「检查网络后重试」，然后继续猛点重试，把限流撞得更死。只有真的没拿到响应（断网、DNS、
- * CORS）以及网关层的 `HTTP_<status>`（502/504 之类，没有业务含义）才算网络错误。
- */
-function transportFailureCode(err: unknown): string {
-  const code = (err as { code?: string } | null)?.code;
-  if (!code || code.startsWith('HTTP_')) return 'NETWORK_ERROR';
-  return code;
 }
 
 /** 单次「取 challenge → 签 login → POST /login」。重试时必须整套重来：nonce 是一次性的。 */

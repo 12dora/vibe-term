@@ -2,6 +2,7 @@
 
 export * from './types';
 export * from './auth-api';
+export * from './login-code-api';
 export * from './account-security';
 export * from './login-records';
 export * from './access-tokens';

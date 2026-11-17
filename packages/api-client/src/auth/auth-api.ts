@@ -4,6 +4,7 @@ import { LOGIN_RECORD_CLIENT_HEADER } from '@vibeterm/shared';
 import { assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { type ApiClient, defaultApiClient, parseApiError } from '../client';
 import { SELF_NODE_ID, resolveNodeUrl } from '../node-url';
+import * as loginCode from './login-code-api';
 import { CONNECTION_HEADER, NoPasskeyForOriginError } from './types';
 import type {
   AuthChallengeResponse,
@@ -232,11 +233,16 @@ export class AuthApi {
     return { ok: true, connectionId: payload.connectionId };
   }
 
-  async challenge(nodeId: string, uid: string): Promise<AuthChallengeResponse> {
+  /** `purpose: 'login-code'` 取签发登录命令专用的 challenge；缺省为登录 challenge。 */
+  async challenge(
+    nodeId: string,
+    uid: string,
+    opts?: { purpose?: 'login-code' }
+  ): Promise<AuthChallengeResponse> {
     const res = await this.client.fetch(nodeAuthPath(nodeId, '/api/auth/challenge'), {
       method: 'POST',
       headers: this.loginHeaders,
-      body: JSON.stringify({ uid }),
+      body: JSON.stringify(opts?.purpose ? { uid, purpose: opts.purpose } : { uid }),
     });
     if (!res.ok) {
       const envelope = await readErrorEnvelope(res, 'Failed to obtain login challenge');
@@ -257,6 +263,21 @@ export class AuthApi {
       return { ok: false, status: res.status, ...(await readLoginFailure(res, fallback)) };
     }
     return { ok: true, response: (await res.json()) as AuthLoginResponse };
+  }
+
+  issueLoginCode(
+    nodeId: string,
+    body: loginCode.LoginCodeIssueRequest
+  ): Promise<loginCode.LoginCodeIssueResult> {
+    return loginCode.requestIssueLoginCode(this.client, this.loginHeaders, nodeId, body);
+  }
+
+  loginCodeStatus(nodeId: string, code: string): Promise<loginCode.LoginCodeStatusResult> {
+    return loginCode.requestLoginCodeLookup(this.client, this.loginHeaders, nodeId, 'status', code);
+  }
+
+  revokeLoginCode(nodeId: string, code: string): Promise<loginCode.LoginCodeStatusResult> {
+    return loginCode.requestLoginCodeLookup(this.client, this.loginHeaders, nodeId, 'revoke', code);
   }
 
   async logout(nodeId: string): Promise<void> {
