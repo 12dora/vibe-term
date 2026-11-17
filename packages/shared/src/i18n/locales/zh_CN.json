@@ -53,8 +53,10 @@
     "nav": {
       "manageDevices": "管理设备",
       "connectDevices": "接入更多设备",
-      "connectDevicesShort": "接入设备",
+      "connectDevicesShort": "接入",
+      "manageDevicesShort": "设备",
       "loginCode": "一键登录",
+      "loginCodeShort": "登录",
       "sidebarExpand": "展开侧边栏",
       "sidebarCollapse": "收起侧边栏",
       "openSidebar": "打开侧边栏",

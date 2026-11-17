@@ -1,7 +1,7 @@
 // 底部导航的高亮匹配：只认「就是这一页」，终端深链不该点亮「管理设备」。
 
 import { describe, expect, test } from 'bun:test';
-import { isPathActive, normalizeNavPath } from './nav-main';
+import { isPathActive, navItemTooltip, normalizeNavPath } from './nav-main';
 
 describe('normalizeNavPath', () => {
   test('剥掉 /n/:nodeId 前缀、query/hash 与结尾斜杠', () => {
@@ -36,5 +36,24 @@ describe('isPathActive', () => {
     expect(isPathActive('/settings?tab=devicesAndFiles', '/settings')).toBe(true);
     expect(isPathActive('/settings?tab=devicesAndFiles', '/devices')).toBe(false);
     expect(isPathActive('/devices', '/settings')).toBe(false);
+  });
+});
+
+describe('navItemTooltip', () => {
+  test('有短标签：桌面端显示、朝上；手机端隐藏', () => {
+    expect(navItemTooltip('接入更多设备', false, true)).toEqual({
+      children: '接入更多设备',
+      side: 'top',
+      hidden: false,
+    });
+    expect(navItemTooltip('接入更多设备', true, true)).toEqual({
+      children: '接入更多设备',
+      side: 'top',
+      hidden: true,
+    });
+  });
+
+  test('无短标签：返回纯字符串，沿用默认的仅折叠时出气泡', () => {
+    expect(navItemTooltip('管理设备', false, false)).toBe('管理设备');
   });
 });

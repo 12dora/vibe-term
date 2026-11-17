@@ -38,7 +38,7 @@ export function isPathActive(pathname: string, url: string): boolean {
 
 export interface NavMainItem {
   title: string;
-  /** 底部并排放不下完整标题时用的短标签；气泡与 aria-label 仍用完整标题。 */
+  /** 并排放不下完整标题时用的短标签；气泡与 aria-label 仍用完整标题（展开态也出气泡）。 */
   shortTitle?: string;
   /** 链接目标；纯动作项（带 `onClick`）不需要。 */
   url?: string;
@@ -56,10 +56,21 @@ export interface NavMainItem {
   }[];
 }
 
+/**
+ * 有短标签的项：展开态也要出完整标题气泡（触屏抽屉无悬停，不出）；
+ * 其余项沿用 SidebarMenuButton 默认（仅图标条折叠时出）。
+ */
+export function navItemTooltip(fullTitle: string, isMobile: boolean, hasShortTitle: boolean) {
+  if (!hasShortTitle) return fullTitle;
+  return { children: fullTitle, side: 'top' as const, hidden: isMobile };
+}
+
 function NavItemButton({ item, active }: { item: NavMainItem; active: boolean | undefined }) {
   const { t } = useTranslation();
   const { isMobile, setOpenMobile } = useSidebar();
   const { url, onClick } = item;
+  const title = t(item.title);
+  const tooltip = navItemTooltip(title, isMobile, Boolean(item.shortTitle));
   // 动作项是按钮，其余是链接；动作触发后手机抽屉随之收起。
   const kind = onClick
     ? {
@@ -74,15 +85,15 @@ function NavItemButton({ item, active }: { item: NavMainItem; active: boolean | 
     <SidebarMenuButton
       isActive={active}
       size="sm"
-      tooltip={t(item.title)}
-      aria-label={t(item.title)}
-      // 两个入口并排时只有半宽，字号收一档才放得下英文标签。
+      tooltip={tooltip}
+      aria-label={title}
+      // 并排等分，字号收一档、标签单行截断。
       className="justify-center gap-1.5 px-1.5 py-1 text-xs"
       data-testid={item.testId}
       {...kind}
     >
       <item.icon />
-      <span>{t(item.shortTitle ?? item.title)}</span>
+      <span className="truncate">{t(item.shortTitle ?? item.title)}</span>
     </SidebarMenuButton>
   );
 }
@@ -93,7 +104,7 @@ export function NavMain({ items, className }: { items: NavMainItem[]; className?
 
   return (
     <SidebarGroup className={cn('px-2 py-0', className)}>
-      {/* 底部两个入口并排；折叠成图标条时没有并排的宽度，改回竖排。
+      {/* 入口并排等分一行（icon 折叠模式下改竖排，当前应用不用）。
           gap-1 在并排态是左右间距，不占垂直空间，保持不动。 */}
       <SidebarMenu className="flex-row gap-1 group-data-[collapsible=icon]:flex-col">
         {items.map((item) => {

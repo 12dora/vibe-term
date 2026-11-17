@@ -210,8 +210,10 @@ function SidebarFilesTab({
   return <MeshFilesTab entryNodeId={entryNodeId} />;
 }
 
+// 底部三个入口同排等分：接入 / 设备 / 登录；标签用短标签，完整标题在气泡与 aria-label。
 const manageDevicesItem: NavMainItem = {
   title: 'nav.manageDevices',
+  shortTitle: 'nav.manageDevicesShort',
   url: '/devices',
   icon: Monitor,
   preload: devicesPageModule,
@@ -220,6 +222,7 @@ const manageDevicesItem: NavMainItem = {
 // 「一键登录」：与设置 → 节点 →「登录命令」同一入口（全部节点），对话框由外壳级宿主懒加载。
 const loginCodeItem: NavMainItem = {
   title: 'nav.loginCode',
+  shortTitle: 'nav.loginCodeShort',
   icon: SquareTerminal,
   testId: 'sidebar-login-code',
   onClick: () => requestLoginCode('all'),
@@ -241,6 +244,7 @@ function AppSidebarFooter() {
       linkState: SIDE_PANEL_LINK_STATE,
     },
     manageDevicesItem,
+    ...(showLoginCode ? [loginCodeItem] : []),
   ];
 
   return (
@@ -248,8 +252,6 @@ function AppSidebarFooter() {
     // 下缘齐平；横向仍是 footer px-2 + group px-2，按钮左右位置不变。
     <SidebarFooter className="gap-0 px-2 pt-1.5 pb-0">
       <NavMain items={footerItems} />
-      {/* 单独一行放在最底：并排第三个按钮放不下标签；折叠成图标条时同样是竖排图标 + 气泡。 */}
-      {showLoginCode && <NavMain items={[loginCodeItem]} className="pt-1" />}
       <div className="h-[var(--vibeterm-safe-area-bottom)]" />
     </SidebarFooter>
   );

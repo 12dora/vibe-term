@@ -53,8 +53,10 @@
     "nav": {
       "manageDevices": "デバイス管理",
       "connectDevices": "デバイスを追加",
-      "connectDevicesShort": "デバイス接続",
+      "connectDevicesShort": "接続",
+      "manageDevicesShort": "デバイス",
       "loginCode": "ワンクリックログイン",
+      "loginCodeShort": "ログイン",
       "sidebarExpand": "サイドバーを展開",
       "sidebarCollapse": "サイドバーを折りたたむ",
       "openSidebar": "サイドバーを開く",
