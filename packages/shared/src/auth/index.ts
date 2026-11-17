@@ -235,6 +235,23 @@ export {
   totpAadBytes,
 } from './totp-cipher';
 
+export {
+  LOGIN_CODE_FRESH_DELEGATION_MS,
+  LOGIN_CODE_MAX_NODES,
+  LOGIN_CODE_NODE_CODE_BYTES,
+  LOGIN_CODE_PREFIX,
+  LOGIN_CODE_SECRET_BYTES,
+  LOGIN_CODE_TTL_MS,
+  MIN_LOGIN_CODE_VERSION,
+  decodeLoginCode,
+  deriveNodeLoginCode,
+  encodeLoginCode,
+  generateLoginCodeSecret,
+  loginCodeHash,
+  loginCodeHashHex,
+} from './login-code';
+export type { LoginCodeParts } from './login-code';
+
 export { rewrapTotpSecret } from './rewrap-totp';
 export type { RewrapTotpInput } from './rewrap-totp';
 

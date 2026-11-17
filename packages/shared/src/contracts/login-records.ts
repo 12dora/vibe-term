@@ -17,7 +17,8 @@ export type LoginRecordOutcome = 'success' | 'failed';
 export type LoginRecordClient = 'web' | 'cli' | 'unknown';
 export type LoginRecordKind = 'interactive' | 'background';
 export type LoginRecordMethod = 'root' | 'passkey';
-export type LoginRecordSecond = 'totp' | 'passkey' | 'waived' | 'none';
+/** `code` = 经一次性登录命令兑换（签发时已按账户策略校验过第二因素）。 */
+export type LoginRecordSecond = 'totp' | 'passkey' | 'waived' | 'none' | 'code';
 
 export interface LoginRecord {
   id: string;
