@@ -32,6 +32,7 @@ export type TranslationKey =
   | 'common.retry'
   | 'common.pageLoadFailed'
   | 'common.pageLoadFailedHint'
+  | 'common.loadFailedRetry'
   | 'common.mermaidRenderFailed'
   | 'common.test'
   | 'common.send'

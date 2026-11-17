@@ -17,6 +17,7 @@
       "retry": "重试",
       "pageLoadFailed": "页面加载失败。",
       "pageLoadFailedHint": "请检查网络连接后重试。",
+      "loadFailedRetry": "加载失败，请重试",
       "mermaidRenderFailed": "Mermaid 渲染失败：{{message}}",
       "test": "测试",
       "send": "发送",

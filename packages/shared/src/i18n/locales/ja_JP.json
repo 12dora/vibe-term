@@ -17,6 +17,7 @@
       "retry": "再試行",
       "pageLoadFailed": "このページの読み込みに失敗しました。",
       "pageLoadFailedHint": "ネットワーク接続を確認してから再試行してください。",
+      "loadFailedRetry": "読み込みに失敗しました。もう一度お試しください。",
       "mermaidRenderFailed": "Mermaid のレンダリングに失敗しました：{{message}}",
       "test": "テスト",
       "send": "送信",

@@ -3,6 +3,8 @@
 // 首个请求到来前一个字节都不下载；与 rest 语言包并行加载，避免先渲染出裸 key。
 
 import { withI18nRest } from '@/i18n/rest-prerequisite';
+import { toast } from '@vibeterm/ui/toast';
+import i18n from 'i18next';
 import { type ComponentType, useEffect, useState } from 'react';
 import type { LoginCodeModuleLoader } from './login-code-controller';
 import { closeLoginCodeRequest, useLoginCodeRequest } from './login-code-request';
@@ -21,9 +23,15 @@ export const loadLoginCodeDialog = withI18nRest(
 // 加载成功后留一份：之后的请求直接同步挂载，不再闪一帧空白。
 let loaded: ComponentType<DialogProps> | null = null;
 
+/** 对话框 chunk 没加载成：撤销请求并提示（手机上抽屉已收起，不提示点击就像没反应）。 */
+export function reportLoginCodeLoadFailure(): void {
+  closeLoginCodeRequest();
+  toast.error(i18n.t('common.loadFailedRetry'));
+}
+
 /**
  * 整个应用只挂一份：同一请求绝不能同时驱动两个对话框。
- * 不用 React.lazy：它会把失败定死；这里失败就撤掉请求，用户再点一次即重新加载。
+ * 不用 React.lazy：它会把失败定死；这里失败就撤掉请求并提示，用户再点一次即重新加载。
  */
 export function LoginCodeDialogHost({
   loadModule,
@@ -46,7 +54,7 @@ export function LoginCodeDialogHost({
         if (!cancelled) setDialog(() => component);
       },
       () => {
-        if (!cancelled) closeLoginCodeRequest();
+        if (!cancelled) reportLoginCodeLoadFailure();
       }
     );
     return () => {
