@@ -5,6 +5,7 @@ import { parseArgv } from '../core/args';
 import { fetchAuthMode, fetchMeshNodes, requiresLogin } from '../core/auth';
 import type { CliContext } from '../core/context';
 import { AuthError, EXIT_AUTH } from '../core/errors';
+import { isLiveNodeSession } from '../core/session-store';
 import type { Command } from './types';
 
 interface NodeStatus {
@@ -101,7 +102,14 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
     ...mesh.nodes
       .filter((node) => node.id !== mode.nodeId)
       .map((node) =>
-        asNodeStatus(node.id, node.name, node.loggedIn, node.online, localExpiry(ctx, node.id))
+        asNodeStatus(
+          node.id,
+          node.name,
+          // 名册请求只带 entry 的 cookie，服务端看不到其余节点的会话：以本地有效会话为准。
+          node.loggedIn || isLiveNodeSession(ctx.http.jar.get(node.id)),
+          node.online,
+          localExpiry(ctx, node.id)
+        )
       ),
   ];
 
