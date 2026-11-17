@@ -2763,6 +2763,7 @@ export type TranslationKey =
   | 'nodes.loginCode.target.offline'
   | 'nodes.loginCode.target.outdated'
   | 'nodes.loginCode.target.paused'
+  | 'nodes.loginCode.target.withEntry'
   | 'nodes.loginCode.proof'
   | 'nodes.loginCode.proof.label'
   | 'nodes.loginCode.proof.totp'

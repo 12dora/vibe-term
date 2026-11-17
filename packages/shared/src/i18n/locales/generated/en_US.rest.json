@@ -2265,7 +2265,8 @@
           "skipped_other": "{{count}} skipped (offline or outdated)",
           "offline": "Offline",
           "outdated": "Outdated",
-          "paused": "Paused"
+          "paused": "Paused",
+          "withEntry": "Also signs in to the current entry, {{name}}"
         },
         "proof": {
           "label": "Verification",

@@ -106,7 +106,10 @@ export function planLoginCodeTargets(
   selection: 'all' | string,
   selfMeshId: string
 ): { targets: LoginCodeTarget[]; skipped: LoginCodeSkipped[] } {
-  const chosen = nodes.filter((node) => selection === 'all' || node.id === selection);
+  // 指定节点时总带上当前入口：CLI 经入口访问任何节点都要先有入口自己的会话。
+  const chosen = nodes.filter(
+    (node) => selection === 'all' || node.id === selection || node.id === selfMeshId
+  );
   const ordered = [
     ...chosen.filter((node) => node.id === selfMeshId),
     ...chosen.filter((node) => node.id !== selfMeshId),

@@ -138,6 +138,20 @@ function NodePicker({
   );
 }
 
+/** 选了别的节点时说明入口也会一起登录（见 planLoginCodeTargets）。 */
+function EntryHint(props: LoginCodeFormProps) {
+  const { t } = useTranslation();
+  const selfMeshId = props.context.selfMeshId;
+  if (!props.nodeId || props.nodeId === selfMeshId) return null;
+  const entry = props.options.find((option) => option.meshId === selfMeshId);
+  if (!entry) return null;
+  return (
+    <p className="text-xs text-muted-foreground" data-testid="login-code-entry-hint">
+      {t(`${NS}.target.withEntry`, { name: entry.name })}
+    </p>
+  );
+}
+
 function TargetSection(props: LoginCodeFormProps) {
   const { t } = useTranslation();
   const { draft, onDraft, busy } = props;
@@ -155,12 +169,15 @@ function TargetSection(props: LoginCodeFormProps) {
         ]}
       />
       {draft.scope === 'one' ? (
-        <NodePicker
-          options={props.options}
-          value={props.nodeId}
-          onChange={(nodeId) => onDraft({ nodeId })}
-          disabled={busy}
-        />
+        <>
+          <NodePicker
+            options={props.options}
+            value={props.nodeId}
+            onChange={(nodeId) => onDraft({ nodeId })}
+            disabled={busy}
+          />
+          <EntryHint {...props} />
+        </>
       ) : (
         <p className="text-xs text-muted-foreground" data-testid="login-code-count">
           {props.targetCount === 0

@@ -208,9 +208,10 @@ describe('planLoginCodeTargets', () => {
     ]);
   });
 
-  test('单选只给那一台', () => {
+  test('单选时带上当前入口', () => {
     const plan = planLoginCodeTargets([row(SELF), row(NODE_A)], NODE_A, SELF);
-    expect(plan.targets.map((t) => t.meshId)).toEqual([NODE_A]);
+    expect(plan.targets.map((t) => t.meshId)).toEqual([SELF, NODE_A]);
+    expect(planLoginCodeTargets([row(SELF), row(NODE_A)], SELF, SELF).targets).toHaveLength(1);
     expect(plan.skipped).toEqual([]);
   });
 });

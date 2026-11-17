@@ -2256,7 +2256,8 @@
           "skipped": "{{count}} 台をスキップ（オフラインまたはバージョン不足）",
           "offline": "オフライン",
           "outdated": "バージョン不足",
-          "paused": "一時停止中"
+          "paused": "一時停止中",
+          "withEntry": "現在の入口 {{name}} にも同時にログインします"
         },
         "proof": {
           "label": "認証",

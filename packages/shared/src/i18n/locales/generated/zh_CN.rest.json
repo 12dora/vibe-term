@@ -2256,7 +2256,8 @@
           "skipped": "跳过 {{count}} 台（离线或版本过低）",
           "offline": "离线",
           "outdated": "版本过低",
-          "paused": "已暂停"
+          "paused": "已暂停",
+          "withEntry": "同时登录当前入口 {{name}}"
         },
         "proof": {
           "label": "验证",

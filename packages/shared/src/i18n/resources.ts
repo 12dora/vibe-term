@@ -3104,7 +3104,8 @@ export const I18N_RESOURCES = {
           "skipped_other": "{{count}} skipped (offline or outdated)",
           "offline": "Offline",
           "outdated": "Outdated",
-          "paused": "Paused"
+          "paused": "Paused",
+          "withEntry": "Also signs in to the current entry, {{name}}"
         },
         "proof": {
           "label": "Verification",
@@ -7294,7 +7295,8 @@ export const I18N_RESOURCES = {
           "skipped": "跳过 {{count}} 台（离线或版本过低）",
           "offline": "离线",
           "outdated": "版本过低",
-          "paused": "已暂停"
+          "paused": "已暂停",
+          "withEntry": "同时登录当前入口 {{name}}"
         },
         "proof": {
           "label": "验证",
@@ -11479,7 +11481,8 @@ export const I18N_RESOURCES = {
           "skipped": "{{count}} 台をスキップ（オフラインまたはバージョン不足）",
           "offline": "オフライン",
           "outdated": "バージョン不足",
-          "paused": "一時停止中"
+          "paused": "一時停止中",
+          "withEntry": "現在の入口 {{name}} にも同時にログインします"
         },
         "proof": {
           "label": "認証",
