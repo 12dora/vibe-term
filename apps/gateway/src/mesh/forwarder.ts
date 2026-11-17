@@ -19,7 +19,7 @@ import { loginLimiterIp, peekLoginMethod } from './auth-login-policy-http';
 import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
 import { UNKNOWN_CLIENT_KEY, clientIpFromRequest } from './client-ip';
 import { authorizedAttemptBudgetsMs, runLinkThenTransfer } from './forwarder-attempt-deadline';
-import { AUTH_CHALLENGE_PATHS, AUTH_LOGIN_PATH, peekJsonCode } from './forwarder-auth-policy';
+import { AUTH_CHALLENGE_PATHS, LOGIN_GATED_PATHS, peekJsonCode } from './forwarder-auth-policy';
 import { cancelForwardBody, countStreamBytes, sleepMs, throttledProgress } from './forwarder-body';
 import {
   authorizedHttpDeadlineMs,
@@ -478,7 +478,7 @@ export class Forwarder {
     if (AUTH_CHALLENGE_PATHS.has(rest)) {
       return { response: limits.consumeChallengeQuota(req), uidHint: '', ip };
     }
-    if (rest !== AUTH_LOGIN_PATH) return empty;
+    if (!LOGIN_GATED_PATHS.has(rest)) return empty;
     const ladderIp = loginLimiterIp(req);
     let uidHint = '';
     let method: LoginMethod = null;
@@ -530,7 +530,7 @@ export class Forwarder {
       return;
     }
     const limits = this.authRateLimits;
-    if (!limits || rest !== AUTH_LOGIN_PATH) return;
+    if (!limits || !LOGIN_GATED_PATHS.has(rest)) return;
     await settleForwardedLoginLimit(limits, req, gated, upstream);
   }
 

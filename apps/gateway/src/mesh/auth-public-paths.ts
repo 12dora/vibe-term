@@ -1,3 +1,18 @@
+import {
+  LOGIN_CODE_PATH,
+  LOGIN_CODE_REDEEM_PATH,
+  LOGIN_CODE_REVOKE_PATH,
+  LOGIN_CODE_STATUS_PATH,
+} from '@vibeterm/shared';
+
+/** 一次性登录命令的四个接口：只有 POST 属于公开面。 */
+export const LOGIN_CODE_PUBLIC_PATHS: ReadonlySet<string> = new Set([
+  LOGIN_CODE_PATH,
+  LOGIN_CODE_REDEEM_PATH,
+  LOGIN_CODE_STATUS_PATH,
+  LOGIN_CODE_REVOKE_PATH,
+]);
+
 /** 与 node 相同的登录前公开面；role 无关。 */
 export const AUTH_LOGIN_PUBLIC_PATHS = new Set([
   '/api/auth/mode',
@@ -5,6 +20,7 @@ export const AUTH_LOGIN_PUBLIC_PATHS = new Set([
   '/api/auth/challenge',
   '/api/auth/login',
   '/api/auth/passkey/login/options',
+  ...LOGIN_CODE_PUBLIC_PATHS,
 ]);
 
 /** 被分享人的公开面：无常规会话，只认 `vibeterm_sh_<via>` cookie。 */
@@ -35,5 +51,8 @@ export function isShareAccessPath(path: string, method?: string): boolean {
 
 /** 登录前公开面 + 分享公开面：localUiGuard、forwarder 与节点侧流入口共用同一判定。 */
 export function isAuthLoginPublicPath(path: string, method?: string): boolean {
+  if (LOGIN_CODE_PUBLIC_PATHS.has(path)) {
+    return method === undefined || method.toUpperCase() === 'POST';
+  }
   return AUTH_LOGIN_PUBLIC_PATHS.has(path) || isShareAccessPath(path, method);
 }

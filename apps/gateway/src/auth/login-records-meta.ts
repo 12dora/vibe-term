@@ -76,8 +76,9 @@ export function peekLoginMethod(body: Record<string, unknown>): LoginRecordMetho
 }
 
 export function secondFromFailureCode(code: string): LoginRecordSecond | null {
-  if (code === 'TOTP_INVALID') return 'totp';
+  if (code === 'TOTP_INVALID' || code === 'TOTP_ALREADY_USED') return 'totp';
   if (code === 'PASSKEY_INVALID') return 'passkey';
+  if (code.startsWith('LOGIN_CODE_')) return 'code';
   return null;
 }
 

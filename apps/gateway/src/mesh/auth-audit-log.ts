@@ -105,7 +105,7 @@ export function logAuthLoginOk(fields: {
   uid: string;
   via: string;
   method: string;
-  second: AuthLoginSecond;
+  second: AuthLoginSecond | 'code';
   ip: string;
   origin: string;
 }): void {
@@ -154,6 +154,19 @@ export function logAuthLoginSuccessIfOk(
     origin: fields.origin,
     req: fields.req,
   });
+}
+
+export function logAuthLoginCodeIssued(fields: {
+  uid: string;
+  via: string;
+  method: string;
+  second: AuthLoginSecond;
+  ip: string;
+}): void {
+  logLine(
+    '[auth]',
+    `login-code issued uid=${fields.uid} via=${fields.via} method=${fields.method} second=${fields.second} ip=${maskAuthClientIp(fields.ip)}`
+  );
 }
 
 export function logAuthLoginFailed(fields: { uid: string; code: string; ip: string }): void {
@@ -207,7 +220,7 @@ export function countActiveNodeSessions(store: NodeSessionStore, userId: string)
   return Number(row?.n ?? 0);
 }
 
-function factorBodyPresent(value: unknown, key: 'code' | 'sig'): boolean {
+export function factorBodyPresent(value: unknown, key: 'code' | 'sig'): boolean {
   if (typeof value !== 'object' || value === null) return false;
   const rec = value as Record<string, unknown>;
   return typeof rec[key] === 'string' && rec[key].length > 0;

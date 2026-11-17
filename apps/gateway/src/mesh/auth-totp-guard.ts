@@ -125,6 +125,16 @@ export class TotpReplayCache {
     return entry.sessPk === encodeBase64url(sessPk) ? 'reuse' : 'conflict';
   }
 
+  /** 该验证码在重放窗口内是否被本节点消费过（不论会话公钥）。 */
+  seen(uid: string, code: string): boolean {
+    const key = replayKey(uid, code);
+    const entry = this.entries.get(key);
+    if (!entry) return false;
+    if (entry.expiresAt > this.now()) return true;
+    this.entries.delete(key);
+    return false;
+  }
+
   consume(uid: string, code: string, sessPk: Uint8Array): void {
     const now = this.now();
     this.entries.set(replayKey(uid, code), {
@@ -173,6 +183,10 @@ export class TotpLoginGuard {
   consume(uid: string, code: string, sessPk: Uint8Array): void {
     this.replay.consume(uid, code, sessPk);
   }
+
+  seen(uid: string, code: string): boolean {
+    return this.replay.seen(uid, code);
+  }
 }
 
 const TOTP_SKIP: TotpFactorResult = { ok: true, verified: false, enrolled: false };
@@ -201,6 +215,28 @@ export async function verifyLoginTotp(args: {
   const replay = args.guard.replayStatus(args.user.id, parsed.code, args.sessPk);
   if (replay === 'reuse') return TOTP_OK;
   if (replay === 'conflict') return rejectTotp(args.guard, args.user.id);
+  return verifyFreshTotp(args, parsed);
+}
+
+/**
+ * 签发登录命令的严格版：验证码必须从未在本节点用过（任何会话公钥、任何登录或签发），
+ * 普通登录允许的同会话公钥扇出复用在这里同样拒绝。校验通过后照常记入重放缓存。
+ */
+export async function verifyIssueTotp(args: {
+  user: UserRecord;
+  method: string;
+  totpBody: unknown;
+  sessPk: Uint8Array;
+  nowMs: number;
+  state: Pick<UserKeyState, 'totp' | 'rootEpoch'>;
+  guard: TotpLoginGuard;
+}): Promise<TotpFactorResult> {
+  if (args.method !== 'root') return TOTP_SKIP;
+  if (!accountHasTotp(args.user, args.state.totp != null)) return TOTP_SKIP;
+  const parsed = parseTotpBody(args.totpBody);
+  if (!parsed) return TOTP_PENDING;
+  if (args.guard.isLimited(args.user.id)) return { ok: false, code: 'RATE_LIMITED' };
+  if (args.guard.seen(args.user.id, parsed.code)) return { ok: false, code: 'TOTP_ALREADY_USED' };
   return verifyFreshTotp(args, parsed);
 }
 

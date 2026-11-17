@@ -3,7 +3,12 @@ import type * as schema from '../db/schema';
 
 export type AuthDb = BunSQLiteDatabase<typeof schema>;
 
-export type ChallengeKind = 'login' | 'passkey-register' | 'passkey-login' | 'rtc-authorize';
+export type ChallengeKind =
+  | 'login'
+  | 'login-code'
+  | 'passkey-register'
+  | 'passkey-login'
+  | 'rtc-authorize';
 
 export type DelegationMethod = 'root' | 'passkey';
 

@@ -1,3 +1,4 @@
+import { LOGIN_CODE_CHALLENGE_PURPOSE } from '@vibeterm/shared';
 import {
   type Delegation,
   decodeBase64url,
@@ -7,7 +8,6 @@ import {
   encodeBase64url,
   verifyDelegation,
   verifyDelegationTimes,
-  verifyLogin,
 } from '@vibeterm/shared/auth';
 import type { KeyLogEffect, VerifyDelegationPasskey } from '@vibeterm/shared/auth';
 import { SET_SESSION_HEADER, setHeaderPair } from '@vibeterm/shared/http/mesh-headers';
@@ -44,8 +44,6 @@ import {
   delegationFailResult,
   logAuthLoginSuccessIfOk,
   logAuthLogout,
-  loginBindingError,
-  loginFailCodes,
 } from './auth-audit-log';
 import {
   AuthKeyLogRoutes,
@@ -54,6 +52,8 @@ import {
   loginRequestContext,
   recordsOr405,
 } from './auth-key-log-routes';
+import { type LoginChainHost, runLoginChain } from './auth-login-chain';
+import { type IssueSessionInput, LoginCodeRoutes } from './auth-login-code-routes';
 import {
   LoginFailureLimiter,
   type LoginLimiterRejectInfo,
@@ -83,7 +83,7 @@ import {
 } from './auth-passkey-origin';
 import { defaultEntryOrigins } from './auth-passkey-origin-entry';
 import { AUTH_LOGIN_PUBLIC_PATHS, isAuthLoginPublicPath } from './auth-public-paths';
-import { TotpLoginGuard, verifyLoginTotp } from './auth-totp-guard';
+import { TotpLoginGuard, verifyIssueTotp, verifyLoginTotp } from './auth-totp-guard';
 import { handleTotpRecordRequest } from './auth-totp-record';
 import { clientIpFromRequest, limiterIpKey } from './client-ip';
 import { isPeerRequest, waivesPasskeySecondFactor } from './client-source';
@@ -191,6 +191,7 @@ export class AuthRoutes {
   private localAuth: LocalAuthStoreLike;
   private readonly modeCache = new AuthModeCache();
   private readonly keyLog: AuthKeyLogRoutes;
+  private readonly loginCodes: LoginCodeRoutes;
   readonly rateLimits: AuthRateLimits;
 
   constructor(private readonly deps: AuthRoutesDeps) {
@@ -223,6 +224,21 @@ export class AuthRoutes {
     this.keyLog = new AuthKeyLogRoutes(deps, {
       invalidateAuthModeCache: () => this.invalidateAuthModeCache(),
     });
+    this.loginCodes = new LoginCodeRoutes({
+      userStore: deps.userStore,
+      now: () => this.now(),
+      openSink: (req, ctx) => this.loginLimits.openSink(req, ctx),
+      issueChainHost: this.loginChainHost('issue'),
+      consumeChallengeQuota: (req) => this.consumeChallengeQuota(req),
+      recordLoginSuccess: (req) => this.policyLimiter.recordSuccess(loginLimiterIp(req)),
+      issueSession: (input) => this.issueLoginSession(input),
+      origin: requestOrigin,
+    });
+  }
+
+  /** key log 撤销效果（任何应用路径）同步作废本节点待兑换的登录命令。 */
+  applyKeyLogEffects(userId: string, effects: readonly KeyLogEffect[]): void {
+    this.loginCodes.applyKeyLogEffects(userId, effects);
   }
 
   setTlsInfo(provider: AuthTlsInfoProvider | undefined): void {
@@ -280,6 +296,8 @@ export class AuthRoutes {
     };
     const run = routes[`${req.method} ${path}`];
     if (run) return run();
+    const loginCode = this.loginCodes.route(req, path);
+    if (loginCode) return loginCode;
     if (path.startsWith('/api/auth/')) return recordsOr405(req, session);
     return null;
   }
@@ -346,13 +364,17 @@ export class AuthRoutes {
     if (!uidRaw || authUidTooLong(uidRaw)) {
       return jsonError('MALFORMED', 400);
     }
+    const purpose = body?.purpose;
+    if (purpose !== undefined && purpose !== LOGIN_CODE_CHALLENGE_PURPOSE) {
+      return jsonError('MALFORMED', 400);
+    }
     const limited = this.consumeChallengeQuota(req);
     if (limited) return limited;
     const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
     const created = this.deps.challengeStore.create({
       uid: uidRaw,
       entryNodeId: via,
-      kind: 'login',
+      kind: purpose === LOGIN_CODE_CHALLENGE_PURPOSE ? 'login-code' : 'login',
       ttlMs: LOGIN_CHALLENGE_TTL_MS,
     });
     return jsonBody({
@@ -364,67 +386,24 @@ export class AuthRoutes {
 
   private async handleLogin(req: Request): Promise<Response> {
     const ctx = loginRequestContext(req);
-    const { noteUidHint, fail, precheck, rejectUid } = this.loginLimits.openSink(req, ctx);
+    const sink = this.loginLimits.openSink(req, ctx);
+    const { fail, precheck } = sink;
     const body = await readJsonObjectBody(req);
     const blocked = precheck(body);
     if (blocked) return blocked;
     try {
-      const envelope = parseLoginEnvelope(body as Record<string, unknown>);
-      if (!envelope) return fail('MALFORMED', 400);
-      noteUidHint(envelope.login.uid);
-      const uidRejected = rejectUid();
-      if (uidRejected) return uidRejected;
-      const challenge = this.deps.challengeStore.consume(envelope.login.challenge_id);
-      if (!challenge || challenge.kind !== 'login') return fail('CHALLENGE_CONSUMED');
-      const bound = loginBindingError(
-        envelope.login,
-        challenge,
-        this.deps.nodeId,
-        this.deps.nodePk,
-        envelope.delegation.uid,
-        MESH_VIA_SELF
-      );
-      if (bound) return fail(bound);
-      const user = resolveUser(this.deps.userStore, envelope.login.uid);
-      if (!user) return fail('INVALID_CREDENTIALS', 401, 'UNKNOWN_USER');
-      const now = this.now();
-      const delOk = await this.verifyDelegationForLogin(
-        envelope.delegation,
-        envelope.delegationSig,
-        user,
-        now
-      );
-      if (!delOk.ok) return fail(delOk.code, 401, delOk.log);
-      const loginOk = verifyLogin(envelope.login, envelope.sig, envelope.delegation.sess_pk, {
-        challengeId: challenge.challengeId,
-        nonce: challenge.nonce,
-        target: envelope.login.target,
-        targetPk: this.deps.nodePk,
-        uid: challenge.uid,
-        entry: envelope.login.entry,
-      });
-      if (!loginOk.ok) {
-        const { client, log } = loginFailCodes(loginOk.error);
-        return fail(client, 401, log);
-      }
       const rec = body as Record<string, unknown>;
-      const second = await verifySecondFactors({
-        checkTotp: (user, method, totp, sessPk) => this.checkTotp(user, method, totp, sessPk),
-        checkPasskeySecondFactor: (r, u, delegation, passkey, totpVerified) =>
-          this.checkPasskeySecondFactor(r, u, delegation, passkey, totpVerified),
-        req,
-        user,
+      const chain = await runLoginChain(this.loginChainHost('login'), req, rec, sink, 'login');
+      if (!chain.ok) return chain.res;
+      const { challenge, envelope, user, now } = chain;
+      const issued = this.issueLoginSession({
+        userId: user.id,
+        viaNodeId: challenge.entryNodeId,
         delegation: envelope.delegation,
-        body: rec,
+        now,
+        popRequired: popLoginAllowed(req, challenge.entryNodeId, rec.pop),
+        fail,
       });
-      if (!second.ok) return fail(second.code);
-      const issued = this.issueLoginSession(
-        user.id,
-        challenge.entryNodeId,
-        envelope.delegation,
-        { now, popRequired: popLoginAllowed(req, challenge.entryNodeId, rec.pop) },
-        fail
-      );
       logAuthLoginSuccessIfOk(issued, {
         uid: user.id,
         via: challenge.entryNodeId,
@@ -443,10 +422,27 @@ export class AuthRoutes {
     }
   }
 
+  /** `issue` 模式下 TOTP 走严格防重放（签发登录命令）。 */
+  private loginChainHost(mode: 'login' | 'issue'): LoginChainHost {
+    return {
+      nodeId: this.deps.nodeId,
+      nodePk: this.deps.nodePk,
+      challengeStore: this.deps.challengeStore,
+      now: () => this.now(),
+      resolveUser: (uid) => resolveUser(this.deps.userStore, uid),
+      verifyDelegation: (delegation, sig, user, now) =>
+        this.verifyDelegationForLogin(delegation, sig, user, now),
+      checkTotp: (user, method, totp, sessPk) => this.checkTotp(user, method, totp, sessPk, mode),
+      checkPasskeySecondFactor: (r, u, delegation, passkey, totpVerified) =>
+        this.checkPasskeySecondFactor(r, u, delegation, passkey, totpVerified),
+    };
+  }
+
   private handleLogout(_req: Request, userId: string | null): Response {
     if (userId) {
       const sessions = countActiveNodeSessions(this.deps.nodeSessionStore, userId);
       this.deps.nodeSessionStore.revokeAllForUser(userId, this.now());
+      this.loginCodes.revokeForUser(userId);
       this.deps.onLogout?.(userId);
       logAuthLogout({ uid: userId, sessions });
     }
@@ -619,9 +615,10 @@ export class AuthRoutes {
     user: UserRecord,
     method: Delegation['method'],
     totpBody: unknown,
-    sessPk: Uint8Array
+    sessPk: Uint8Array,
+    mode: 'login' | 'issue' = 'login'
   ): Promise<TotpFactorResult> {
-    return verifyLoginTotp({
+    return (mode === 'issue' ? verifyIssueTotp : verifyLoginTotp)({
       user,
       method,
       totpBody,
@@ -665,14 +662,8 @@ export class AuthRoutes {
     }
   }
 
-  private issueLoginSession(
-    userId: string,
-    viaNodeId: string,
-    delegation: Delegation,
-    at: { now: number; popRequired: boolean },
-    fail: (code: string, status?: number) => Response
-  ): Response {
-    const { now, popRequired } = at;
+  private issueLoginSession(input: IssueSessionInput): Response {
+    const { userId, viaNodeId, delegation, now, popRequired, fail, extra } = input;
     const base = { userId, viaNodeId, sessPublicKey: delegation.sess_pk, now, popRequired };
     const credentialId = credentialIdBytes(delegation.credential_id);
     if (delegation.method === 'passkey' && !credentialId?.byteLength) {
@@ -690,7 +681,7 @@ export class AuthRoutes {
       SET_SESSION_HEADER,
       `${issued.sid};${maxAgeSec || Math.floor(NODE_SESSION_TTL_MS / 1000)}`
     );
-    return jsonBody({ expires_at: issued.expiresAt }, 200, headers);
+    return jsonBody({ expires_at: issued.expiresAt, ...extra }, 200, headers);
   }
 
   private now(): number {
@@ -724,22 +715,11 @@ export function rpIdFromOrigin(origin: string): string {
   }
 }
 
-function credentialIdBytes(id: string | null): Uint8Array | null {
+function credentialIdBytes(id: string | null | undefined): Uint8Array | null {
   if (!id) return null;
   try {
     return decodeBase64url(id);
   } catch {
     return new TextEncoder().encode(id);
   }
-}
-
-function parseLoginEnvelope(body: Record<string, unknown>) {
-  const fields = requiredStrings(body, ['login', 'sig', 'delegation', 'delegation_sig']);
-  if (!fields) return null;
-  return {
-    login: decodeLogin(decodeBase64url(fields.login)),
-    sig: decodeBase64url(fields.sig),
-    delegation: decodeDelegation(decodeBase64url(fields.delegation)),
-    delegationSig: decodeBase64url(fields.delegation_sig),
-  };
 }

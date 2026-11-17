@@ -1,4 +1,10 @@
 import {
+  LOGIN_CODE_PATH,
+  LOGIN_CODE_REDEEM_PATH,
+  LOGIN_CODE_REVOKE_PATH,
+  LOGIN_CODE_STATUS_PATH,
+} from '@vibeterm/shared';
+import {
   SESSION_RENEWED_HEADER,
   SET_NAV_TICKET_HEADER,
   SET_SESSION_HEADER,
@@ -23,8 +29,13 @@ export const AUTH_SKIP = AUTH_LOGIN_PUBLIC_PATHS;
 export const AUTH_CHALLENGE_PATHS = new Set([
   '/api/auth/challenge',
   '/api/auth/passkey/login/options',
+  LOGIN_CODE_REDEEM_PATH,
+  LOGIN_CODE_STATUS_PATH,
+  LOGIN_CODE_REVOKE_PATH,
 ]);
 export const AUTH_LOGIN_PATH = '/api/auth/login';
+/** 入口按登录限流计数的路径：签发登录命令与登录走同一条校验链。 */
+export const LOGIN_GATED_PATHS: ReadonlySet<string> = new Set([AUTH_LOGIN_PATH, LOGIN_CODE_PATH]);
 
 const DROP_ON_401_REWRITE = new Set([
   'content-length',

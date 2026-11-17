@@ -10,6 +10,7 @@ import { toBase64Url } from '../auth/binary';
 import { parseCookies, readNavTicketCookie } from '../auth/cookies';
 import { POP_ENTRY_PROVEN_HEADER, requestPopProvenKey } from '../auth/session-pop';
 import { applySafeFileHeaders } from '../files/safe-file-headers';
+import { LOGIN_CODE_PUBLIC_PATHS } from './auth-public-paths';
 import { clientIpFromRequest } from './client-ip';
 
 /** 入口把真实客户端 IP 交给目标，只用于登录记录。浏览器自带的同名头一律丢掉。 */
@@ -20,6 +21,7 @@ const FORWARDED_AUTH_PATHS = new Set([
   '/api/auth/challenge',
   '/api/auth/login',
   '/api/auth/passkey/login/options',
+  ...LOGIN_CODE_PUBLIC_PATHS,
 ]);
 import { SET_SESSION_HEADER } from './mesh-deps';
 import { CLEAR_SHARE_HEADER, SET_SHARE_HEADER, SET_SHARE_MAX_AGE_HEADER } from './share-credential';

@@ -22,6 +22,7 @@ import {
   upgradeSessionSocket,
   upgradeShareSocket,
 } from './gateway-ws-upgrade';
+import { hasSessionRevokeEffect } from './key-log-session-effects';
 import {
   type ConnectionLookup,
   MESH_FORWARD_WS_KIND,
@@ -128,13 +129,6 @@ type RegisteredSocket = {
   /** 下一次允许压库复验的时刻；由 `sessionVerifyDeadline` 按会话过期时间收窄。 */
   nextVerifyAt: number;
 };
-
-/** 会带来会话失效的 key log 效果；其余记录类型不必触发 socket 复核。 */
-const SESSION_REVOKE_EFFECTS: ReadonlySet<KeyLogEffect['type']> = new Set([
-  'revokeAllSessions',
-  'revokeSessionsByCredential',
-  'revokeSessionsVia',
-]);
 
 function gatewayWsRejectClose(auth: AuthenticateResult, token: string | null): ShareWsClose | null {
   if (!auth.ok && auth.pop) return { code: WS_CLOSE_LOGIN_REQUIRED, reason: auth.pop };
@@ -321,7 +315,8 @@ export class MeshHttpRuntime {
    * 不必扫——`onApplied` 每条记录都会走到这里。
    */
   applyKeyLogEffects(userId: string, effects: KeyLogEffect[]): void {
-    if (!effects.some((effect) => SESSION_REVOKE_EFFECTS.has(effect.type))) return;
+    this.auth.applyKeyLogEffects(userId, effects);
+    if (!hasSessionRevokeEffect(effects)) return;
     this.sweepInvalidSockets();
     this.onSessionsRevoked?.({ uid: userId });
   }
