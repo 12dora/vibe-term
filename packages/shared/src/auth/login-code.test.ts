@@ -29,7 +29,9 @@ describe('login code', () => {
     expect(decodeLoginCode(LOGIN_CODE_PREFIX)).toBeNull();
     expect(() => encodeLoginCode({ secret: new Uint8Array(8), nodeIds: [A] })).toThrow();
     expect(() => encodeLoginCode({ secret: generateLoginCodeSecret(), nodeIds: [] })).toThrow();
-    expect(() => encodeLoginCode({ secret: generateLoginCodeSecret(), nodeIds: ['self'] })).toThrow();
+    expect(() =>
+      encodeLoginCode({ secret: generateLoginCodeSecret(), nodeIds: ['self'] })
+    ).toThrow();
   });
 
   it('dedupes on encode and refuses duplicates on decode', () => {

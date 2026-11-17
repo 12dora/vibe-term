@@ -19,7 +19,7 @@
 - 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。跨境 RTT 差一倍、直连慢于中继：[路径优选](./architecture/path-selection.md)。
 - 装在 ≤ 2 GiB 或 256 MB Alpine 的小内存机上：[小内存主机](./operations/small-memory.md)。想知道某个 tmux 窗口吃了多少内存、或想在 Linux 上把它限住：[窗口内存](./operations/window-memory-limits.md)。OpenRC 上限额不可用，读数仍走进程树 RSS。
 - 服务显示 running 但 HTTP / 中继不通：[事件循环看门狗](./operations/gateway-loop-watchdog.md)。
-- 登录相关（密码、通行密钥、TOTP、登录限制、登录历史、公网暴露）：[登录面安全](./security/login-security.md)；agent / CI 免登录凭据：[访问令牌](./security/access-tokens.md)。
+- 登录相关（密码、通行密钥、TOTP、登录限制、登录历史、公网暴露）：[登录面安全](./security/login-security.md)；agent / CI 免登录凭据：[访问令牌](./security/access-tokens.md)；网页端生成、终端兑换的一次性登录：[一次性登录命令](./security/login-codes.md)。
 - 发一个版本：[发布流程](./operations/release-process.md) → [发行包签名](./operations/release-signing.md)；升级出问题：[升级事务](./operations/upgrade-transaction.md)。
 - 改 WebSocket 协议：[ws-borsh v1 规范](./architecture/ws-borsh-v1-spec.md) 与 [状态机](./architecture/ws-state-machines.md)。
 - 起开发环境 / 写测试：[三套环境](./development/environments.md)、[实测约定](./development/live-integration-tests.md)；改共享口径先看 [单一上游](./development/code-conventions.md)。
@@ -94,6 +94,7 @@
 | [share-login.md](./security/share-login.md) | 分享链接口令登录限流：每 IP 指数退避、分享级反轮换不误伤干净来源 |
 | [domain-access-policy.md](./security/domain-access-policy.md) | 按节点的「允许域名访问」开关 |
 | [access-tokens.md](./security/access-tokens.md) | 机器访问令牌：scope、出示方式、会话优先、管理与吊销、审计、CLI 与 CI 流程 |
+| [login-codes.md](./security/login-codes.md) | 一次性登录命令：网页端生成、agent 终端兑换为完整会话、生成时的身份确认与吊销 |
 
 ### development/
 

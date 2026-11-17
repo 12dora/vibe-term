@@ -8,3 +8,4 @@
 | [share-login.md](./share-login.md) | 分享链接口令登录的公平限流：每 IP 指数退避、分享级反轮换不误伤干净来源、入口与节点分进程计数 |
 | [domain-access-policy.md](./domain-access-policy.md) | 按节点的「允许域名访问」开关：拦截规则、服务白名单、锁死自救 |
 | [access-tokens.md](./access-tokens.md) | 机器访问令牌：按节点签发、scope（exec / files / forward）、出示方式、会话优先、管理与吊销、审计、CLI 与 CI 流程 |
+| [login-codes.md](./login-codes.md) | 一次性登录命令：命令码与按节点派生、生成时的身份确认（验证码 / 通行密钥 / 密码回退）、兑换为完整会话、吊销与上限、CLI 用法 |
