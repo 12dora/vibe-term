@@ -1,4 +1,4 @@
-// 节点卡头的「登录命令」入口：只发打开请求，对话框由 `LoginCodeDialogHost` 承载。
+// 节点卡头的「登录命令」入口：只发打开请求，对话框由外壳级 `LoginCodeDialogHost` 承载。
 
 import { Button } from '@vibeterm/ui/button';
 import { SquareTerminal } from 'lucide-react';

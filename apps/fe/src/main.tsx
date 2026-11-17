@@ -43,6 +43,7 @@ import {
   settingsPageModule,
 } from '@/page-modules';
 import { PageWrapper } from '@/page-wrapper';
+import { LoginCodeDialogHost } from '@/pages/settings/nodes/management/login-code-host';
 import { NODE_SHARE_ROUTE_PATH, SHARE_ROUTE_PATH, isSharePathname } from '@/share/share-route';
 import { ShareRouteElement } from '@/share/share-route-element';
 import { browserAccessGateDeps, installAccessGateGuards } from '@/sw/access-gate-recovery';
@@ -233,6 +234,8 @@ function RootLayout() {
         </NodeRuntimeScope>
         <MainInset />
         <SidePanelHost />
+        {/* 「登录命令」对话框的唯一宿主：侧栏按钮与设置页入口共用，对话框本体懒加载。 */}
+        <LoginCodeDialogHost />
       </SidebarProvider>
       <RouteConnectionIndicator />
     </>

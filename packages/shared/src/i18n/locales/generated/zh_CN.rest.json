@@ -2050,8 +2050,7 @@
       },
       "ports": {
         "label": "端口",
-        "blocked": "端口不可达：{{list}}",
-        "hint": "请在该机防火墙或安全组放行",
+        "blocked": "端口不可达：{{list}}，请在防火墙或安全组放行",
         "recheck": "重新检测",
         "status": {
           "open": "可达",

@@ -53,6 +53,7 @@
       "manageDevices": "管理设备",
       "connectDevices": "接入更多设备",
       "connectDevicesShort": "接入设备",
+      "loginCode": "一键登录",
       "sidebarExpand": "展开侧边栏",
       "sidebarCollapse": "收起侧边栏",
       "openSidebar": "打开侧边栏",
@@ -2872,8 +2873,7 @@
       },
       "ports": {
         "label": "端口",
-        "blocked": "端口不可达：{{list}}",
-        "hint": "请在该机防火墙或安全组放行",
+        "blocked": "端口不可达：{{list}}，请在防火墙或安全组放行",
         "recheck": "重新检测",
         "status": {
           "open": "可达",

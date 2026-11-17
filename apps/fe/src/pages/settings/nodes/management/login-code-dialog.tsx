@@ -1,6 +1,7 @@
 // 「登录命令」对话框：生成一次性登录命令（供 agent 在终端登录节点）。
 // 两步：生成（目标 + 验证）→ 结果（命令、倒计时、各节点使用状态）。
 // 签发模块经动态 import 按需加载，状态机见 `login-code-controller.ts`。
+// 本文件整体由 `login-code-host.tsx` 懒加载，打开请求的宿主也在那里。
 
 import { sortNodes, useMeshNodes } from '@/node/mesh-nodes';
 import { Button } from '@vibeterm/ui/button';
@@ -29,11 +30,7 @@ import {
   initialDraft,
 } from './login-code-draft';
 import { LoginCodeForm, type LoginCodeNodeOption } from './login-code-form';
-import {
-  type LoginCodeSelection,
-  closeLoginCodeRequest,
-  useLoginCodeRequest,
-} from './login-code-request';
+import type { LoginCodeSelection } from './login-code-request';
 import { LoginCodeResultView } from './login-code-result';
 import { loginCodeErrorText } from './login-code-text';
 import { useLoginCode, useNow } from './use-login-code';
@@ -45,20 +42,6 @@ export interface LoginCodeDialogProps {
   onClose: () => void;
   /** 测试注入：替换签发模块的动态加载。 */
   loadModule?: LoginCodeModuleLoader;
-}
-
-/** 卡里唯一一份：接收卡头按钮与行内菜单发来的打开请求。 */
-export function LoginCodeDialogHost({ loadModule }: { loadModule?: LoginCodeModuleLoader }) {
-  const request = useLoginCodeRequest();
-  if (!request) return null;
-  return (
-    <LoginCodeDialog
-      key={request.seq}
-      selection={request.selection}
-      onClose={closeLoginCodeRequest}
-      loadModule={loadModule}
-    />
-  );
 }
 
 function useDraft(selection: LoginCodeSelection) {

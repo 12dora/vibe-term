@@ -65,6 +65,7 @@ export const I18N_RESOURCES = {
       "manageDevices": "Manage Devices",
       "connectDevices": "Connect More Devices",
       "connectDevicesShort": "Connect Devices",
+      "loginCode": "Quick login",
       "sidebarExpand": "Expand Sidebar",
       "sidebarCollapse": "Collapse Sidebar",
       "openSidebar": "Open Sidebar",
@@ -2892,8 +2893,7 @@ export const I18N_RESOURCES = {
       },
       "ports": {
         "label": "Ports",
-        "blocked": "Unreachable ports: {{list}}",
-        "hint": "Allow them in the machine's firewall or security group",
+        "blocked": "Ports unreachable: {{list}}. Allow them in the firewall or security group.",
         "recheck": "Re-check",
         "status": {
           "open": "Open",
@@ -4270,6 +4270,7 @@ export const I18N_RESOURCES = {
       "manageDevices": "管理设备",
       "connectDevices": "接入更多设备",
       "connectDevicesShort": "接入设备",
+      "loginCode": "一键登录",
       "sidebarExpand": "展开侧边栏",
       "sidebarCollapse": "收起侧边栏",
       "openSidebar": "打开侧边栏",
@@ -7089,8 +7090,7 @@ export const I18N_RESOURCES = {
       },
       "ports": {
         "label": "端口",
-        "blocked": "端口不可达：{{list}}",
-        "hint": "请在该机防火墙或安全组放行",
+        "blocked": "端口不可达：{{list}}，请在防火墙或安全组放行",
         "recheck": "重新检测",
         "status": {
           "open": "可达",
@@ -8456,6 +8456,7 @@ export const I18N_RESOURCES = {
       "manageDevices": "デバイス管理",
       "connectDevices": "デバイスを追加",
       "connectDevicesShort": "デバイス接続",
+      "loginCode": "ワンクリックログイン",
       "sidebarExpand": "サイドバーを展開",
       "sidebarCollapse": "サイドバーを折りたたむ",
       "openSidebar": "サイドバーを開く",
@@ -11275,8 +11276,7 @@ export const I18N_RESOURCES = {
       },
       "ports": {
         "label": "ポート",
-        "blocked": "到達不能なポート：{{list}}",
-        "hint": "ファイアウォールまたはセキュリティグループで許可してください",
+        "blocked": "到達不能なポート：{{list}}。ファイアウォールまたはセキュリティグループで許可してください。",
         "recheck": "再チェック",
         "status": {
           "open": "到達可",

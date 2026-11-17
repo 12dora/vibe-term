@@ -1,4 +1,5 @@
 import type { ChunkPreloadTarget } from '@/lib/chunk-preload';
+import { cn } from '@vibeterm/ui';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@vibeterm/ui/collapsible';
 import {
   SidebarGroup,
@@ -9,6 +10,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  useSidebar,
 } from '@vibeterm/ui/sidebar';
 import { ChevronRight, type LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -38,7 +40,10 @@ export interface NavMainItem {
   title: string;
   /** 底部并排放不下完整标题时用的短标签；气泡与 aria-label 仍用完整标题。 */
   shortTitle?: string;
-  url: string;
+  /** 链接目标；纯动作项（带 `onClick`）不需要。 */
+  url?: string;
+  /** 动作项：渲染成按钮而不是链接，点击只触发回调（手机抽屉随之收起）。 */
+  onClick?: () => void;
   icon: LucideIcon;
   /** 面板入口这类只带查询串的目标（`?panel=…`）走这里带上 history state 与测试锚点。 */
   testId?: string;
@@ -51,19 +56,51 @@ export interface NavMainItem {
   }[];
 }
 
-export function NavMain({ items }: { items: NavMainItem[] }) {
+function NavItemButton({ item, active }: { item: NavMainItem; active: boolean | undefined }) {
+  const { t } = useTranslation();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const { url, onClick } = item;
+  // 动作项是按钮，其余是链接；动作触发后手机抽屉随之收起。
+  const kind = onClick
+    ? {
+        type: 'button' as const,
+        onClick: () => {
+          if (isMobile) setOpenMobile(false);
+          onClick();
+        },
+      }
+    : { render: <NavLink to={url ?? '/'} state={item.linkState} preload={item.preload} /> };
+  return (
+    <SidebarMenuButton
+      isActive={active}
+      size="sm"
+      tooltip={t(item.title)}
+      aria-label={t(item.title)}
+      // 两个入口并排时只有半宽，字号收一档才放得下英文标签。
+      className="justify-center gap-1.5 px-1.5 py-1 text-xs"
+      data-testid={item.testId}
+      {...kind}
+    >
+      <item.icon />
+      <span>{t(item.shortTitle ?? item.title)}</span>
+    </SidebarMenuButton>
+  );
+}
+
+export function NavMain({ items, className }: { items: NavMainItem[]; className?: string }) {
   const { t } = useTranslation();
   const { pathname } = useLocation();
 
   return (
-    <SidebarGroup className="px-2 py-0">
+    <SidebarGroup className={cn('px-2 py-0', className)}>
       {/* 底部两个入口并排；折叠成图标条时没有并排的宽度，改回竖排。
           gap-1 在并排态是左右间距，不占垂直空间，保持不动。 */}
       <SidebarMenu className="flex-row gap-1 group-data-[collapsible=icon]:flex-col">
         {items.map((item) => {
+          const { url } = item;
           const active =
-            item.url.startsWith('/') &&
-            (isPathActive(pathname, item.url) ||
+            url?.startsWith('/') &&
+            (isPathActive(pathname, url) ||
               Boolean(item.items?.some((subItem) => isPathActive(pathname, subItem.url))));
           return (
             <Collapsible
@@ -71,19 +108,7 @@ export function NavMain({ items }: { items: NavMainItem[] }) {
               defaultOpen={active}
               render={<SidebarMenuItem className="min-w-0 flex-1" />}
             >
-              <SidebarMenuButton
-                isActive={active}
-                size="sm"
-                tooltip={t(item.title)}
-                aria-label={t(item.title)}
-                // 两个入口并排时只有半宽，字号收一档才放得下英文标签。
-                className="justify-center gap-1.5 px-1.5 py-1 text-xs"
-                data-testid={item.testId}
-                render={<NavLink to={item.url} state={item.linkState} preload={item.preload} />}
-              >
-                <item.icon />
-                <span>{t(item.shortTitle ?? item.title)}</span>
-              </SidebarMenuButton>
+              <NavItemButton item={item} active={active} />
               {item.items?.length ? (
                 <>
                   <CollapsibleTrigger

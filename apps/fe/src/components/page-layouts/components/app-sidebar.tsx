@@ -1,4 +1,11 @@
-import { Bot, CirclePlus, FolderClosed, Monitor, PanelsTopLeft } from 'lucide-react';
+import {
+  Bot,
+  CirclePlus,
+  FolderClosed,
+  Monitor,
+  PanelsTopLeft,
+  SquareTerminal,
+} from 'lucide-react';
 import { type ComponentProps, Suspense, lazy, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -12,6 +19,8 @@ import { nodeQueryClient } from '@/node/node-runtimes';
 import { selfAgentStore } from '@/node/self-agent-store';
 import { sidebarSectionExpanded, useSidebarSectionExpanded } from '@/node/sidebar-node-expansion';
 import { devicesPageModule } from '@/page-modules';
+import { canUseLoginCode } from '@/pages/settings/nodes/management/login-code-gate';
+import { requestLoginCode } from '@/pages/settings/nodes/management/login-code-request';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import { SortableVerticalList, useSortableRow } from '@vibeterm/panels/device-tree';
 import type { FilesNodeInfo } from '@vibeterm/panels/files';
@@ -208,14 +217,18 @@ const manageDevicesItem: NavMainItem = {
   preload: devicesPageModule,
 };
 
-export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
-  const { t } = useTranslation();
-  const sidebarTab = useUIStore((state) => state.sidebarTab);
-  const onSidebarTabChange = useSidebarMainRoute();
-  // 外壳常驻在 self 运行时下；智能体 / 文件两个标签服务的是当前路由所在的 node，
-  // 单独套一层该 node 的运行时（切 node 时这两块重挂是预期的，设备树不受影响）
-  const routeNodeId = useRouteNodeId();
-  const routeNodeOffline = useNodeOffline(routeNodeId);
+// 「一键登录」：与设置 → 节点 →「登录命令」同一入口（全部节点），对话框由外壳级宿主懒加载。
+const loginCodeItem: NavMainItem = {
+  title: 'nav.loginCode',
+  icon: SquareTerminal,
+  testId: 'sidebar-login-code',
+  onClick: () => requestLoginCode('all'),
+};
+
+function AppSidebarFooter() {
+  // 可用条件与节点页「登录命令」一致（mesh 且凭据就绪）。
+  const { mode } = useSharedAuthMode();
+  const showLoginCode = canUseLoginCode(mode);
   // 「接入更多设备」是右侧滑出面板：入口保持链接形态（可右键新开、可分享）。
   const { hrefFor } = useSidePanel();
   const footerItems: NavMainItem[] = [
@@ -230,6 +243,26 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
     manageDevicesItem,
   ];
 
+  return (
+    // 垂直 padding 清零、gap 交给 NavMain：桌面端按钮组下缘与侧栏（即右侧外框）
+    // 下缘齐平；横向仍是 footer px-2 + group px-2，按钮左右位置不变。
+    <SidebarFooter className="gap-0 px-2 pt-1.5 pb-0">
+      <NavMain items={footerItems} />
+      {/* 单独一行放在最底：并排第三个按钮放不下标签；折叠成图标条时同样是竖排图标 + 气泡。 */}
+      {showLoginCode && <NavMain items={[loginCodeItem]} className="pt-1" />}
+      <div className="h-[var(--vibeterm-safe-area-bottom)]" />
+    </SidebarFooter>
+  );
+}
+
+export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
+  const { t } = useTranslation();
+  const sidebarTab = useUIStore((state) => state.sidebarTab);
+  const onSidebarTabChange = useSidebarMainRoute();
+  // 外壳常驻在 self 运行时下；智能体 / 文件两个标签服务的是当前路由所在的 node，
+  // 单独套一层该 node 的运行时（切 node 时这两块重挂是预期的，设备树不受影响）
+  const routeNodeId = useRouteNodeId();
+  const routeNodeOffline = useNodeOffline(routeNodeId);
   return (
     <Sidebar variant="inset" {...props}>
       <div className="h-[var(--vibeterm-safe-area-top)]" />
@@ -300,12 +333,7 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
           </Reveal>
         )}
       </SidebarContent>
-      {/* 垂直 padding 清零、gap 交给 NavMain：桌面端按钮组下缘与侧栏（即右侧外框）
-          下缘齐平；横向仍是 footer px-2 + group px-2，按钮左右位置不变。 */}
-      <SidebarFooter className="gap-0 px-2 pt-1.5 pb-0">
-        <NavMain items={footerItems} />
-        <div className="h-[var(--vibeterm-safe-area-bottom)]" />
-      </SidebarFooter>
+      <AppSidebarFooter />
     </Sidebar>
   );
 }

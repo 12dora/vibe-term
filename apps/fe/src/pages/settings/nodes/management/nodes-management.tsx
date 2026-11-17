@@ -36,7 +36,6 @@ import {
 import { BulkMemoryDialog } from './bulk-memory-dialog';
 import { EnrollmentSection } from './enrollment-section';
 import { LoginCodeButton } from './login-code-button';
-import { LoginCodeDialogHost } from './login-code-dialog';
 import { NodesSyncGate } from './nodes-sync-gate';
 import { NodesTable } from './nodes-table';
 import { RevokeDialog } from './revoke-dialog';
@@ -258,7 +257,6 @@ export function NodesManagement({
         <BulkMemoryDialog controller={memoryLimits} />
         <UpgradeConfirmDialog upgrade={upgrade} />
         <RevokeDialog controller={bulkRevoke.revokeDialog} />
-        <LoginCodeDialogHost />
       </CardContent>
     </Card>
   );

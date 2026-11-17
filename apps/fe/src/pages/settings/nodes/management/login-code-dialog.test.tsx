@@ -19,8 +19,9 @@ const { formatCountdown, loginCodeErrorText, loginCodeReasonText } = await impor
   './login-code-text'
 );
 const { loginCodeIneligibleReason, loginCodeMenuTitle } = await import('./login-code-eligibility');
+const { canUseLoginCode } = await import('./login-code-gate');
 const { NodeMoreMenuList } = await import('./node-more-menu');
-const { LoginCodeDialogHost } = await import('./login-code-dialog');
+const { LoginCodeDialogHost } = await import('./login-code-host');
 const { LoginCodeButton } = await import('./login-code-button');
 const { methodText } = await import('../login-history/login-history-format');
 
@@ -424,6 +425,17 @@ describe('行内菜单与登录历史', () => {
     expect(methodText(t, { method: 'passkey', second: 'code' })).toBe(
       'settings.loginHistory.method.code'
     );
+  });
+});
+
+describe('侧栏「一键登录」可用条件', () => {
+  test('仅 mesh 且凭据就绪时可用；standalone / 模式未落定 / 缺凭据都不可用', () => {
+    const kdfParams = {} as never;
+    expect(canUseLoginCode({ mode: 'mesh', uid: 'u', kdfParams })).toBe(true);
+    expect(canUseLoginCode({ mode: 'none', uid: 'u', kdfParams })).toBe(false);
+    expect(canUseLoginCode({ mode: 'mesh', uid: '', kdfParams })).toBe(false);
+    expect(canUseLoginCode({ mode: 'mesh', uid: 'u', kdfParams: null })).toBe(false);
+    expect(canUseLoginCode(null)).toBe(false);
   });
 });
 

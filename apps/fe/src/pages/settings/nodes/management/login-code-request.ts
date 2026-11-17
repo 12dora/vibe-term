@@ -1,5 +1,5 @@
-// 「登录命令」对话框的打开请求：卡头按钮与行内菜单各自发请求，由卡里唯一一份
-// `LoginCodeDialogHost` 接收，免得把开关一路传进表格与卡片列表。
+// 「登录命令」对话框的打开请求：卡头按钮与行内菜单各自发请求，由应用外壳里唯一一份
+// `LoginCodeDialogHost`（`login-code-host.tsx`）接收，免得把开关一路传进表格与卡片列表。
 
 import { useSyncExternalStore } from 'react';
 

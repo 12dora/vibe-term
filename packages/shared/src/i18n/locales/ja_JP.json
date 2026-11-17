@@ -53,6 +53,7 @@
       "manageDevices": "デバイス管理",
       "connectDevices": "デバイスを追加",
       "connectDevicesShort": "デバイス接続",
+      "loginCode": "ワンクリックログイン",
       "sidebarExpand": "サイドバーを展開",
       "sidebarCollapse": "サイドバーを折りたたむ",
       "openSidebar": "サイドバーを開く",
@@ -2872,8 +2873,7 @@
       },
       "ports": {
         "label": "ポート",
-        "blocked": "到達不能なポート：{{list}}",
-        "hint": "ファイアウォールまたはセキュリティグループで許可してください",
+        "blocked": "到達不能なポート：{{list}}。ファイアウォールまたはセキュリティグループで許可してください。",
         "recheck": "再チェック",
         "status": {
           "open": "到達可",
