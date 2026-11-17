@@ -703,7 +703,7 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(self).not.toContain('data-testid="node-pause-toggle"');
   });
 
-  test('端口 blocked 时名字下给出警告；缺失或全 unknown 不警告', () => {
+  test('端口 blocked 时名字后给出警告图标；缺失或全 unknown 不警告', () => {
     const blocked = Object.assign(nodeRow({ id: 'pb' }), {
       ports: [
         { purpose: 'peer-signaling', proto: 'tcp', port: 39001, status: 'blocked' },
@@ -717,8 +717,8 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     });
     const html = renderTable([blocked], '1.2.0');
     expect(html).toContain('data-testid="nodes-ports-warning-pb"');
-    expect(html).toContain('nodes.ports.blocked');
-    expect(html).toContain('nodes.ports.hint');
+    expect(html).toContain('aria-label="nodes.ports.blocked"');
+    expect(html).not.toContain('nodes.ports.hint');
 
     const unknown = Object.assign(nodeRow({ id: 'pu' }), {
       ports: [{ purpose: 'peer-signaling', proto: 'tcp', port: 39001, status: 'unknown' }],

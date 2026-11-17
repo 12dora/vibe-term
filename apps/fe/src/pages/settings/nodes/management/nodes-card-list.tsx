@@ -16,7 +16,6 @@ import { Checkbox } from '@vibeterm/ui/checkbox';
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';
 import { CopyButton } from '../copy-feedback';
-import { resolveNodePorts } from '../port-reach';
 import { NodeMoreMenu } from './node-more-menu';
 import { NodeNameTags, StatusCell } from './node-row-cells';
 import {
@@ -29,7 +28,7 @@ import {
   useNodeRowShared,
 } from './node-row-common';
 import { PendingNodeCard } from './pending-node-row';
-import { PortsWarning, displayAddress } from './row-cells';
+import { displayAddress } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
 
 /** 缺省值：连接方式 / 版本 / 地址拿不到时 `buildNodeView` 给的就是它。 */
@@ -141,26 +140,22 @@ function NodeCardView({
 }
 
 /**
- * 地址那一行：截断 + 悬浮全文 + 复制，后面接端口不可达的警告。
+ * 地址那一行：截断 + 悬浮全文 + 复制。
  * 没有地址（本机那一行、待批准的机器）就整行不出——一个「—」既读不出信息，还多占一行。
  */
 function NodeCardAddress({ row }: { row: NodeRow }) {
   const address = displayAddress(row.address);
+  if (!address) return null;
   return (
-    <>
-      {address && (
-        <div className="flex items-center gap-1">
-          <code
-            className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
-            title={address}
-            data-testid={`nodes-address-${row.id}`}
-          >
-            {address}
-          </code>
-          <CopyButton value={address} testId={`nodes-address-${row.id}`} />
-        </div>
-      )}
-      <PortsWarning nodeId={row.id} ports={resolveNodePorts(row)} />
-    </>
+    <div className="flex items-center gap-1">
+      <code
+        className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
+        title={address}
+        data-testid={`nodes-address-${row.id}`}
+      >
+        {address}
+      </code>
+      <CopyButton value={address} testId={`nodes-address-${row.id}`} />
+    </div>
   );
 }

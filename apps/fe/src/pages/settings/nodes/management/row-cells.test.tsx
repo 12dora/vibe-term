@@ -65,11 +65,14 @@ describe('PortsWarning', () => {
     status: 'unknown',
   };
 
-  test('有 blocked 时给出清单与放行提示', () => {
+  test('有 blocked 时给出图标触发器与带清单的提示，不再有单独文字行', () => {
     const html = renderToStaticMarkup(<PortsWarning nodeId="aa" ports={[blocked, unknown]} />);
     expect(html).toContain('nodes-ports-warning-aa');
-    expect(html).toContain('nodes.ports.blocked');
-    expect(html).toContain('nodes.ports.hint');
+    expect(html).toContain('<button type="button"');
+    expect(html).toContain('aria-label="nodes.ports.blocked"');
+    expect(html).toContain('role="tooltip"');
+    expect(html).toContain('<svg');
+    expect(html).not.toContain('nodes.ports.hint');
   });
 
   test('缺失或全 unknown 不渲染', () => {

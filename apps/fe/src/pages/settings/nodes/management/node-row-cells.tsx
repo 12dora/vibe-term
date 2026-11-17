@@ -16,12 +16,13 @@ export interface NodeNameTagsProps {
   row: NodeRow;
 }
 
-/** 名字与它后面那串标记（当前 / 成员密钥滞后）。表格与记录卡共用。 */
+/** 名字与它后面那串标记（端口警告图标 / 当前 / 成员密钥滞后）。表格与记录卡共用。 */
 export function NodeNameTags({ row }: NodeNameTagsProps) {
   const { t } = useTranslation();
   return (
     <>
       <span className="truncate font-medium">{row.name}</span>
+      <PortsWarning nodeId={row.id} ports={resolveNodePorts(row)} />
       {row.isSelf && <Tag>{t('nodes.self')}</Tag>}
       <MetaKeyLagTag nodeId={row.id} />
     </>
@@ -31,12 +32,9 @@ export function NodeNameTags({ row }: NodeNameTagsProps) {
 export function NameCell(props: NodeNameTagsProps) {
   return (
     <Td className="whitespace-normal">
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="flex items-center gap-1.5 whitespace-nowrap">
-          <NodeNameTags {...props} />
-        </span>
-        <PortsWarning nodeId={props.row.id} ports={resolveNodePorts(props.row)} />
-      </div>
+      <span className="flex items-center gap-1.5 whitespace-nowrap">
+        <NodeNameTags {...props} />
+      </span>
     </Td>
   );
 }
