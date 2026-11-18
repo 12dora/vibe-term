@@ -20,9 +20,26 @@ const DEFINITIVE_POLL_CODES = new Set([
   'UNAUTHORIZED',
   'FORBIDDEN',
   'NODE_LOGIN_REQUIRED',
+  'POP_REQUIRED',
+  'POP_INVALID',
   'UPGRADE_NOT_ALLOWED',
   'UPGRADE_UNSUPPORTED',
 ]);
+
+/** 入口转发被目标以 PoP 钥对不上拒绝：重新登录该节点即可重新绑钥。 */
+export function isPopCode(code: string): boolean {
+  return code === 'POP_REQUIRED' || code === 'POP_INVALID';
+}
+
+/** 发起升级时「须先（重新）登录」的三种回法。 */
+export function needsNodeLogin(code: string): boolean {
+  return code === 'NODE_LOGIN_REQUIRED' || isPopCode(code);
+}
+
+/** 远程升级任务在目标端吃到 401 时，网关把失败串写成 `auth: <code>`。 */
+export function isAuthJobError(error: string): boolean {
+  return /^auth:/i.test(error);
+}
 
 /**
  * 轮询拿到非 2xx 时该重试还是收尾。

@@ -42,7 +42,10 @@ import {
   UPGRADE_CANCELLED_ERROR,
   type UpgradeIo,
   type UpgradeStartOutcome,
+  isAuthJobError,
+  isPopCode,
   loginForUpgrade,
+  needsNodeLogin,
 } from './upgrade-io';
 
 export {
@@ -77,6 +80,9 @@ export const RESTORE_CONCURRENCY = 3;
 
 const ERROR_KEYS: Record<string, string> = {
   NODE_LOGIN_REQUIRED: 'nodes.upgrade.loginRequired',
+  /** PoP 钥对不上与「须先登录」同一处置：重新登录该节点。 */
+  POP_REQUIRED: 'nodes.upgrade.loginRequired',
+  POP_INVALID: 'nodes.upgrade.loginRequired',
   /** 补登录这一步败在传输层：说连接不上，不谎称成登录问题。 */
   NODE_UNREACHABLE_LOGIN: 'nodes.upgrade.unreachable',
   NODE_UNREACHABLE: 'nodes.upgrade.unreachable',
@@ -94,6 +100,7 @@ const ERROR_KEYS: Record<string, string> = {
  * 按前缀与关键片段翻成一句人话。命中不了的保持原样，宁可露出英文也不谎报原因。
  */
 const RAW_ERROR_PATTERNS: Array<{ match: RegExp; key: string }> = [
+  { match: /^auth:/i, key: 'nodes.upgrade.loginRequired' },
   { match: /link_lost/i, key: 'nodes.upgrade.linkLost' },
   { match: /^push failed: .*(push timeout)/i, key: 'nodes.upgrade.pushTimeout' },
   { match: /^push failed:/i, key: 'nodes.upgrade.pushFailed' },
@@ -119,7 +126,7 @@ export interface UpgradeWatchContext {
 /** `stopped`：目标已被中断（`error === 'UPGRADE_CANCELLED'`），是良性结论，不能报失败。 */
 export type UpgradeWatchResult =
   | { kind: 'done' }
-  | { kind: 'failed'; error: string }
+  | { kind: 'failed'; error: string; needsLogin?: boolean }
   | { kind: 'timeout' }
   | { kind: 'stopped' }
   | { kind: 'cancelled' };
@@ -135,6 +142,13 @@ async function versionConfirmed(ctx: UpgradeWatchContext, strict: boolean): Prom
   return version === ctx.targetVersion;
 }
 
+/** 任务在目标端吃到 401：把这一行标成未登录，行内的登录按钮随之出现。 */
+function failedIdle(ctx: UpgradeWatchContext, error: string): UpgradeWatchResult {
+  if (!isAuthJobError(error)) return { kind: 'failed', error: ctx.describeError(error) };
+  markLoggedOut(ctx.nodeId);
+  return { kind: 'failed', error: ctx.describeError(error), needsLogin: true };
+}
+
 /** 目标回到 idle 时的收尾判定；拿不准就返回 `null`，继续等下一轮。 */
 async function settleIdle(
   ctx: UpgradeWatchContext,
@@ -144,7 +158,7 @@ async function settleIdle(
 ): Promise<UpgradeWatchResult | null> {
   // 状态不跨进程持久化：重启回来后 error 一定是空的，所以 idle 上还挂着 error 就是下载阶段失败。
   if (status.error === UPGRADE_CANCELLED_ERROR) return { kind: 'stopped' };
-  if (status.error) return { kind: 'failed', error: ctx.describeError(status.error) };
+  if (status.error) return failedIdle(ctx, status.error);
   if (!sawActive) {
     // POST 结果未知：目标可能已经升完重启回来，版本对上就是成功。
     if (ctx.unconfirmedStart && (await versionConfirmed(ctx, true))) return { kind: 'done' };
@@ -224,15 +238,23 @@ export interface UpgradeRunParams {
  */
 export async function startUpgradeWithLogin(p: UpgradeRunParams): Promise<UpgradeStartOutcome> {
   const first = await p.io.start(p.row.id, p.signal);
-  if (first.kind !== 'failed' || first.code !== 'NODE_LOGIN_REQUIRED') return first;
+  if (first.kind !== 'failed' || !needsNodeLogin(first.code)) return first;
   if (p.signal.aborted) return { kind: 'cancelled' };
   const login = await (p.io.login ?? loginForUpgrade)(p.row.id);
   if (p.signal.aborted) return { kind: 'cancelled' };
-  if (login.ok) return p.io.start(p.row.id, p.signal);
+  if (login.ok) return retryAfterLogin(p);
   if (classifyNodeLoginFailure(login.code) === 'unreachable') {
     return { kind: 'failed', code: 'NODE_UNREACHABLE_LOGIN' };
   }
   // 这是一次真的登录尝试给出的判决（不是一发 401），因此可以就地翻成未登录。
+  markLoggedOut(p.row.id);
+  return { kind: 'failed', code: 'NODE_LOGIN_REQUIRED' };
+}
+
+/** 登录后只重发一次；仍是 PoP 钥对不上说明这台节点得用户亲自登录，不露原始码。 */
+async function retryAfterLogin(p: UpgradeRunParams): Promise<UpgradeStartOutcome> {
+  const second = await p.io.start(p.row.id, p.signal);
+  if (second.kind !== 'failed' || !isPopCode(second.code)) return second;
   markLoggedOut(p.row.id);
   return { kind: 'failed', code: 'NODE_LOGIN_REQUIRED' };
 }
@@ -247,7 +269,7 @@ export function upgradeStartFailureToast(
   code: string,
   error: string
 ): string {
-  if (code === 'NODE_LOGIN_REQUIRED') return t('nodes.upgrade.failedNeedsLogin', { name });
+  if (needsNodeLogin(code)) return t('nodes.upgrade.failedNeedsLogin', { name });
   return t('nodes.upgrade.failed', { error });
 }
 
@@ -298,7 +320,11 @@ function reportResult(p: UpgradeRunParams, version: string | null, result: Upgra
   }
   if (result.kind === 'failed') {
     p.patch({ phase: 'failed', error: result.error });
-    p.toasts.error(p.t('nodes.upgrade.failed', { error: result.error }));
+    p.toasts.error(
+      result.needsLogin
+        ? p.t('nodes.upgrade.failedNeedsLogin', { name: p.row.name })
+        : p.t('nodes.upgrade.failed', { error: result.error })
+    );
     return;
   }
   p.patch({ phase: 'failed', error: p.t('nodes.upgrade.timeout') });

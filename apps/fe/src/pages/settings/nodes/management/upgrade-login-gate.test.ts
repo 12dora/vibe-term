@@ -20,6 +20,7 @@ import {
   joinSummarySentences,
   upgradeSkipCounts,
 } from './upgrade-batch';
+import { classifyPollFailure } from './upgrade-io';
 import {
   type UpgradeIo,
   type UpgradeStartOutcome,
@@ -28,6 +29,7 @@ import {
   startUpgradeWithLogin,
   upgradeErrorText,
   upgradeStartFailureToast,
+  watchUpgrade,
 } from './use-node-upgrade';
 
 installWindowStorage();
@@ -226,6 +228,165 @@ describe('startUpgradeWithLogin', () => {
     });
     const outcome = await startUpgradeWithLogin({ ...params(io), signal: controller.signal });
     expect(outcome).toEqual({ kind: 'cancelled' });
+    expect(getMeshNodesState().nodes[0].loggedIn).toBe(true);
+  });
+});
+
+function popRequired(code = 'POP_REQUIRED'): UpgradeStartOutcome {
+  return { kind: 'failed', code };
+}
+
+describe('startUpgradeWithLogin 遇到 PoP 钥对不上', () => {
+  test('POP_REQUIRED：补登一次后重发，升级照常开始', async () => {
+    let starts = 0;
+    let logins = 0;
+    const io = stubIo({
+      start: async () => {
+        starts += 1;
+        if (starts === 1) return popRequired();
+        return {
+          kind: 'started',
+          status: { state: 'downloading', targetVersion: '2.1.0', error: null, startedAt: null },
+        };
+      },
+      login: async () => {
+        logins += 1;
+        return { ok: true };
+      },
+    });
+    const outcome = await startUpgradeWithLogin(params(io));
+    expect(outcome.kind).toBe('started');
+    expect(starts).toBe(2);
+    expect(logins).toBe(1);
+  });
+
+  test('POP_INVALID 与 POP_REQUIRED 同样处置', async () => {
+    let starts = 0;
+    const io = stubIo({
+      start: async () => {
+        starts += 1;
+        return starts === 1 ? popRequired('POP_INVALID') : { kind: 'alreadyLatest' };
+      },
+    });
+    const outcome = await startUpgradeWithLogin(params(io));
+    expect(outcome).toEqual({ kind: 'alreadyLatest' });
+    expect(starts).toBe(2);
+  });
+
+  test('补登后仍 POP：只重发一次，按「须先登录」收尾并标成未登录，不露原始码', async () => {
+    let starts = 0;
+    const io = stubIo({
+      start: async () => {
+        starts += 1;
+        return popRequired();
+      },
+    });
+    const outcome = await startUpgradeWithLogin(params(io));
+    expect(outcome).toEqual({ kind: 'failed', code: 'NODE_LOGIN_REQUIRED' });
+    expect(starts).toBe(2);
+    expect(getMeshNodesState().nodes[0].loggedIn).toBe(false);
+  });
+
+  test('补登败在凭证：按「须先登录」收尾并标成未登录', async () => {
+    const io = stubIo({
+      start: async () => popRequired(),
+      login: async () => ({ ok: false, code: 'NO_SESSION_KEY' }),
+    });
+    const outcome = await startUpgradeWithLogin(params(io));
+    expect(outcome).toEqual({ kind: 'failed', code: 'NODE_LOGIN_REQUIRED' });
+    expect(getMeshNodesState().nodes[0].loggedIn).toBe(false);
+  });
+
+  test('POP 码本身也翻成「须先登录」的文案与 toast', () => {
+    expect(upgradeErrorText(t, 'POP_REQUIRED')).toBe('nodes.upgrade.loginRequired');
+    expect(upgradeErrorText(t, 'POP_INVALID')).toBe('nodes.upgrade.loginRequired');
+    expect(upgradeStartFailureToast(t, 'node-a', 'POP_REQUIRED', 'x')).toBe(
+      'nodes.upgrade.failedNeedsLogin:{"name":"node-a"}'
+    );
+  });
+
+  test('轮询里的 POP 码是确定性结论，不当「重启中」继续等', () => {
+    expect(classifyPollFailure(401, 'POP_REQUIRED')).toBe('definitive');
+    expect(classifyPollFailure(502, 'POP_INVALID')).toBe('definitive');
+  });
+});
+
+describe('任务在目标端吃到 401（`auth: <code>`）', () => {
+  function authJobParams(error: string, toasts: UpgradeToasts) {
+    const io = stubIo({
+      start: async () => ({
+        kind: 'started',
+        status: { state: 'downloading', targetVersion: '2.1.0', error: null, startedAt: null },
+      }),
+      poll: async () => ({
+        kind: 'status',
+        status: { state: 'idle', targetVersion: null, error, startedAt: null },
+      }),
+    });
+    return params(io, { toasts });
+  }
+
+  test('error 以 auth: 开头：说「须先登录」，并把这一行标成未登录', async () => {
+    const rec = recorder();
+    const patches: object[] = [];
+    const outcome = await runNodeUpgrade({
+      ...authJobParams('auth: POP_REQUIRED', rec.toasts),
+      patch: (entry) => patches.push(entry),
+    });
+    expect(outcome).toBe('failed');
+    expect(patches.at(-1)).toEqual({ phase: 'failed', error: 'nodes.upgrade.loginRequired' });
+    expect(rec.log.at(-1)).toEqual(['error', 'nodes.upgrade.failedNeedsLogin:{"name":"node-a"}']);
+    expect(getMeshNodesState().nodes[0].loggedIn).toBe(false);
+  });
+
+  test('NODE_LOGIN_REQUIRED 等其它 auth 码同样处置', async () => {
+    const rec = recorder();
+    await runNodeUpgrade(authJobParams('auth: NODE_LOGIN_REQUIRED', rec.toasts));
+    expect(upgradeErrorText(t, 'auth: NODE_LOGIN_REQUIRED')).toBe('nodes.upgrade.loginRequired');
+    expect(getMeshNodesState().nodes[0].loggedIn).toBe(false);
+  });
+
+  test('watchUpgrade 的失败结论带 needsLogin；普通失败串不标未登录', async () => {
+    const ctx = (error: string) => ({
+      nodeId: NODE_ID,
+      targetVersion: '2.1.0',
+      sawActive: true,
+      unconfirmedStart: false,
+      io: stubIo({
+        poll: async () => ({
+          kind: 'status',
+          status: { state: 'idle', targetVersion: null, error, startedAt: null },
+        }),
+      }),
+      signal: new AbortController().signal,
+      describeError: (code: string) => upgradeErrorText(t, code),
+      phase: () => undefined,
+    });
+    expect(await watchUpgrade(ctx('auth: POP_INVALID'))).toEqual({
+      kind: 'failed',
+      error: 'nodes.upgrade.loginRequired',
+      needsLogin: true,
+    });
+    expect(getMeshNodesState().nodes[0].loggedIn).toBe(false);
+    setMeshNodesStateForTest({
+      nodes: [
+        {
+          id: NODE_ID,
+          name: 'node-a',
+          publicKey: 'AAAA',
+          online: true,
+          reach: 'lan',
+          version: '2.0.0',
+          direct_capable: false,
+          inventory: null,
+          loggedIn: true,
+        },
+      ],
+    });
+    expect(await watchUpgrade(ctx('push failed: boom'))).toEqual({
+      kind: 'failed',
+      error: 'nodes.upgrade.pushFailed',
+    });
     expect(getMeshNodesState().nodes[0].loggedIn).toBe(true);
   });
 });
