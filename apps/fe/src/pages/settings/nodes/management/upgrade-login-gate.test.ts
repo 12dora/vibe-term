@@ -273,6 +273,61 @@ describe('startUpgradeWithLogin 遇到 PoP 钥对不上', () => {
     expect(starts).toBe(2);
   });
 
+  /** 第一发 POP 失败、补登后第二发成功；返回补登过哪些节点。 */
+  async function popRetryLogins(stale: string[] | null | undefined): Promise<string[]> {
+    const logged: string[] = [];
+    let starts = 0;
+    const io = stubIo({
+      start: async () => {
+        starts += 1;
+        return starts === 1
+          ? popRequired()
+          : {
+              kind: 'started',
+              status: {
+                state: 'downloading',
+                targetVersion: '2.1.0',
+                error: null,
+                startedAt: null,
+              },
+            };
+      },
+      login: async (id) => {
+        logged.push(id);
+        return { ok: true };
+      },
+      ...(stale === undefined ? {} : { staleBindings: async () => stale }),
+    });
+    const outcome = await startUpgradeWithLogin(params(io));
+    expect(outcome.kind).toBe('started');
+    expect(starts).toBe(2);
+    return logged;
+  }
+
+  test('入口与目标都绑在旧钥：两台都补登，再重发一次', async () => {
+    expect(await popRetryLogins([NODE_ID, 'self'])).toEqual([NODE_ID, 'self']);
+  });
+
+  test('入口已是当前钥：只补登目标', async () => {
+    expect(await popRetryLogins([NODE_ID])).toEqual([NODE_ID]);
+  });
+
+  test('当前钥未知：保持原行为，只补登目标', async () => {
+    expect(await popRetryLogins(null)).toEqual([NODE_ID]);
+    expect(await popRetryLogins(undefined)).toEqual([NODE_ID]);
+  });
+
+  test('入口补登败在传输层：说连接不上，不标未登录', async () => {
+    const io = stubIo({
+      start: async () => popRequired(),
+      staleBindings: async () => ['self'],
+      login: async () => ({ ok: false, code: 'NODE_UNREACHABLE' }),
+    });
+    const outcome = await startUpgradeWithLogin(params(io));
+    expect(outcome).toEqual({ kind: 'failed', code: 'NODE_UNREACHABLE_LOGIN' });
+    expect(getMeshNodesState().nodes[0].loggedIn).toBe(true);
+  });
+
   test('补登后仍 POP：只重发一次，按「须先登录」收尾并标成未登录，不露原始码', async () => {
     let starts = 0;
     const io = stubIo({

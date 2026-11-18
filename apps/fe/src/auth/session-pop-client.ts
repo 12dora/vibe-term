@@ -91,6 +91,17 @@ export function onPopNodesChange(listener: PopNodesListener): () => void {
   };
 }
 
+/** 该 node 当前绑定的钥 id（公钥十六进制）；没绑定或已过硬上限返回 null。只读，不触发加载。 */
+export function popBindingKeyId(nodeId: string): string | null {
+  const bound = popNodes.get(nodeId);
+  return bound && bound.expiresAt > Date.now() ? bound.pk : null;
+}
+
+/** 与 `popKeys` 下标同一格式；登录 chunk 里的 `popKeyId` 同义，这里留一份免得常驻路径去拉它。 */
+export function sessionPopKeyId(sessPk: Uint8Array): string {
+  return Array.from(sessPk, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 /** 持有 PoP 会话且未过硬上限的 node。 */
 export function popNodeIds(): string[] {
   return [...popNodes.keys()].filter(isPopNode);

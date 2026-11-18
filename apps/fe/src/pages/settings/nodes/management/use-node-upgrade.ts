@@ -26,7 +26,7 @@
 
 import { classifyNodeLoginFailure } from '@/auth/login-failure-kind';
 import { type NodeRow, markLoggedOut } from '@/node/mesh-nodes';
-import { formatBytesFixed, formatBytesPair } from '@vibeterm/api-client';
+import { SELF_NODE_ID, formatBytesFixed, formatBytesPair } from '@vibeterm/api-client';
 import type { UpgradeStatus } from '@vibeterm/shared';
 import type { NodeUpgradeEntry, NodeUpgradePhase, UpgradeRunOutcome } from './types';
 import {
@@ -250,15 +250,40 @@ export async function startUpgradeWithLogin(p: UpgradeRunParams): Promise<Upgrad
   const first = await p.io.start(p.row.id, p.signal);
   if (first.kind !== 'failed' || !needsNodeLogin(first.code)) return first;
   if (p.signal.aborted) return { kind: 'cancelled' };
-  const login = await (p.io.login ?? loginForUpgrade)(p.row.id);
-  if (p.signal.aborted) return { kind: 'cancelled' };
-  if (login.ok) return retryAfterLogin(p);
-  if (classifyNodeLoginFailure(login.code) === 'unreachable') {
-    return { kind: 'failed', code: 'NODE_UNREACHABLE_LOGIN' };
+  const failure = await reloginForUpgrade(p, isPopCode(first.code));
+  if (failure) return failure;
+  return retryAfterLogin(p);
+}
+
+/**
+ * 重新登录；PoP 失败时入口与目标必须落在同一把钥上，因此绑定钥与当前会话钥不一致的
+ * 入口（`self`）也一并补登。成功返回 `null`，失败返回要交回的收尾结论。
+ */
+async function reloginForUpgrade(
+  p: UpgradeRunParams,
+  pop: boolean
+): Promise<UpgradeStartOutcome | null> {
+  const login = p.io.login ?? loginForUpgrade;
+  const targets = pop ? await popReloginTargets(p) : [p.row.id];
+  for (const id of targets) {
+    const result = await login(id);
+    if (p.signal.aborted) return { kind: 'cancelled' };
+    if (result.ok) continue;
+    if (classifyNodeLoginFailure(result.code) === 'unreachable') {
+      return { kind: 'failed', code: 'NODE_UNREACHABLE_LOGIN' };
+    }
+    // 这是一次真的登录尝试给出的判决（不是一发 401），因此可以就地翻成未登录。
+    markLoggedOut(p.row.id);
+    return { kind: 'failed', code: 'NODE_LOGIN_REQUIRED' };
   }
-  // 这是一次真的登录尝试给出的判决（不是一发 401），因此可以就地翻成未登录。
-  markLoggedOut(p.row.id);
-  return { kind: 'failed', code: 'NODE_LOGIN_REQUIRED' };
+  return null;
+}
+
+/** 目标与入口里绑定钥落后的节点；当前钥未知或都不落后时只重登目标。 */
+async function popReloginTargets(p: UpgradeRunParams): Promise<string[]> {
+  const ids = p.row.id === SELF_NODE_ID ? [p.row.id] : [p.row.id, SELF_NODE_ID];
+  const stale = await p.io.staleBindings?.(ids);
+  return stale && stale.length > 0 ? stale : [p.row.id];
 }
 
 /** 登录后只重发一次；仍是 PoP 钥对不上说明这台节点得用户亲自登录，不露原始码。 */

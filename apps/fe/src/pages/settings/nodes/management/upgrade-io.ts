@@ -5,7 +5,12 @@
 // 三条请求的共同约定：`signal` 已经 abort 时一律回 `cancelled`，绝不把用户按下的「停止」
 // 说成失败；读不出回包也不改判结论，宁可按「结果未知」继续轮询。
 
-import { type LoginNodeResult, ensureNodeLogin } from '@/auth/session-key-store';
+import {
+  type LoginNodeResult,
+  ensureNodeLogin,
+  readSessionSecrets,
+} from '@/auth/session-key-store';
+import { loadPopState, popBindingKeyId, sessionPopKeyId } from '@/auth/session-pop-client';
 import { getMeshNodesState, refreshMeshNodes } from '@/node/mesh-nodes';
 import { defaultApiClient } from '@vibeterm/api-client';
 import { UPGRADE_CANCELLED, type UpgradeStatus, sleepOrAbort } from '@vibeterm/shared';
@@ -102,6 +107,11 @@ export interface UpgradeIo {
    * 成败记账由 `ensureNodeLogin` 自己完成，本层不再记第二笔。
    */
   login?(nodeId: string): Promise<LoginNodeResult>;
+  /**
+   * PoP 失败后判断哪些节点的绑定钥与当前会话钥不一致（或没绑定），返回需要重新登录的子集；
+   * 当前钥未知返回 `null`（调用方只重登目标）。不给就用默认实现（读 PoP 客户端的绑定表）。
+   */
+  staleBindings?(nodeIds: string[]): Promise<string[] | null>;
   /** 轮询与刷新后的状态回读共用同一个 GET。 */
   poll(nodeId: string, signal: AbortSignal): Promise<UpgradePollOutcome>;
   cancel(nodeId: string, signal: AbortSignal): Promise<UpgradeCancelOutcome>;
@@ -208,9 +218,19 @@ export function loginForUpgrade(nodeId: string): Promise<LoginNodeResult> {
   return ensureNodeLogin(nodeId, { allowPasskeyPrompt: true });
 }
 
+/** 绑定钥与当前会话钥不一致的节点；会话钥读不到时返回 null。 */
+export async function stalePopBindings(nodeIds: string[]): Promise<string[] | null> {
+  await loadPopState();
+  const secrets = readSessionSecrets();
+  if (!secrets) return null;
+  const current = sessionPopKeyId(secrets.sessPk);
+  return nodeIds.filter((id) => popBindingKeyId(id) !== current);
+}
+
 export const defaultUpgradeIo: UpgradeIo = {
   start: requestUpgradeStart,
   login: loginForUpgrade,
+  staleBindings: stalePopBindings,
   poll: requestUpgradeStatus,
   cancel: requestUpgradeCancel,
   nodeVersion: readNodeVersion,
