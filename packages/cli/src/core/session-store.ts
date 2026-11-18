@@ -13,7 +13,7 @@ import {
   saveSecureJson,
   securePrivacyError,
 } from './secure-json-file';
-import { type PopKeyPair, encodePopKey, parsePopKey } from './session-pop';
+import { type PopKeyPair, copyPopKey, encodePopKey, parsePopKey } from './session-pop';
 
 export const SESSION_FILE_VERSION = 2;
 
@@ -232,7 +232,7 @@ export class SessionStore {
     const record = this.ensureEntry(entry);
     const node = record.nodes[nodeId];
     if (!node) return;
-    record.nodes[nodeId] = withPopKey(node, key ? encodePopKey(key) : undefined);
+    record.nodes[nodeId] = withPopKey(node, key ? encodePopKey(copyPopKey(key)) : undefined);
     record.updatedAt = Date.now();
     this.load().lastEntry = entry;
   }
@@ -314,7 +314,7 @@ export function createMemoryCookieJar(): CookieJar {
     setPopKey: (nodeId, key) => {
       const node = nodes.get(nodeId);
       if (!node) return;
-      nodes.set(nodeId, withPopKey(node, key ? encodePopKey(key) : undefined));
+      nodes.set(nodeId, withPopKey(node, key ? encodePopKey(copyPopKey(key)) : undefined));
     },
   };
 }

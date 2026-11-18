@@ -35,6 +35,17 @@ export function isPopErrorCode(code: string | null | undefined): boolean {
   return code === POP_REQUIRED || code === POP_INVALID;
 }
 
+/** 远程 job 失败串：`auth: POP_REQUIRED` 等；裸 POP_* 码同样视为需要重新登录。 */
+export function isPopAuthJobError(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return isPopErrorCode(text) || text.startsWith('auth:');
+}
+
+/** 拷贝会话密钥，避免 destroy()/fill(0) 清掉仍被 store 引用的字节。不要用 Uint8Array.from。 */
+export function copyPopKey(key: PopKeyPair): PopKeyPair {
+  return { sessSk: new Uint8Array(key.sessSk), sessPk: new Uint8Array(key.sessPk) };
+}
+
 export function parsePopKey(
   sessSk: string | null | undefined,
   sessPk: string | null | undefined
@@ -163,6 +174,22 @@ export function popErrorMessage(): string {
   return cliLangZh() ? POP_ERROR_MESSAGE_ZH : POP_ERROR_MESSAGE_EN;
 }
 
-export function popAuthError(code?: string): AuthError {
-  return new AuthError(popErrorMessage(), 'run: vibeterm login', code);
+export function popNodeErrorMessage(nodeName: string): string {
+  return `${nodeName}: ${popErrorMessage()}`;
+}
+
+export function popAuthError(code?: string, nodeName?: string): AuthError {
+  const message = nodeName ? popNodeErrorMessage(nodeName) : popErrorMessage();
+  return new AuthError(message, 'run: vibeterm login', code);
+}
+
+export function popNodeAuthError(nodeName: string, code?: string): AuthError {
+  return popAuthError(code, nodeName);
+}
+
+export function remapPopNodeError(error: unknown, nodeName: string): never {
+  if (error instanceof AuthError && isPopErrorCode(error.code)) {
+    throw popNodeAuthError(nodeName, error.code);
+  }
+  throw error;
 }

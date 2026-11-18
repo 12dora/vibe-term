@@ -32,6 +32,7 @@ import {
   throwIfSelfFailed,
 } from '../core/login-fanout';
 import { isInteractive, promptHidden, promptLine, readAllStdin } from '../core/prompt';
+import { copyPopKey } from '../core/session-pop';
 import type { Command } from './types';
 
 const FLAGS = {
@@ -185,11 +186,20 @@ async function loginOne(
 }
 
 function persistNodePopKey(ctx: CliContext, nodeId: string, material: SessionMaterial): void {
-  ctx.sessions.setPopKey(ctx.globals.entry, nodeId, {
-    sessSk: material.sessSk,
-    sessPk: material.sessPk,
-  });
+  ctx.sessions.setPopKey(
+    ctx.globals.entry,
+    nodeId,
+    copyPopKey({ sessSk: material.sessSk, sessPk: material.sessPk })
+  );
   ctx.sessions.save();
+}
+
+function reusedSessionKeyPair(ctx: CliContext, nodeRef: string | null) {
+  if (!nodeRef) return undefined;
+  const stored = ctx.sessions.popKey(ctx.globals.entry, SELF_NODE_ID);
+  if (!stored) return undefined;
+  const copy = copyPopKey(stored);
+  return { publicKey: copy.sessPk, secretKey: copy.sessSk };
 }
 
 function emitOpenStandalone(ctx: CliContext): void {
@@ -231,7 +241,11 @@ export async function loginWithPassword(
   opts: PasswordLoginOptions
 ): Promise<number | undefined> {
   const totp = { code: await readTotp(mode, opts.totpFlag) };
-  const material = await buildSessionMaterial({ password: opts.password, mode });
+  const material = await buildSessionMaterial({
+    password: opts.password,
+    mode,
+    sessionKeyPair: reusedSessionKeyPair(ctx, opts.nodeRef),
+  });
   try {
     const selfOutcome = await loginEntry(ctx, mode, material, totp, opts.timeoutMs);
     const roster = await ctx.resolver.listNodes();

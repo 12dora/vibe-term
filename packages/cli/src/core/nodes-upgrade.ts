@@ -9,6 +9,7 @@ import type { CliContext } from './context';
 import { AuthError, UsageError } from './errors';
 import { type CookieJar, loginRequiredError } from './http';
 import { findMeshNode, listMeshNodesFull } from './nodes-roster';
+import { isPopAuthJobError, popNodeErrorMessage, remapPopNodeError } from './session-pop';
 import { isLiveNodeSession } from './session-store';
 
 export interface UpgradeLatest {
@@ -118,7 +119,20 @@ function outcome(
   return { node: node.id, name: node.name, outcome: kind, ...extra };
 }
 
+function popUpgradeOutcome(node: MeshNode): UpgradeOutcome {
+  return outcome(node, 'failed', {
+    error: popNodeErrorMessage(node.name),
+    hint: 'run: vibeterm login',
+  });
+}
+
+function failedCodeOutcome(node: MeshNode, code: string | undefined): UpgradeOutcome {
+  if (isPopAuthJobError(code)) return popUpgradeOutcome(node);
+  return outcome(node, 'failed', { error: code });
+}
+
 function authFailureOutcome(node: MeshNode, error: AuthError): UpgradeOutcome {
+  if (isPopAuthJobError(error.code)) return popUpgradeOutcome(node);
   return outcome(node, 'failed', {
     error: error.code ?? 'NODE_LOGIN_REQUIRED',
     hint: error.hint,
@@ -129,8 +143,9 @@ function pollTerminal(
   node: MeshNode,
   poll: Awaited<ReturnType<typeof pollNodeUpgrade>>
 ): UpgradeOutcome | 'busy' | null {
-  if (poll.kind === 'failed') return outcome(node, 'failed', { error: poll.code });
+  if (poll.kind === 'failed') return failedCodeOutcome(node, poll.code);
   if (poll.kind !== 'status' || !poll.status) return null;
+  if (isPopAuthJobError(poll.status.error)) return popUpgradeOutcome(node);
   if (poll.status.error === 'UPGRADE_CANCELLED') return outcome(node, 'cancelled');
   if (poll.status.state === 'downloading' || poll.status.state === 'executing') return 'busy';
   if (poll.status.state === 'idle' && poll.status.error) {
@@ -164,7 +179,7 @@ export async function waitNodeUpgrade(
   const start = await startNodeUpgrade(ctx, node.id, versionFlag);
   if (start.kind === 'alreadyLatest')
     return outcome(node, 'alreadyLatest', { version: node.version });
-  if (start.kind === 'failed') return outcome(node, 'failed', { error: start.code });
+  if (start.kind === 'failed') return failedCodeOutcome(node, start.code);
   if (start.kind === 'unconfirmed') return outcome(node, 'unconfirmed', { error: start.code });
   let sawBusy = false;
   while (Date.now() - started < BUDGET_MS) {
@@ -231,7 +246,7 @@ function startOutcome(
   if (start.kind === 'alreadyLatest') {
     return outcome(node, 'alreadyLatest', { version: node.version, error: start.code });
   }
-  if (start.kind === 'failed') return outcome(node, 'failed', { error: start.code });
+  if (start.kind === 'failed') return failedCodeOutcome(node, start.code);
   if (start.kind === 'unconfirmed') return outcome(node, 'unconfirmed', { error: start.code });
   return outcome(node, 'done', { error: start.code });
 }
@@ -243,8 +258,12 @@ async function upgradeOneNode(
   versionFlag: string | undefined,
   wait: boolean
 ): Promise<UpgradeOutcome> {
-  if (wait) return waitNodeUpgrade(ctx, node, latestVersion, versionFlag);
-  return startOutcome(node, await startNodeUpgrade(ctx, node.id, versionFlag));
+  try {
+    if (wait) return await waitNodeUpgrade(ctx, node, latestVersion, versionFlag);
+    return startOutcome(node, await startNodeUpgrade(ctx, node.id, versionFlag));
+  } catch (error) {
+    throw remapPopNodeError(error, node.name);
+  }
 }
 
 export async function runUpgradeBatch(
@@ -281,6 +300,20 @@ export function upgradeExitCode(outcomes: UpgradeOutcome[]): number {
 
 export function uninstallPath(nodeId: string): string {
   return `/api/mesh/nodes/${nodeId}/uninstall`;
+}
+
+export async function postNodeUninstall(ctx: CliContext, node: MeshNode): Promise<void> {
+  try {
+    await ctx.http.json(
+      SELF_NODE_ID,
+      'POST',
+      uninstallPath(node.id),
+      {},
+      { withNodeCookies: [node.id] }
+    );
+  } catch (error) {
+    throw remapPopNodeError(error, node.name);
+  }
 }
 
 export function parseUpgradeIds(raw: string): string[] {

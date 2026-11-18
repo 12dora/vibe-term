@@ -20,7 +20,16 @@ import { command as login } from './login';
 const ENTRY = 'http://entry.example:9883';
 const ENTRY_NODE = 'e'.repeat(32);
 const NODE_A = 'a'.repeat(32);
+const NODE_HOME = 'b'.repeat(32);
 const dirs: string[] = [];
+
+function expectLivePop(sessSk?: string, sessPk?: string): void {
+  const sk = decodeBase64url(sessSk ?? '');
+  const pk = decodeBase64url(sessPk ?? '');
+  expect(sk.some((byte) => byte !== 0)).toBe(true);
+  expect(pk.some((byte) => byte !== 0)).toBe(true);
+  expect(pk.byteLength).toBe(32);
+}
 
 afterEach(async () => {
   delete process.env.VIBETERM_PASSWORD;
@@ -139,6 +148,79 @@ describe('vibeterm login --code', () => {
     expect(redeems.every((row) => !row.cookie || !/vibeterm_[st]_/.test(row.cookie))).toBe(true);
     expect(stderr.text()).toContain('logging in to self ...');
     expect(stderr.text()).toContain('logged in to office: ok');
+  });
+
+  test('a partial login code reuses the stored self pair', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const secret = generateLoginCodeSecret();
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_HOME]: 'home' },
+      loginCode: { secret },
+    });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+    await login.run(ctx, []);
+    const storedPk = ctx.sessions.entry(ENTRY)?.nodes.self.sessPk;
+    const storedSk = ctx.sessions.entry(ENTRY)?.nodes.self.sessSk;
+    expect(storedPk).toBeTruthy();
+
+    const exit = await login.run(ctx, ['--code', makeCode(secret, [ENTRY_NODE, NODE_A])]);
+    expect(exit).toBe(0);
+    const after = ctx.sessions.entry(ENTRY);
+    expect(after?.nodes.self.sessPk).toBe(storedPk);
+    expect(after?.nodes[NODE_A].sessPk).toBe(storedPk);
+    expect(after?.nodes[NODE_HOME].sessPk).toBe(storedPk);
+    expectLivePop(after?.nodes.self.sessSk, after?.nodes.self.sessPk);
+    expect(gateway.redeemBodies.every((row) => row.body.sess_pk === storedPk)).toBe(true);
+    expect(after?.nodes.self.sessSk).toBe(storedSk);
+  });
+
+  test('an all-nodes login code generates a fresh pair', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const secret = generateLoginCodeSecret();
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_HOME]: 'home' },
+      loginCode: { secret },
+    });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+    await login.run(ctx, []);
+    const storedPk = ctx.sessions.entry(ENTRY)?.nodes.self.sessPk;
+    expect(storedPk).toBeTruthy();
+
+    const exit = await login.run(ctx, [
+      '--code',
+      makeCode(secret, [ENTRY_NODE, NODE_A, NODE_HOME]),
+    ]);
+    expect(exit).toBe(0);
+    const after = ctx.sessions.entry(ENTRY);
+    expect(after?.nodes.self.sessPk).toBeTruthy();
+    expect(after?.nodes.self.sessPk).not.toBe(storedPk);
+    expect(after?.nodes[NODE_A].sessPk).toBe(after?.nodes.self.sessPk);
+    expect(after?.nodes[NODE_HOME].sessPk).toBe(after?.nodes.self.sessPk);
+    expectLivePop(after?.nodes.self.sessSk, after?.nodes.self.sessPk);
+  });
+
+  test('a login code with no stored pair generates a fresh pair', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const secret = generateLoginCodeSecret();
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office' },
+      loginCode: { secret },
+    });
+    const { ctx } = await testContext(gateway, { json: true });
+    expect(ctx.sessions.entry(ENTRY)).toBeNull();
+
+    const exit = await login.run(ctx, ['--code', makeCode(secret, [ENTRY_NODE, NODE_A])]);
+    expect(exit).toBe(0);
+    const stored = ctx.sessions.entry(ENTRY);
+    expect(stored?.nodes.self.sessPk).toBeTruthy();
+    expect(stored?.nodes[NODE_A].sessPk).toBe(stored?.nodes.self.sessPk);
+    expect(gateway.redeemBodies[0].body.sess_pk).toBe(stored?.nodes.self.sessPk);
+    expectLivePop(stored?.nodes.self.sessSk, stored?.nodes.self.sessPk);
   });
 
   test('--code conflicts with password/totp/user/all-nodes/--node', async () => {

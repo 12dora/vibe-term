@@ -27,6 +27,13 @@ const NODE_STUCK = 'd'.repeat(32);
 const NODE_BOOM = 'f'.repeat(32);
 const dirs: string[] = [];
 
+function expectLivePop(sessSk?: string, sessPk?: string): void {
+  const parsed = parsePopKey(sessSk, sessPk);
+  expect(parsed).toBeTruthy();
+  expect(parsed?.sessSk.some((byte) => byte !== 0)).toBe(true);
+  expect(parsed?.sessPk.some((byte) => byte !== 0)).toBe(true);
+}
+
 afterEach(async () => {
   delete process.env.VIBETERM_PASSWORD;
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -259,8 +266,9 @@ describe('vibeterm login', () => {
     const after = ctx.sessions.entry(ENTRY);
     expect(after?.nodes[NODE_A].sessSk).toBe(keyA);
     expect(after?.nodes[NODE_A].sessPk).toBe(pkA);
-    expect(after?.nodes[NODE_HOME].sessSk).toBeTruthy();
-    expect(after?.nodes[NODE_HOME].sessSk).not.toBe(keyHome);
+    expect(after?.nodes[NODE_HOME].sessSk).toBe(keyHome);
+    expect(after?.nodes[NODE_HOME].sessPk).toBe(pkA);
+    expect(after?.nodes.self.sessPk).toBe(before?.nodes.self.sessPk);
 
     const stored = parsePopKey(after?.nodes[NODE_A].sessSk, after?.nodes[NODE_A].sessPk);
     expect(stored).toBeTruthy();
@@ -272,6 +280,44 @@ describe('vibeterm login', () => {
         popTargetFromUrl('GET', `${ENTRY}/api/x`)
       ).ok
     ).toBe(true);
+  });
+
+  test('login --node reuses the stored self pair; full login rotates every node', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_HOME]: 'home' },
+    });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+    await login.run(ctx, []);
+
+    const first = ctx.sessions.entry(ENTRY);
+    const selfPk = first?.nodes.self.sessPk;
+    const selfSk = first?.nodes.self.sessSk;
+    expect(selfPk).toBeTruthy();
+    expect(first?.nodes[NODE_A].sessPk).toBe(selfPk);
+    expect(first?.nodes[NODE_HOME].sessPk).toBe(selfPk);
+    expectLivePop(selfSk, selfPk);
+
+    ctx.globals.node = 'office';
+    await login.run(ctx, []);
+    const partial = ctx.sessions.entry(ENTRY);
+    expect(partial?.nodes.self.sessPk).toBe(selfPk);
+    expect(partial?.nodes[NODE_A].sessPk).toBe(selfPk);
+    expect(partial?.nodes[NODE_HOME].sessPk).toBe(selfPk);
+    expectLivePop(partial?.nodes.self.sessSk, partial?.nodes.self.sessPk);
+    expectLivePop(partial?.nodes[NODE_A].sessSk, partial?.nodes[NODE_A].sessPk);
+
+    ctx.globals.node = null;
+    await login.run(ctx, []);
+    const rotated = ctx.sessions.entry(ENTRY);
+    expect(rotated?.nodes.self.sessPk).toBeTruthy();
+    expect(rotated?.nodes.self.sessPk).not.toBe(selfPk);
+    expect(rotated?.nodes[NODE_A].sessPk).toBe(rotated?.nodes.self.sessPk);
+    expect(rotated?.nodes[NODE_HOME].sessPk).toBe(rotated?.nodes.self.sessPk);
+    expectLivePop(rotated?.nodes.self.sessSk, rotated?.nodes.self.sessPk);
+    expectLivePop(rotated?.nodes[NODE_A].sessSk, rotated?.nodes[NODE_A].sessPk);
   });
 
   test('--node and --all-nodes conflict', async () => {

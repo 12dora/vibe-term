@@ -13,6 +13,7 @@ import {
   startNodeUpgrade,
   upgradeExitCode,
 } from './nodes-upgrade';
+import { popNodeErrorMessage } from './session-pop';
 
 function row(partial: Record<string, unknown> = {}): MeshNode {
   return meshNode(partial) as MeshNode;
@@ -245,6 +246,81 @@ describe('nodes-upgrade batch auth isolation', () => {
     });
     expect(outcomes[1]).toMatchObject({ node: second, name: 'peer-b', outcome: 'alreadyLatest' });
     expect(upgradeExitCode(outcomes)).toBe(1);
+  });
+
+  test('POP_REQUIRED 401 outcome tells the node to run vibeterm login', async () => {
+    const posted: string[] = [];
+    const { ctx } = await built(async (url, init) => {
+      const parsed = new URL(url);
+      if ((init?.method ?? 'GET').toUpperCase() !== 'POST') {
+        return jsonResponse({ error: 'Not found' }, 404);
+      }
+      posted.push(parsed.pathname);
+      if (parsed.pathname.includes(first)) {
+        return jsonResponse({ code: 'POP_REQUIRED' }, 401);
+      }
+      return jsonResponse({ code: 'UPGRADE_ALREADY_LATEST' }, 409);
+    });
+
+    const outcomes = await runUpgradeBatch(ctx, targets, '2.0.9');
+    expect(posted).toEqual([
+      `/api/mesh/nodes/${first}/upgrade`,
+      `/api/mesh/nodes/${second}/upgrade`,
+    ]);
+    expect(outcomes[0]).toEqual({
+      node: first,
+      name: 'peer-a',
+      outcome: 'failed',
+      error: popNodeErrorMessage('peer-a'),
+      hint: 'run: vibeterm login',
+    });
+    expect(outcomes[0].error).toContain('peer-a');
+    expect(outcomes[0].error).toContain('vibeterm login');
+    expect(outcomes[1]).toMatchObject({ node: second, name: 'peer-b', outcome: 'alreadyLatest' });
+    expect(upgradeExitCode(outcomes)).toBe(1);
+  });
+
+  test('auth: job error outcome tells the node to sign in again', async () => {
+    const { ctx } = await built(async (url, init) => {
+      const parsed = new URL(url);
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (!parsed.pathname.endsWith('/upgrade')) return jsonResponse({ error: 'Not found' }, 404);
+      if (parsed.pathname.includes(first)) {
+        if (method === 'POST') return jsonResponse({ state: 'downloading' });
+        return jsonResponse({
+          state: 'idle',
+          targetVersion: null,
+          error: 'auth: POP_REQUIRED',
+        });
+      }
+      if (method === 'POST') return jsonResponse({ code: 'UPGRADE_ALREADY_LATEST' }, 409);
+      return jsonResponse({ state: 'idle' });
+    });
+
+    const outcomes = await runUpgradeBatch(ctx, targets, '2.0.9', undefined, true);
+    expect(outcomes[0]).toEqual({
+      node: first,
+      name: 'peer-a',
+      outcome: 'failed',
+      error: popNodeErrorMessage('peer-a'),
+      hint: 'run: vibeterm login',
+    });
+    expect(outcomes[0].error).toContain('peer-a');
+    expect(outcomes[0].error).toContain('vibeterm login');
+    expect(outcomes[1]).toMatchObject({ node: second, name: 'peer-b', outcome: 'alreadyLatest' });
+    expect(upgradeExitCode(outcomes)).toBe(1);
+  });
+
+  test('single-target POP_REQUIRED throws with the node name', async () => {
+    const { ctx } = await built(async () => jsonResponse({ code: 'POP_REQUIRED' }, 401));
+    const error = (await runUpgradeBatch(ctx, [targets[0]], '2.0.9').catch(
+      (err) => err
+    )) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.exitCode).toBe(3);
+    expect(error.code).toBe('POP_REQUIRED');
+    expect(error.message).toBe(popNodeErrorMessage('peer-a'));
+    expect(error.hint).toBe('run: vibeterm login');
   });
 
   test('single-target 401 still throws AuthError', async () => {

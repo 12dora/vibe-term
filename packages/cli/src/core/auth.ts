@@ -81,11 +81,28 @@ export interface SessionMaterial {
   destroy(): void;
 }
 
+export interface SessionKeyPair {
+  publicKey: Uint8Array;
+  secretKey: Uint8Array;
+}
+
 export interface BuildSessionOptions {
   password: string;
   mode: AuthMode;
   now?: number;
-  generateSessionKeyPair?: () => { publicKey: Uint8Array; secretKey: Uint8Array };
+  generateSessionKeyPair?: () => SessionKeyPair;
+  /** 部分登录复用已有密钥对；函数内会再拷一份，destroy 不会清掉 store 里的字节。 */
+  sessionKeyPair?: SessionKeyPair;
+}
+
+function resolveSessionPair(options: BuildSessionOptions): SessionKeyPair {
+  if (options.sessionKeyPair) {
+    return {
+      publicKey: new Uint8Array(options.sessionKeyPair.publicKey),
+      secretKey: new Uint8Array(options.sessionKeyPair.secretKey),
+    };
+  }
+  return (options.generateSessionKeyPair ?? generateEd25519KeyPair)();
 }
 
 function requireModeField<T>(value: T | null | undefined, field: string): T {
@@ -115,7 +132,7 @@ export async function buildSessionMaterial(options: BuildSessionOptions): Promis
     iterations: kdf.iterations,
     parallelism: kdf.parallelism,
   });
-  const pair = (options.generateSessionKeyPair ?? generateEd25519KeyPair)();
+  const pair = resolveSessionPair(options);
   let kTotp: Uint8Array | null = null;
   let owned = false;
   try {

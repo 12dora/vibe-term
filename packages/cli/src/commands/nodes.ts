@@ -17,7 +17,7 @@ import {
   yn,
 } from '../core/cmd';
 import type { CliContext } from '../core/context';
-import { CliError, NotFoundError, UsageError } from '../core/errors';
+import { AuthError, CliError, NotFoundError, UsageError } from '../core/errors';
 import { renameNodeViaKeyLog, revokeNode } from '../core/nodes-keylog';
 import { printPortsTable } from '../core/nodes-ports';
 import {
@@ -49,11 +49,12 @@ import {
 import {
   fetchUpgradeLatest,
   parseUpgradeInvocation,
+  postNodeUninstall,
   runUpgradeBatch,
   selectUpgradeTargets,
-  uninstallPath,
   upgradeExitCode,
 } from '../core/nodes-upgrade';
+import { isPopErrorCode, popNodeAuthError } from '../core/session-pop';
 import { op, upgradeCancel } from './nodes-ops';
 import { ports } from './nodes-ports';
 import { relay } from './nodes-relay';
@@ -415,15 +416,7 @@ const uninstall: SubHandler = async (ctx, flags, positionals) => {
   rejectExtra(positionals, 1);
   const node = await findMeshNode(ctx, ref);
   await confirmOrYes(flags, `uninstall VibeTerm on ${node.name} (${node.id})`);
-  await ctx.http.json(
-    SELF_NODE_ID,
-    'POST',
-    uninstallPath(node.id),
-    {},
-    {
-      withNodeCookies: [node.id],
-    }
-  );
+  await postNodeUninstall(ctx, node);
   const result = await revokeNode(ctx, node.id, flagString(flags, 'reason') ?? 'uninstall');
   emit(ctx, { node: node.id, scheduled: true, revoked: true, result }, () =>
     ctx.out.line(`uninstall scheduled and revoked ${node.name}`)
@@ -434,7 +427,10 @@ const PAUSE_ERROR_TEXT: Record<string, string> = {
   CANNOT_PAUSE_SELF: 'cannot pause this machine',
 };
 
-function rethrowPauseError(error: unknown): never {
+function rethrowPauseError(error: unknown, nodeName: string): never {
+  if (error instanceof AuthError && isPopErrorCode(error.code)) {
+    throw popNodeAuthError(nodeName, error.code);
+  }
   const text = error instanceof Error ? error.message : String(error);
   for (const [code, message] of Object.entries(PAUSE_ERROR_TEXT)) {
     if (text.includes(code)) throw new CliError(`${message} (${code})`);
@@ -458,7 +454,7 @@ async function postPauseResume(
     );
     emit(ctx, result, () => ctx.out.line(`${action}d ${node.name} (${node.id})`));
   } catch (error) {
-    rethrowPauseError(error);
+    rethrowPauseError(error, node.name);
   }
 }
 

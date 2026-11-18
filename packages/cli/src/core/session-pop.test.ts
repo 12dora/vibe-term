@@ -1,9 +1,13 @@
 import { describe, expect, test } from 'bun:test';
+import { generateEd25519KeyPair } from '@vibeterm/shared/auth';
 import {
   POP_ERROR_MESSAGE_ZH,
+  copyPopKey,
+  isPopAuthJobError,
   popAuthError,
   popCodeFromMessage,
   popErrorMessage,
+  popNodeErrorMessage,
 } from './session-pop';
 
 describe('PoP error copy', () => {
@@ -37,5 +41,32 @@ describe('popCodeFromMessage', () => {
       if (prev === undefined) delete process.env.VIBETERM_CLI_LANG;
       else process.env.VIBETERM_CLI_LANG = prev;
     }
+  });
+
+  test('popNodeErrorMessage names the node and reuses the PoP copy', () => {
+    expect(popNodeErrorMessage('office')).toBe(`office: ${popErrorMessage()}`);
+    expect(popNodeErrorMessage('office')).toContain('vibeterm login');
+  });
+
+  test('isPopAuthJobError matches POP codes and auth: job errors', () => {
+    expect(isPopAuthJobError('POP_REQUIRED')).toBe(true);
+    expect(isPopAuthJobError('POP_INVALID')).toBe(true);
+    expect(isPopAuthJobError('auth: POP_REQUIRED')).toBe(true);
+    expect(isPopAuthJobError('auth: NODE_LOGIN_REQUIRED')).toBe(true);
+    expect(isPopAuthJobError('UPGRADE_FAILED')).toBe(false);
+  });
+
+  test('copyPopKey does not share buffers with the source', () => {
+    const pair = generateEd25519KeyPair();
+    const original = { sessSk: pair.secretKey, sessPk: pair.publicKey };
+    const copy = copyPopKey(original);
+    expect(copy.sessSk).toEqual(original.sessSk);
+    expect(copy.sessPk).toEqual(original.sessPk);
+    expect(copy.sessSk).not.toBe(original.sessSk);
+    expect(copy.sessPk).not.toBe(original.sessPk);
+    copy.sessSk.fill(0);
+    copy.sessPk.fill(0);
+    expect(original.sessSk.some((byte) => byte !== 0)).toBe(true);
+    expect(original.sessPk.some((byte) => byte !== 0)).toBe(true);
   });
 });
