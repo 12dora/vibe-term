@@ -2494,7 +2494,7 @@ export const I18N_RESOURCES = {
         "usePasskey": "Use passkey",
         "passkeySelect": "Choose a passkey",
         "passkeyTwice": "You'll be asked for your passkey twice.",
-        "passwordOnlyRelay": "This node has joined a relay. Removing a node also renews relay credentials, so enter your account password.",
+        "passwordOnlyRelay": "Connected to a relay: removing a node also renews relay credentials. Enter your account password.",
         "purpose": {
           "enroll": "Add a node",
           "admit": "Approve the new node",

@@ -346,6 +346,42 @@ describe('任务在目标端吃到 401（`auth: <code>`）', () => {
     expect(getMeshNodesState().nodes[0].loggedIn).toBe(false);
   });
 
+  test('轮询回 POP / 须先登录码：同样标成未登录并带 needsLogin', async () => {
+    for (const code of ['POP_REQUIRED', 'NODE_LOGIN_REQUIRED']) {
+      setMeshNodesStateForTest({
+        nodes: [
+          {
+            id: NODE_ID,
+            name: 'node-a',
+            publicKey: 'AAAA',
+            online: true,
+            reach: 'lan',
+            version: '2.0.0',
+            direct_capable: false,
+            inventory: null,
+            loggedIn: true,
+          },
+        ],
+      });
+      const result = await watchUpgrade({
+        nodeId: NODE_ID,
+        targetVersion: '2.1.0',
+        sawActive: true,
+        unconfirmedStart: false,
+        io: stubIo({ poll: async () => ({ kind: 'failed', code }) }),
+        signal: new AbortController().signal,
+        describeError: (c: string) => upgradeErrorText(t, c),
+        phase: () => undefined,
+      });
+      expect(result).toEqual({
+        kind: 'failed',
+        error: 'nodes.upgrade.loginRequired',
+        needsLogin: true,
+      });
+      expect(getMeshNodesState().nodes[0].loggedIn).toBe(false);
+    }
+  });
+
   test('watchUpgrade 的失败结论带 needsLogin；普通失败串不标未登录', async () => {
     const ctx = (error: string) => ({
       nodeId: NODE_ID,

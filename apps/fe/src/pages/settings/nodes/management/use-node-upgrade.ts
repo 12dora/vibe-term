@@ -144,9 +144,19 @@ async function versionConfirmed(ctx: UpgradeWatchContext, strict: boolean): Prom
 
 /** 任务在目标端吃到 401：把这一行标成未登录，行内的登录按钮随之出现。 */
 function failedIdle(ctx: UpgradeWatchContext, error: string): UpgradeWatchResult {
-  if (!isAuthJobError(error)) return { kind: 'failed', error: ctx.describeError(error) };
+  return failedWithLogin(ctx, error, isAuthJobError(error));
+}
+
+/** 失败收尾；`needsLogin` 时同时把这一行标成未登录（轮询里的 POP / 须先登录码同理）。 */
+function failedWithLogin(
+  ctx: UpgradeWatchContext,
+  code: string,
+  needsLogin: boolean
+): UpgradeWatchResult {
+  const error = ctx.describeError(code);
+  if (!needsLogin) return { kind: 'failed', error };
   markLoggedOut(ctx.nodeId);
-  return { kind: 'failed', error: ctx.describeError(error), needsLogin: true };
+  return { kind: 'failed', error, needsLogin: true };
 }
 
 /** 目标回到 idle 时的收尾判定；拿不准就返回 `null`，继续等下一轮。 */
@@ -183,7 +193,7 @@ export async function watchUpgrade(ctx: UpgradeWatchContext): Promise<UpgradeWat
     if (poll.kind === 'failed') {
       // 目标可能是升完重启才把会话弄丢的：版本对上就算成功，别把一次成功的升级判成失败。
       if (await versionConfirmed(ctx, true)) return { kind: 'done' };
-      return { kind: 'failed', error: ctx.describeError(poll.code) };
+      return failedWithLogin(ctx, poll.code, needsNodeLogin(poll.code));
     }
     if (poll.kind === 'unreachable') {
       ctx.phase(sawActive || ctx.unconfirmedStart ? 'restarting' : 'pending');
