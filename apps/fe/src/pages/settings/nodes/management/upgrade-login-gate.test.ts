@@ -20,7 +20,7 @@ import {
   joinSummarySentences,
   upgradeSkipCounts,
 } from './upgrade-batch';
-import { classifyPollFailure } from './upgrade-io';
+import { classifyPollFailure, loginForUpgrade, setSelfLoginLoaderForTest } from './upgrade-io';
 import {
   type UpgradeIo,
   type UpgradeStartOutcome,
@@ -317,6 +317,28 @@ describe('startUpgradeWithLogin 遇到 PoP 钥对不上', () => {
     expect(await popRetryLogins(undefined)).toEqual([NODE_ID]);
   });
 
+  test('入口补登败在凭证：返回须先登录，但不连累刚登上的目标行', async () => {
+    const io = stubIo({
+      start: async () => popRequired(),
+      staleBindings: async () => [NODE_ID, 'self'],
+      login: async (id) => (id === 'self' ? { ok: false, code: 'UNKNOWN_NODE' } : { ok: true }),
+    });
+    const outcome = await startUpgradeWithLogin(params(io));
+    expect(outcome).toEqual({ kind: 'failed', code: 'NODE_LOGIN_REQUIRED' });
+    expect(getMeshNodesState().nodes[0].loggedIn).toBe(true);
+  });
+
+  test('目标补登败在凭证：标记的是目标行', async () => {
+    const io = stubIo({
+      start: async () => popRequired(),
+      staleBindings: async () => [NODE_ID, 'self'],
+      login: async (id) => (id === NODE_ID ? { ok: false, code: 'NO_SESSION_KEY' } : { ok: true }),
+    });
+    const outcome = await startUpgradeWithLogin(params(io));
+    expect(outcome).toEqual({ kind: 'failed', code: 'NODE_LOGIN_REQUIRED' });
+    expect(getMeshNodesState().nodes[0].loggedIn).toBe(false);
+  });
+
   test('入口补登败在传输层：说连接不上，不标未登录', async () => {
     const io = stubIo({
       start: async () => popRequired(),
@@ -363,6 +385,31 @@ describe('startUpgradeWithLogin 遇到 PoP 钥对不上', () => {
   test('轮询里的 POP 码是确定性结论，不当「重启中」继续等', () => {
     expect(classifyPollFailure(401, 'POP_REQUIRED')).toBe('definitive');
     expect(classifyPollFailure(502, 'POP_INVALID')).toBe('definitive');
+  });
+});
+
+describe('loginForUpgrade 对入口（self）的路由', () => {
+  afterEach(() => setSelfLoginLoaderForTest());
+
+  test('self 走 loginSelf（允许通行密钥仪式），并发调用共享同一次登录', async () => {
+    const calls: Array<{ allowPasskeyPrompt?: boolean }> = [];
+    setSelfLoginLoaderForTest(async () => ({
+      loginSelf: async (opts) => {
+        calls.push({ allowPasskeyPrompt: opts?.allowPasskeyPrompt });
+        await Promise.resolve();
+        return { ok: true };
+      },
+    }));
+    const results = await Promise.all([loginForUpgrade('self'), loginForUpgrade('self')]);
+    expect(results).toEqual([{ ok: true }, { ok: true }]);
+    expect(calls).toEqual([{ allowPasskeyPrompt: true }]);
+  });
+
+  test('登录模块加载失败：按传输层失败返回，不抛', async () => {
+    setSelfLoginLoaderForTest(async () => {
+      throw new Error('chunk');
+    });
+    expect(await loginForUpgrade('self')).toEqual({ ok: false, code: 'NETWORK_ERROR' });
   });
 });
 

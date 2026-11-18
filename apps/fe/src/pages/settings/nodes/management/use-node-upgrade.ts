@@ -272,8 +272,9 @@ async function reloginForUpgrade(
     if (classifyNodeLoginFailure(result.code) === 'unreachable') {
       return { kind: 'failed', code: 'NODE_UNREACHABLE_LOGIN' };
     }
-    // 这是一次真的登录尝试给出的判决（不是一发 401），因此可以就地翻成未登录。
-    markLoggedOut(p.row.id);
+    // 这是一次真的登录尝试给出的判决（不是一发 401），因此可以就地翻成未登录；
+    // 只标登录真正失败的那台，入口（self）失败不能连累刚登上的目标行。
+    if (id !== SELF_NODE_ID) markLoggedOut(id);
     return { kind: 'failed', code: 'NODE_LOGIN_REQUIRED' };
   }
   return null;

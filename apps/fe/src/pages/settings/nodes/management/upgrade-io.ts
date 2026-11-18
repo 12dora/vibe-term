@@ -12,7 +12,7 @@ import {
 } from '@/auth/session-key-store';
 import { loadPopState, popBindingKeyId, sessionPopKeyId } from '@/auth/session-pop-client';
 import { getMeshNodesState, refreshMeshNodes } from '@/node/mesh-nodes';
-import { defaultApiClient } from '@vibeterm/api-client';
+import { SELF_NODE_ID, defaultApiClient } from '@vibeterm/api-client';
 import { UPGRADE_CANCELLED, type UpgradeStatus, sleepOrAbort } from '@vibeterm/shared';
 import type { NodeUpgradeLatest } from './types';
 
@@ -213,8 +213,34 @@ async function readNodeVersion(nodeId: string): Promise<string | null | undefine
   return node ? (node.version ?? null) : undefined;
 }
 
+type SelfLoginModule = { loginSelf: typeof import('@/auth/session-login').loginSelf };
+
+let loadSelfLogin: () => Promise<SelfLoginModule> = () => import('@/auth/session-login');
+let selfLoginInFlight: Promise<LoginNodeResult> | null = null;
+
+/** 仅测试使用：替换懒加载的登录模块；不传则还原。 */
+export function setSelfLoginLoaderForTest(loader?: () => Promise<SelfLoginModule>): void {
+  loadSelfLogin = loader ?? (() => import('@/auth/session-login'));
+  selfLoginInFlight = null;
+}
+
+/**
+ * 入口（`self`）在 `/api/mesh/nodes` 里挂的是它的真实 id，`ensureNodeLogin('self')` 查不到，
+ * 因此与登录页一样走 `loginSelf`；它在登录 chunk 里，只在真需要时才懒加载。并发调用共享同一次登录。
+ */
+function loginEntryForUpgrade(): Promise<LoginNodeResult> {
+  selfLoginInFlight ??= loadSelfLogin()
+    .then((mod) => mod.loginSelf({ allowPasskeyPrompt: true }))
+    .catch((): LoginNodeResult => ({ ok: false, code: 'NETWORK_ERROR' }))
+    .finally(() => {
+      selfLoginInFlight = null;
+    });
+  return selfLoginInFlight;
+}
+
 /** 升级是用户按下按钮才发生的，因此这条登录允许当场弹一次通行密钥仪式。 */
 export function loginForUpgrade(nodeId: string): Promise<LoginNodeResult> {
+  if (nodeId === SELF_NODE_ID) return loginEntryForUpgrade();
   return ensureNodeLogin(nodeId, { allowPasskeyPrompt: true });
 }
 
