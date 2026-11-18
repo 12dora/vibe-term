@@ -320,6 +320,84 @@ describe('vibeterm login', () => {
     expectLivePop(rotated?.nodes[NODE_A].sessSk, rotated?.nodes[NODE_A].sessPk);
   });
 
+  test('login --node generates a fresh pair when the self session is expired', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_HOME]: 'home' },
+    });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+    await login.run(ctx, []);
+    const selfPk = ctx.sessions.entry(ENTRY)?.nodes.self.sessPk;
+    expect(selfPk).toBeTruthy();
+    const self = ctx.sessions.entry(ENTRY)?.nodes.self;
+    ctx.sessions.setNodeSession(ENTRY, {
+      nodeId: 'self',
+      sid: self?.sid ?? '',
+      expiresAt: 1,
+    });
+    ctx.sessions.save();
+
+    ctx.globals.node = 'office';
+    await login.run(ctx, []);
+    const after = ctx.sessions.entry(ENTRY);
+    expect(after?.nodes.self.sessPk).toBeTruthy();
+    expect(after?.nodes.self.sessPk).not.toBe(selfPk);
+    expect(after?.nodes[NODE_A].sessPk).toBe(after?.nodes.self.sessPk);
+    expect(after?.nodes[NODE_HOME].sessPk).toBe(selfPk);
+    expectLivePop(after?.nodes.self.sessSk, after?.nodes.self.sessPk);
+  });
+
+  test('login --node generates a fresh pair when the self session is missing', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_HOME]: 'home' },
+    });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+    await login.run(ctx, []);
+    const selfPk = ctx.sessions.entry(ENTRY)?.nodes.self.sessPk;
+    expect(selfPk).toBeTruthy();
+    ctx.sessions.clearNodeSession(ENTRY, 'self');
+    ctx.sessions.save();
+
+    ctx.globals.node = 'office';
+    await login.run(ctx, []);
+    const after = ctx.sessions.entry(ENTRY);
+    expect(after?.nodes.self.sessPk).toBeTruthy();
+    expect(after?.nodes.self.sessPk).not.toBe(selfPk);
+    expect(after?.nodes[NODE_A].sessPk).toBe(after?.nodes.self.sessPk);
+    expect(after?.nodes[NODE_HOME].sessPk).toBe(selfPk);
+    expectLivePop(after?.nodes.self.sessSk, after?.nodes.self.sessPk);
+  });
+
+  test('login --node generates a fresh pair when the stored uid differs', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_HOME]: 'home' },
+    });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+    await login.run(ctx, []);
+    const selfPk = ctx.sessions.entry(ENTRY)?.nodes.self.sessPk;
+    expect(selfPk).toBeTruthy();
+    ctx.sessions.setIdentity(ENTRY, { uid: 'other-uid', username: 'other' });
+    ctx.sessions.save();
+
+    ctx.globals.node = 'office';
+    await login.run(ctx, []);
+    const after = ctx.sessions.entry(ENTRY);
+    expect(after?.nodes.self.sessPk).toBeTruthy();
+    expect(after?.nodes.self.sessPk).not.toBe(selfPk);
+    expect(after?.nodes[NODE_A].sessPk).toBe(after?.nodes.self.sessPk);
+    expect(after?.nodes[NODE_HOME].sessPk).toBe(selfPk);
+    expect(after?.uid).toBe(user.uid);
+    expectLivePop(after?.nodes.self.sessSk, after?.nodes.self.sessPk);
+  });
+
   test('--node and --all-nodes conflict', async () => {
     const user = await createFakeUser({ password: 'pw' });
     const gateway = createFakeGateway({ user });

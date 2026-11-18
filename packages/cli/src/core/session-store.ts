@@ -5,6 +5,7 @@
 // 读入后请求不带 PoP。密码与根种子仍然绝不落盘。
 
 import { rmSync } from 'node:fs';
+import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import { type ConfigEnv, sessionFilePath } from './config';
 import type { UsageError } from './errors';
 import {
@@ -263,6 +264,23 @@ export class SessionStore {
     rmSync(this.path, { force: true });
     this.data = emptyFile();
   }
+}
+
+/**
+ * 部分登录才复用 stored self 密钥：self 会话必须仍有效，且 entry 上记下的 uid
+ * 与正在登录的账户一致。过期、缺失或换账户则返回 null，调用方应生成新对。
+ */
+export function reusableSelfPopKey(
+  store: SessionStore,
+  entry: string,
+  uid: string | null | undefined
+): PopKeyPair | null {
+  if (!uid) return null;
+  const record = store.entry(entry);
+  if (!record || record.uid !== uid) return null;
+  const self = record.nodes[SELF_NODE_ID];
+  if (!isLiveNodeSession(self)) return null;
+  return parsePopKey(self.sessSk, self.sessPk);
 }
 
 /** 落盘的 cookie 罐：每次写入立即持久化，命令中途被打断也不会丢掉刚拿到的会话。 */

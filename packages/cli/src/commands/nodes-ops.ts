@@ -3,9 +3,15 @@
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import { type SubHandler, confirmOrYes, emit, rejectExtra, requireArg } from '../core/cmd';
 import { CliError, UsageError } from '../core/errors';
+import { nodeLoginRequiredAuthError } from '../core/http';
 import { findMeshNode } from '../core/nodes-roster';
 import { cancelNodeUpgrade } from '../core/nodes-upgrade';
-import { isPopAuthJobError, popNodeAuthError, remapPopNodeError } from '../core/session-pop';
+import {
+  isNodeLoginRequiredJobError,
+  isPopAuthJobError,
+  popNodeAuthError,
+  remapPopNodeError,
+} from '../core/session-pop';
 
 export const op: SubHandler = async (ctx, _flags, positionals) => {
   const action = requireArg(positionals, 0, 'op (clear)');
@@ -41,6 +47,9 @@ export const upgradeCancel: SubHandler = async (ctx, flags, positionals) => {
   if (cancelled.kind !== 'cancelled') {
     if (isPopAuthJobError(cancelled.code)) {
       throw popNodeAuthError(node.name, cancelled.code);
+    }
+    if (isNodeLoginRequiredJobError(cancelled.code)) {
+      throw nodeLoginRequiredAuthError(node.id);
     }
     throw new CliError(`upgrade cancel failed: ${cancelled.code ?? 'UPGRADE_FAILED'}`);
   }

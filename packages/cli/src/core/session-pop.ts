@@ -35,10 +35,25 @@ export function isPopErrorCode(code: string | null | undefined): boolean {
   return code === POP_REQUIRED || code === POP_INVALID;
 }
 
-/** 远程 job 失败串：`auth: POP_REQUIRED` 等；裸 POP_* 码同样视为需要重新登录。 */
+const AUTH_JOB_PREFIX = 'auth:';
+
+function unwrapAuthJobCode(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith(AUTH_JOB_PREFIX)) return trimmed;
+  return trimmed.slice(AUTH_JOB_PREFIX.length).trim();
+}
+
+/** `NODE_LOGIN_REQUIRED` 或 job 的 `auth: NODE_LOGIN_REQUIRED`，走未登录文案而不是 PoP。 */
+export function isNodeLoginRequiredJobError(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return unwrapAuthJobCode(text) === 'NODE_LOGIN_REQUIRED';
+}
+
+/** 远程 job 失败串：裸 POP_* 与 `auth: POP_*` 用 PoP 文案；NODE_LOGIN_REQUIRED 除外。 */
 export function isPopAuthJobError(text: string | null | undefined): boolean {
   if (!text) return false;
-  return isPopErrorCode(text) || text.startsWith('auth:');
+  if (isNodeLoginRequiredJobError(text)) return false;
+  return isPopErrorCode(text) || text.startsWith(AUTH_JOB_PREFIX);
 }
 
 /** 拷贝会话密钥，避免 destroy()/fill(0) 清掉仍被 store 引用的字节。不要用 Uint8Array.from。 */

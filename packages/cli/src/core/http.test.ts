@@ -18,6 +18,7 @@ import {
   isAuthFlowPath,
   isSessionAuthFailure,
   loginRequiredError,
+  nodeLoginRequiredAuthError,
   parseSessionSetCookie,
   parseSetSessionHeader,
 } from './http';
@@ -670,5 +671,13 @@ describe('session PoP header', () => {
     }
     const login = loginRequiredError('self', JSON.stringify({ code: 'expired' }));
     expect(login.message).toContain('not authenticated');
+  });
+
+  test('nodeLoginRequiredAuthError uses the NODE_LOGIN_REQUIRED copy, not PoP', () => {
+    const error = nodeLoginRequiredAuthError(NODE);
+    expect(error.message).toBe(`not authenticated for node ${NODE} (NODE_LOGIN_REQUIRED)`);
+    expect(error.hint).toBe(`run: vibeterm login --node ${NODE}`);
+    expect(error.code).toBe('NODE_LOGIN_REQUIRED');
+    expect(error.message).not.toContain('Session key missing');
   });
 });

@@ -17,6 +17,7 @@ import {
   SessionStore,
   isLiveNodeSession,
   parseSessionFile,
+  reusableSelfPopKey,
   sessionFilePrivacyError,
 } from './session-store';
 
@@ -43,6 +44,45 @@ describe('isLiveNodeSession', () => {
     expect(isLiveNodeSession({ nodeId: 'self', sid: 'sid', expiresAt: 0 }, now)).toBe(true);
     expect(isLiveNodeSession({ nodeId: 'self', sid: 'sid', expiresAt: now - 1 }, now)).toBe(false);
     expect(isLiveNodeSession({ nodeId: 'self', sid: 'sid', expiresAt: now + 1 }, now)).toBe(true);
+  });
+});
+
+describe('reusableSelfPopKey', () => {
+  test('reuses only a live self session that belongs to the same uid', async () => {
+    const dir = join(await tempDir(), 'config');
+    const store = SessionStore.open(dir, {});
+    const pair = generateEd25519KeyPair();
+    const encoded = {
+      sessSk: encodeBase64url(pair.secretKey),
+      sessPk: encodeBase64url(pair.publicKey),
+    };
+    store.setIdentity('http://entry:1', { uid: 'u-1', username: 'admin' });
+    store.setNodeSession('http://entry:1', {
+      nodeId: 'self',
+      sid: 'sid',
+      expiresAt: 0,
+      ...encoded,
+    });
+    store.save();
+
+    const live = reusableSelfPopKey(store, 'http://entry:1', 'u-1');
+    expect(live).toBeTruthy();
+    expect(encodeBase64url(live?.sessPk ?? new Uint8Array())).toBe(encoded.sessPk);
+
+    expect(reusableSelfPopKey(store, 'http://entry:1', 'other')).toBeNull();
+    expect(reusableSelfPopKey(store, 'http://entry:1', null)).toBeNull();
+
+    store.setNodeSession('http://entry:1', { nodeId: 'self', sid: 'sid', expiresAt: 1 });
+    expect(reusableSelfPopKey(store, 'http://entry:1', 'u-1')).toBeNull();
+
+    store.setNodeSession('http://entry:1', {
+      nodeId: 'self',
+      sid: 'sid',
+      expiresAt: 0,
+      ...encoded,
+    });
+    store.clearNodeSession('http://entry:1', 'self');
+    expect(reusableSelfPopKey(store, 'http://entry:1', 'u-1')).toBeNull();
   });
 });
 

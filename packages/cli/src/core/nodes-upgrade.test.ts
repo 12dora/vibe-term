@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import type { MeshNode } from '@vibeterm/api-client/auth/types';
 import { NODE, jsonResponse, meshNode, testContext } from '../commands/cli-test-harness';
 import { AuthError } from './errors';
+import { nodeLoginRequiredAuthError } from './http';
 import {
   cancelNodeUpgrade,
   isBatchEligible,
@@ -311,6 +312,64 @@ describe('nodes-upgrade batch auth isolation', () => {
     expect(upgradeExitCode(outcomes)).toBe(1);
   });
 
+  test('auth: NODE_LOGIN_REQUIRED outcome uses the login-required text, not PoP', async () => {
+    const { ctx } = await built(async (url, init) => {
+      const parsed = new URL(url);
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (!parsed.pathname.endsWith('/upgrade')) return jsonResponse({ error: 'Not found' }, 404);
+      if (parsed.pathname.includes(first)) {
+        if (method === 'POST') return jsonResponse({ state: 'downloading' });
+        return jsonResponse({
+          state: 'idle',
+          targetVersion: null,
+          error: 'auth: NODE_LOGIN_REQUIRED',
+        });
+      }
+      if (method === 'POST') return jsonResponse({ code: 'UPGRADE_ALREADY_LATEST' }, 409);
+      return jsonResponse({ state: 'idle' });
+    });
+
+    const outcomes = await runUpgradeBatch(ctx, targets, '2.0.9', undefined, true);
+    const expected = nodeLoginRequiredAuthError(first);
+    expect(outcomes[0]).toEqual({
+      node: first,
+      name: 'peer-a',
+      outcome: 'failed',
+      error: expected.message,
+      hint: expected.hint,
+    });
+    expect(outcomes[0].error).toContain('not authenticated');
+    expect(outcomes[0].error).not.toContain('Session key missing');
+    expect(outcomes[0].hint).toBe(`run: vibeterm login --node ${first}`);
+    expect(outcomes[1]).toMatchObject({ node: second, name: 'peer-b', outcome: 'alreadyLatest' });
+    expect(upgradeExitCode(outcomes)).toBe(1);
+  });
+
+  test('plain NODE_LOGIN_REQUIRED job error uses the login-required text, not PoP', async () => {
+    const { ctx } = await built(async (url, init) => {
+      const parsed = new URL(url);
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (!parsed.pathname.endsWith('/upgrade')) return jsonResponse({ error: 'Not found' }, 404);
+      if (parsed.pathname.includes(first)) {
+        if (method === 'POST') return jsonResponse({ state: 'downloading' });
+        return jsonResponse({
+          state: 'idle',
+          targetVersion: null,
+          error: 'NODE_LOGIN_REQUIRED',
+        });
+      }
+      if (method === 'POST') return jsonResponse({ code: 'UPGRADE_ALREADY_LATEST' }, 409);
+      return jsonResponse({ state: 'idle' });
+    });
+
+    const outcomes = await runUpgradeBatch(ctx, targets, '2.0.9', undefined, true);
+    const expected = nodeLoginRequiredAuthError(first);
+    expect(outcomes[0].error).toBe(expected.message);
+    expect(outcomes[0].hint).toBe(expected.hint);
+    expect(outcomes[0].error).not.toBe(popNodeErrorMessage('peer-a'));
+    expect(outcomes[0].hint).toContain('vibeterm login');
+  });
+
   test('single-target POP_REQUIRED throws with the node name', async () => {
     const { ctx } = await built(async () => jsonResponse({ code: 'POP_REQUIRED' }, 401));
     const error = (await runUpgradeBatch(ctx, [targets[0]], '2.0.9').catch(
@@ -332,6 +391,9 @@ describe('nodes-upgrade batch auth isolation', () => {
     )) as AuthError;
     expect(error).toBeInstanceOf(AuthError);
     expect(error.exitCode).toBe(3);
+    expect(error.message).toBe(nodeLoginRequiredAuthError(first).message);
+    expect(error.message).toContain('not authenticated');
+    expect(error.message).not.toContain('Session key missing');
     expect(error.hint).toBe(`run: vibeterm login --node ${first}`);
   });
 });

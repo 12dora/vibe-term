@@ -497,3 +497,8 @@ export function loginRequiredError(nodeId: string, body: string): AuthError {
     known ? reason : undefined
   );
 }
+
+/** 作业/结果行里的 `NODE_LOGIN_REQUIRED`（含 `auth:` 前缀）用与 401 相同的未登录文案。 */
+export function nodeLoginRequiredAuthError(nodeId: string): AuthError {
+  return loginRequiredError(nodeId, JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId }));
+}

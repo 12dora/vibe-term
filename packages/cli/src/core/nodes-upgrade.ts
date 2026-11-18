@@ -7,9 +7,14 @@ import { type FlagValues, flagBool, flagString } from './args';
 import { dash, rejectExtra, sleep } from './cmd';
 import type { CliContext } from './context';
 import { AuthError, UsageError } from './errors';
-import { type CookieJar, loginRequiredError } from './http';
+import { type CookieJar, loginRequiredError, nodeLoginRequiredAuthError } from './http';
 import { findMeshNode, listMeshNodesFull } from './nodes-roster';
-import { isPopAuthJobError, popNodeErrorMessage, remapPopNodeError } from './session-pop';
+import {
+  isNodeLoginRequiredJobError,
+  isPopAuthJobError,
+  popNodeErrorMessage,
+  remapPopNodeError,
+} from './session-pop';
 import { isLiveNodeSession } from './session-store';
 
 export interface UpgradeLatest {
@@ -126,9 +131,19 @@ function popUpgradeOutcome(node: MeshNode): UpgradeOutcome {
   });
 }
 
-function failedCodeOutcome(node: MeshNode, code: string | undefined): UpgradeOutcome {
+function loginRequiredUpgradeOutcome(node: MeshNode): UpgradeOutcome {
+  const error = nodeLoginRequiredAuthError(node.id);
+  return outcome(node, 'failed', { error: error.message, hint: error.hint });
+}
+
+function authJobOutcome(node: MeshNode, code: string | undefined): UpgradeOutcome | null {
   if (isPopAuthJobError(code)) return popUpgradeOutcome(node);
-  return outcome(node, 'failed', { error: code });
+  if (isNodeLoginRequiredJobError(code)) return loginRequiredUpgradeOutcome(node);
+  return null;
+}
+
+function failedCodeOutcome(node: MeshNode, code: string | undefined): UpgradeOutcome {
+  return authJobOutcome(node, code) ?? outcome(node, 'failed', { error: code });
 }
 
 function authFailureOutcome(node: MeshNode, error: AuthError): UpgradeOutcome {
@@ -145,7 +160,8 @@ function pollTerminal(
 ): UpgradeOutcome | 'busy' | null {
   if (poll.kind === 'failed') return failedCodeOutcome(node, poll.code);
   if (poll.kind !== 'status' || !poll.status) return null;
-  if (isPopAuthJobError(poll.status.error)) return popUpgradeOutcome(node);
+  const auth = authJobOutcome(node, poll.status.error ?? undefined);
+  if (auth) return auth;
   if (poll.status.error === 'UPGRADE_CANCELLED') return outcome(node, 'cancelled');
   if (poll.status.state === 'downloading' || poll.status.state === 'executing') return 'busy';
   if (poll.status.state === 'idle' && poll.status.error) {

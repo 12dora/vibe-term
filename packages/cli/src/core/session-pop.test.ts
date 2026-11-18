@@ -3,6 +3,7 @@ import { generateEd25519KeyPair } from '@vibeterm/shared/auth';
 import {
   POP_ERROR_MESSAGE_ZH,
   copyPopKey,
+  isNodeLoginRequiredJobError,
   isPopAuthJobError,
   popAuthError,
   popCodeFromMessage,
@@ -52,8 +53,13 @@ describe('popCodeFromMessage', () => {
     expect(isPopAuthJobError('POP_REQUIRED')).toBe(true);
     expect(isPopAuthJobError('POP_INVALID')).toBe(true);
     expect(isPopAuthJobError('auth: POP_REQUIRED')).toBe(true);
-    expect(isPopAuthJobError('auth: NODE_LOGIN_REQUIRED')).toBe(true);
+    expect(isPopAuthJobError('auth: expired')).toBe(true);
+    expect(isPopAuthJobError('auth: NODE_LOGIN_REQUIRED')).toBe(false);
+    expect(isPopAuthJobError('NODE_LOGIN_REQUIRED')).toBe(false);
     expect(isPopAuthJobError('UPGRADE_FAILED')).toBe(false);
+    expect(isNodeLoginRequiredJobError('NODE_LOGIN_REQUIRED')).toBe(true);
+    expect(isNodeLoginRequiredJobError('auth: NODE_LOGIN_REQUIRED')).toBe(true);
+    expect(isNodeLoginRequiredJobError('auth: POP_REQUIRED')).toBe(false);
   });
 
   test('copyPopKey does not share buffers with the source', () => {

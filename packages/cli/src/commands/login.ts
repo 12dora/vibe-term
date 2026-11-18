@@ -33,6 +33,7 @@ import {
 } from '../core/login-fanout';
 import { isInteractive, promptHidden, promptLine, readAllStdin } from '../core/prompt';
 import { copyPopKey } from '../core/session-pop';
+import { reusableSelfPopKey } from '../core/session-store';
 import type { Command } from './types';
 
 const FLAGS = {
@@ -194,9 +195,13 @@ function persistNodePopKey(ctx: CliContext, nodeId: string, material: SessionMat
   ctx.sessions.save();
 }
 
-function reusedSessionKeyPair(ctx: CliContext, nodeRef: string | null) {
+function reusedSessionKeyPair(
+  ctx: CliContext,
+  nodeRef: string | null,
+  uid: string | null | undefined
+) {
   if (!nodeRef) return undefined;
-  const stored = ctx.sessions.popKey(ctx.globals.entry, SELF_NODE_ID);
+  const stored = reusableSelfPopKey(ctx.sessions, ctx.globals.entry, uid);
   if (!stored) return undefined;
   const copy = copyPopKey(stored);
   return { publicKey: copy.sessPk, secretKey: copy.sessSk };
@@ -244,7 +249,7 @@ export async function loginWithPassword(
   const material = await buildSessionMaterial({
     password: opts.password,
     mode,
-    sessionKeyPair: reusedSessionKeyPair(ctx, opts.nodeRef),
+    sessionKeyPair: reusedSessionKeyPair(ctx, opts.nodeRef, mode.uid),
   });
   try {
     const selfOutcome = await loginEntry(ctx, mode, material, totp, opts.timeoutMs);

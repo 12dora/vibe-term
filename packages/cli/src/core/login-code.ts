@@ -35,6 +35,7 @@ import {
   runFanoutTarget,
 } from './login-fanout';
 import { copyPopKey } from './session-pop';
+import { reusableSelfPopKey } from './session-store';
 
 export interface LoginCodeOptions {
   code: string;
@@ -218,14 +219,16 @@ function codeCoversStoredSessions(
 function resolveRedeemKeyPair(
   ctx: CliContext,
   entryNodeId: string,
-  codeNodeIds: readonly string[]
+  codeNodeIds: readonly string[],
+  uid: string | null | undefined
 ): Ed25519KeyPair {
-  const stored = ctx.sessions.popKey(ctx.globals.entry, SELF_NODE_ID);
-  if (stored && !codeCoversStoredSessions(ctx, entryNodeId, codeNodeIds)) {
-    const copy = copyPopKey(stored);
-    return { secretKey: copy.sessSk, publicKey: copy.sessPk };
+  if (codeCoversStoredSessions(ctx, entryNodeId, codeNodeIds)) {
+    return generateEd25519KeyPair();
   }
-  return generateEd25519KeyPair();
+  const stored = reusableSelfPopKey(ctx.sessions, ctx.globals.entry, uid);
+  if (!stored) return generateEd25519KeyPair();
+  const copy = copyPopKey(stored);
+  return { secretKey: copy.sessSk, publicKey: copy.sessPk };
 }
 
 /** 经入口访问任何节点都要先有入口自己的会话：命令没覆盖入口时提前说清楚。 */
@@ -254,7 +257,7 @@ export async function loginWithCode(ctx: CliContext, opts: LoginCodeOptions): Pr
       );
     }
     warnEntryNotCovered(ctx, parts.nodeIds, mode.nodeId);
-    const pair = resolveRedeemKeyPair(ctx, mode.nodeId, parts.nodeIds);
+    const pair = resolveRedeemKeyPair(ctx, mode.nodeId, parts.nodeIds, mode.uid);
     try {
       const ordered = orderNodeIds(parts.nodeIds, mode.nodeId);
       const identitySet = { value: false };
