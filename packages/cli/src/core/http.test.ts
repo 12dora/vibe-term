@@ -18,10 +18,10 @@ import {
   isAuthFlowPath,
   isSessionAuthFailure,
   loginRequiredError,
-  nodeLoginRequiredAuthError,
   parseSessionSetCookie,
   parseSetSessionHeader,
 } from './http';
+import { nodeLoginRequiredAuthError } from './nodes-upgrade';
 import { POP_ERROR_MESSAGE_EN, POP_ERROR_MESSAGE_ZH } from './session-pop';
 import type { TokenSource } from './token-store';
 

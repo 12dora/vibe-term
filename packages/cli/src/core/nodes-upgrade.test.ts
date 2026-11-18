@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises';
 import type { MeshNode } from '@vibeterm/api-client/auth/types';
 import { NODE, jsonResponse, meshNode, testContext } from '../commands/cli-test-harness';
 import { AuthError } from './errors';
-import { nodeLoginRequiredAuthError } from './http';
+import { nodeLoginRequiredAuthError } from './nodes-upgrade';
 import {
   cancelNodeUpgrade,
   isBatchEligible,

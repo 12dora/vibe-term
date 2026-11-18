@@ -7,7 +7,7 @@ import { type FlagValues, flagBool, flagString } from './args';
 import { dash, rejectExtra, sleep } from './cmd';
 import type { CliContext } from './context';
 import { AuthError, UsageError } from './errors';
-import { type CookieJar, loginRequiredError, nodeLoginRequiredAuthError } from './http';
+import { type CookieJar, loginRequiredError } from './http';
 import { findMeshNode, listMeshNodesFull } from './nodes-roster';
 import {
   isNodeLoginRequiredJobError,
@@ -400,4 +400,9 @@ export async function selectUpgradeTargets(
   }
   if (!options.nodeRef) throw new UsageError('missing node (or pass --all / --ids)');
   return [await findMeshNode(ctx, options.nodeRef)];
+}
+
+/** 作业/结果行里的 `NODE_LOGIN_REQUIRED`（含 `auth:` 前缀）用与 401 相同的未登录文案。 */
+export function nodeLoginRequiredAuthError(nodeId: string): AuthError {
+  return loginRequiredError(nodeId, JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId }));
 }

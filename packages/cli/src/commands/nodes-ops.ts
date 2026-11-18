@@ -3,8 +3,8 @@
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import { type SubHandler, confirmOrYes, emit, rejectExtra, requireArg } from '../core/cmd';
 import { CliError, UsageError } from '../core/errors';
-import { nodeLoginRequiredAuthError } from '../core/http';
 import { findMeshNode } from '../core/nodes-roster';
+import { nodeLoginRequiredAuthError } from '../core/nodes-upgrade';
 import { cancelNodeUpgrade } from '../core/nodes-upgrade';
 import {
   isNodeLoginRequiredJobError,
