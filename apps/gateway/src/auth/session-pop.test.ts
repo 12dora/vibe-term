@@ -15,6 +15,7 @@ import {
   PopNonceCache,
   type PopSession,
   WsPopResume,
+  carryRequestPopProven,
   enforceRequestPop,
   evaluatePop,
   markPopForwardingRequest,
@@ -204,6 +205,29 @@ describe('request evidence', () => {
     const d = { now: Date.now(), navKey: () => navKey, nonces: new PopNonceCache() };
     expect(enforceRequestPop(req, session, d)).toBeNull();
     expect(requestPopProvenKey(req)).toBeNull();
+  });
+
+  test('carryRequestPopProven copies the proven key onto a new request', async () => {
+    const url = 'http://localhost/api/mesh/nodes/x/upgrade';
+    const proof = await signPop(signer, popTargetFromUrl('POST', url), Date.now());
+    const req = new Request(url, { method: 'POST', headers: { [POP_HEADER]: proof } });
+    const d = { now: Date.now(), navKey: () => navKey, nonces: new PopNonceCache() };
+    expect(enforceRequestPop(req, session, d)).toBeNull();
+    const clone = new Request(url);
+    expect(requestPopProvenKey(clone)).toBeNull();
+    carryRequestPopProven(req, clone);
+    expect(requestPopProvenKey(clone)).toEqual(pair.publicKey);
+  });
+
+  test('carryRequestPopProven copies nothing when the source only passed via nav ticket', () => {
+    const url = 'http://localhost/api/mesh/nodes/x/upgrade';
+    const nav = issueNavTicket(navKey, session.sid, Date.now()).ticket;
+    const req = new Request(url, { headers: { cookie: `vibeterm_n_self=${nav}` } });
+    const d = { now: Date.now(), navKey: () => navKey, nonces: new PopNonceCache() };
+    expect(enforceRequestPop(req, session, d)).toBeNull();
+    const clone = new Request(url);
+    carryRequestPopProven(req, clone);
+    expect(requestPopProvenKey(clone)).toBeNull();
   });
 
   test('pop_required is granted only for local logins or via a PoP-forwarding entry', () => {

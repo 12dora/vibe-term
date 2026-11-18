@@ -1,9 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  generateEd25519KeyPair,
+  popTargetFromUrl,
+  signEd25519,
+  signPop,
+} from '@vibeterm/shared/auth';
+import { POP_HEADER } from '@vibeterm/shared/http/mesh-headers';
+import { toBase64Url } from '../auth/binary';
+import { POP_ENTRY_PROVEN_HEADER, PopNonceCache, enforceRequestPop } from '../auth/session-pop';
+import { stampedAuthorizedHeaders } from '../mesh/forwarder-headers';
+import {
   UPSTREAM_BODY_MAX_BYTES,
   classifyStagedStartResponse,
   consumeBoundedBody,
   describeUpstream,
+  detachRequest,
   parseStagedStatusBody,
   probeNodeUpgradeStarted,
   pushPackageManifest,
@@ -47,6 +58,42 @@ function floodResponse(bytes: number, status = 200): { response: Response; sent:
   });
   return { response: new Response(body, { status }), sent: () => sent };
 }
+
+describe('detachRequest', () => {
+  test('a proven request keeps POP_ENTRY_PROVEN_HEADER after detach', async () => {
+    const pair = generateEd25519KeyPair();
+    const now = Date.now();
+    const url = 'http://localhost/api/mesh/nodes/x/upgrade';
+    const proof = await signPop(
+      (message) => signEd25519(pair.secretKey, message),
+      popTargetFromUrl('POST', url),
+      now
+    );
+    const req = new Request(url, {
+      method: 'POST',
+      headers: { [POP_HEADER]: proof, cookie: 'vibeterm_s_self=sid' },
+    });
+    expect(
+      enforceRequestPop(
+        req,
+        { sid: 'sid-a', popRequired: true, sessPublicKey: pair.publicKey },
+        { now, navKey: () => new Uint8Array(32), nonces: new PopNonceCache() }
+      )
+    ).toBeNull();
+    const detached = detachRequest(req);
+    expect(detached.headers.get(POP_HEADER)).toBeNull();
+    expect(stampedAuthorizedHeaders(detached, {}, '<sid>')[POP_ENTRY_PROVEN_HEADER]).toBe(
+      toBase64Url(pair.publicKey)
+    );
+  });
+
+  test('an unproven request does not stamp POP_ENTRY_PROVEN_HEADER', () => {
+    const detached = detachRequest(new Request('http://localhost/api/mesh/nodes/x/upgrade'));
+    expect(
+      stampedAuthorizedHeaders(detached, {}, '<sid>')[POP_ENTRY_PROVEN_HEADER]
+    ).toBeUndefined();
+  });
+});
 
 describe('consumeBoundedBody', () => {
   test('reads a small body in full', async () => {

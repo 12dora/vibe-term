@@ -4,7 +4,11 @@ import {
   errorMessage,
   withTimeout,
 } from '@vibeterm/shared';
-import { consumeBoundedBody } from './remote-upgrade-io';
+import {
+  classifyForwardAuthError,
+  consumeBoundedBody,
+  isAuthForwardError,
+} from './remote-upgrade-io';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 
 export type DeliveryStepResult<T> =
@@ -46,15 +50,18 @@ async function runUpgradeDeliveryTree<T>(input: {
   if (input.hasSpeedProbe) {
     const gated = await input.tryNodeGithub(true);
     if (gated.kind === 'done') return gated.snapshot;
+    if (isAuthForwardError(gated.detail)) return input.fail(gated.detail);
     attempts.push({ channel: 'node-github', detail: gated.detail });
   }
   if (input.hasStagedPackage) {
     const pushed = await input.runPushPipeline();
     if (pushed.kind === 'done') return pushed.snapshot;
+    if (isAuthForwardError(pushed.detail)) return input.fail(pushed.detail);
     attempts.push({ channel: 'push', detail: pushed.detail });
   }
   const forced = await input.tryNodeGithub(false);
   if (forced.kind === 'done') return forced.snapshot;
+  if (isAuthForwardError(forced.detail)) return input.fail(forced.detail);
   attempts.push({ channel: 'node-github-forced', detail: forced.detail });
   return input.fail(formatDeliveryError(attempts));
 }
@@ -167,6 +174,23 @@ export async function postNodeReleaseUpgrade(input: {
   }
 }
 
+function classifyNodeReleaseConflict(
+  status: number,
+  body: Record<string, unknown> | null,
+  code: string
+): NodeReleaseStartResult | null {
+  if (status === 409 && code === 'RELEASE_SLOW') {
+    const bytes = typeof body?.bytes === 'number' ? body.bytes : 0;
+    const elapsedMs = typeof body?.elapsedMs === 'number' ? body.elapsedMs : 0;
+    return { kind: 'slow', detail: formatSlowProbe(bytes, elapsedMs) };
+  }
+  if (status === 409 && code === 'RELEASE_UNREACHABLE') {
+    return { kind: 'unreachable', detail: 'unreachable' };
+  }
+  if (code === 'UPGRADE_IN_PROGRESS') return { kind: 'busy', detail: 'UPGRADE_IN_PROGRESS' };
+  return null;
+}
+
 async function classifyNodeReleaseResponse(res: Response): Promise<NodeReleaseStartResult> {
   if (res.status >= 200 && res.status < 300) {
     await consumeBoundedBody(res);
@@ -174,16 +198,11 @@ async function classifyNodeReleaseResponse(res: Response): Promise<NodeReleaseSt
   }
   const body = await readJsonObject(res);
   const code = typeof body?.code === 'string' ? body.code : '';
+  const auth = classifyForwardAuthError(res.status, code);
+  if (auth) return { kind: 'rejected', detail: auth };
+  const conflict = classifyNodeReleaseConflict(res.status, body, code);
+  if (conflict) return conflict;
   const error = typeof body?.error === 'string' ? body.error : '';
-  if (res.status === 409 && code === 'RELEASE_SLOW') {
-    const bytes = typeof body?.bytes === 'number' ? body.bytes : 0;
-    const elapsedMs = typeof body?.elapsedMs === 'number' ? body.elapsedMs : 0;
-    return { kind: 'slow', detail: formatSlowProbe(bytes, elapsedMs) };
-  }
-  if (res.status === 409 && code === 'RELEASE_UNREACHABLE') {
-    return { kind: 'unreachable', detail: 'unreachable' };
-  }
-  if (code === 'UPGRADE_IN_PROGRESS') return { kind: 'busy', detail: 'UPGRADE_IN_PROGRESS' };
   const detail = [code, error].filter(Boolean).join(' ').trim() || `HTTP ${res.status}`;
   if (res.status === 503 && /NODE_UNREACHABLE/.test(detail)) {
     return { kind: 'unreachable', detail: 'unreachable' };
@@ -201,7 +220,7 @@ export type NodeGithubJob = {
   error: string | null;
 };
 
-export async function runNodeGithubChannel<T>(opts: {
+type NodeGithubChannelOpts<T> = {
   job: NodeGithubJob;
   requireFastSource: boolean;
   forward: AuthorizedUpgradeForward;
@@ -211,25 +230,20 @@ export async function runNodeGithubChannel<T>(opts: {
   fail: (error: string) => T;
   markCancelled: () => T;
   isCancelled: () => boolean;
-}): Promise<DeliveryStepResult<T>> {
+};
+
+function concludeNodeGithubChannel<T>(
+  opts: NodeGithubChannelOpts<T>,
+  result: NodeReleaseStartResult
+): DeliveryStepResult<T> {
   const job = opts.job;
-  job.channel = opts.requireFastSource ? 'node-github' : 'node-github-forced';
-  job.phase = 'start';
-  if (opts.isCancelled()) return { kind: 'done', snapshot: opts.snapshot() };
-  if (job.abort.signal.aborted) return { kind: 'done', snapshot: opts.markCancelled() };
-  const result = await postNodeReleaseUpgrade({
-    forward: opts.forward,
-    req: opts.req,
-    nodeId: job.nodeId,
-    version: job.version,
-    requireFastSource: opts.requireFastSource,
-    signal: job.abort.signal,
-    timeoutMs: opts.timeoutMs,
-  });
   if (opts.isCancelled() || result.detail === 'cancelled') {
     return { kind: 'done', snapshot: opts.snapshot() };
   }
   if (job.abort.signal.aborted) return { kind: 'done', snapshot: opts.markCancelled() };
+  if (isAuthForwardError(result.detail)) {
+    return { kind: 'done', snapshot: opts.fail(result.detail) };
+  }
   if (result.kind === 'accepted') {
     job.state = 'handed-off';
     job.error = null;
@@ -245,6 +259,26 @@ export async function runNodeGithubChannel<T>(opts: {
   return { kind: 'fallback', detail: summarizeChannelFailure(job.channel, result.detail) };
 }
 
+export async function runNodeGithubChannel<T>(
+  opts: NodeGithubChannelOpts<T>
+): Promise<DeliveryStepResult<T>> {
+  const job = opts.job;
+  job.channel = opts.requireFastSource ? 'node-github' : 'node-github-forced';
+  job.phase = 'start';
+  if (opts.isCancelled()) return { kind: 'done', snapshot: opts.snapshot() };
+  if (job.abort.signal.aborted) return { kind: 'done', snapshot: opts.markCancelled() };
+  const result = await postNodeReleaseUpgrade({
+    forward: opts.forward,
+    req: opts.req,
+    nodeId: job.nodeId,
+    version: job.version,
+    requireFastSource: opts.requireFastSource,
+    signal: job.abort.signal,
+    timeoutMs: opts.timeoutMs,
+  });
+  return concludeNodeGithubChannel(opts, result);
+}
+
 export function stepFromSnapshot<T>(
   state: string,
   channel: RemoteUpgradeChannel,
@@ -252,6 +286,7 @@ export function stepFromSnapshot<T>(
   error: string | null
 ): DeliveryStepResult<T> {
   if (state === 'cancelled' || state === 'handed-off') return { kind: 'done', snapshot };
+  if (error && isAuthForwardError(error)) return { kind: 'done', snapshot };
   return { kind: 'fallback', detail: summarizeChannelFailure(channel, error ?? 'failed') };
 }
 

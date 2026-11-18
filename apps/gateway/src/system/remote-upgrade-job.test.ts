@@ -378,6 +378,98 @@ describe('RemoteUpgradeJob', () => {
     expect(done.totalBytes).toBe(bytes.byteLength);
   });
 
+  test('first forwarded 401 POP_REQUIRED finishes as auth: POP_REQUIRED and stops', async () => {
+    const nodeId = 'f1'.repeat(16);
+    const path = tempFile(new Uint8Array([1]));
+    const calls: string[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          calls.push(`${input.method} ${input.path}`);
+          return new Response(JSON.stringify({ code: 'POP_REQUIRED' }), {
+            status: 401,
+            headers: { 'content-type': 'application/json' },
+          });
+        },
+      },
+      download: async () => signed({ path, sha256: 'ab'.repeat(32), bytes: 1 }),
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toBe('auth: POP_REQUIRED');
+    expect(calls).toEqual(['POST /api/system/upgrade/package/manifest']);
+  });
+
+  test('first PUT 401 POP_REQUIRED finishes as auth: POP_REQUIRED after one PUT', async () => {
+    const nodeId = 'f2'.repeat(16);
+    const path = tempFile(new Uint8Array([1]));
+    const calls: string[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          calls.push(`${input.method} ${input.path}`);
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+          if (input.method === 'PUT') {
+            return new Response(JSON.stringify({ code: 'POP_REQUIRED' }), {
+              status: 401,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          throw new Error(`unexpected ${input.method} ${input.path}`);
+        },
+      },
+      download: async () => signed({ path, sha256: 'ab'.repeat(32), bytes: 1 }),
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toBe('auth: POP_REQUIRED');
+    expect(calls).toEqual([
+      'POST /api/system/upgrade/package/manifest',
+      'PUT /api/system/upgrade/package',
+    ]);
+  });
+
+  test('offset GET 401 POP_REQUIRED finishes as auth: POP_REQUIRED after one GET', async () => {
+    const nodeId = 'f3'.repeat(16);
+    const path = tempFile(new Uint8Array([1]));
+    const calls: string[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          calls.push(`${input.method} ${input.path}`);
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+          if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
+            return new Response(JSON.stringify({ code: 'POP_REQUIRED' }), {
+              status: 401,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          throw new Error(`unexpected ${input.method} ${input.path}`);
+        },
+      },
+      download: async () => signed({ path, sha256: 'ab'.repeat(32), bytes: 1 }),
+      upgradeCapabilities: RESUME_CAPS,
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toBe('auth: POP_REQUIRED');
+    expect(calls).toEqual([
+      'POST /api/system/upgrade/package/manifest',
+      'GET /api/system/upgrade/package',
+    ]);
+  });
+
   test('download failure records which step failed', async () => {
     const nodeId = 'bb'.repeat(16);
     const started = startRemoteUpgradeJob({

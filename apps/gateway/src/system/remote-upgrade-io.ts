@@ -4,6 +4,7 @@
 
 import { errorMessage, withTimeout } from '@vibeterm/shared';
 import type { PushOutcome } from '@vibeterm/transfer';
+import { carryRequestPopProven } from '../auth/session-pop';
 import { getInstallInfo } from './install-info';
 import {
   type DownloadProgressFn,
@@ -39,6 +40,47 @@ const MANIFEST_TIMEOUT_MS = 60 * 1000;
 export const UPSTREAM_BODY_MAX_BYTES = 64 * 1024;
 export const UPSTREAM_BODY_TIMEOUT_MS = 30 * 1000;
 
+const AUTH_FORWARD_PREFIX = 'auth:';
+const AUTH_FORWARD_CODES = new Set(['POP_REQUIRED', 'POP_INVALID', 'NODE_LOGIN_REQUIRED']);
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // 非 JSON
+  }
+  return null;
+}
+
+/** 目标回 401：作业立刻停，错误串以 `auth:` 开头，后面跟上游 code。 */
+export function classifyForwardAuthError(status: number, code?: unknown): string | null {
+  if (status !== 401) return null;
+  const raw = typeof code === 'string' ? code.trim() : '';
+  const known = AUTH_FORWARD_CODES.has(raw) ? raw : 'NODE_LOGIN_REQUIRED';
+  return `${AUTH_FORWARD_PREFIX} ${known}`;
+}
+
+export function classifyForwardAuthFromBody(status: number, text: string): string | null {
+  return classifyForwardAuthError(status, parseJsonObject(text)?.code);
+}
+
+export function isAuthForwardError(message: string): boolean {
+  return message.startsWith(AUTH_FORWARD_PREFIX);
+}
+
+export function asAuthForwardError(err: unknown): string | null {
+  const msg = typeof err === 'string' ? err : errorMessage(err);
+  return isAuthForwardError(msg) ? msg : null;
+}
+
+export function throwIfForwardAuth(status: number, text: string): void {
+  const auth = classifyForwardAuthFromBody(status, text);
+  if (auth) throw new Error(auth);
+}
+
 /** 作业跑在原请求之外，只带鉴权必需的头，避免把已关闭请求的 body / signal 拖进来。 */
 export function detachRequest(req: Request): Request {
   const headers = new Headers();
@@ -46,7 +88,9 @@ export function detachRequest(req: Request): Request {
   if (cookie) headers.set('cookie', cookie);
   const origin = req.headers.get('origin');
   if (origin) headers.set('origin', origin);
-  return new Request(req.url, { headers });
+  const detached = new Request(req.url, { headers });
+  carryRequestPopProven(req, detached);
+  return detached;
 }
 
 /**
@@ -95,23 +139,21 @@ export async function consumeBoundedBody(
   return new TextDecoder().decode(Buffer.concat(chunks, total));
 }
 
+function formatUpstreamDetail(status: number, text: string): string {
+  const clipped = text.slice(0, 800);
+  let extra = clipped;
+  const parsed = parseJsonObject(clipped);
+  if (parsed) {
+    const code = typeof parsed.code === 'string' ? parsed.code : null;
+    const error = typeof parsed.error === 'string' ? parsed.error : null;
+    extra = [code, error].filter(Boolean).join(' ');
+  }
+  return `HTTP ${status}${extra ? ` ${extra}` : ''}`.trim();
+}
+
 /** 把上游回包压成一行可读结论：优先 `code` / `error` 字段，拿不到就用原文。 */
 export async function describeUpstream(res: Response, timeoutMs?: number): Promise<string> {
-  const text = (await consumeBoundedBody(res, { timeoutMs })).slice(0, 800);
-  let extra = text;
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const code = (parsed as { code?: unknown }).code;
-      const error = (parsed as { error?: unknown }).error;
-      extra = [typeof code === 'string' ? code : null, typeof error === 'string' ? error : null]
-        .filter(Boolean)
-        .join(' ');
-    }
-  } catch {
-    // keep raw text
-  }
-  return `HTTP ${res.status}${extra ? ` ${extra}` : ''}`.trim();
+  return formatUpstreamDetail(res.status, await consumeBoundedBody(res, { timeoutMs }));
 }
 
 /**
@@ -152,12 +194,16 @@ export async function pushPackageManifest(input: {
     );
     // 同一条预算继续管读回包：头到了不等于对端会把 body 发完。
     const remaining = Math.max(0, deadline - Date.now());
+    const text = await consumeBoundedBody(res, { timeoutMs: remaining });
     if (res.status === 404 || (res.status >= 200 && res.status < 300)) {
-      await consumeBoundedBody(res, { timeoutMs: remaining });
       return { ok: true };
     }
-    return { ok: false, error: `manifest failed: ${await describeUpstream(res, remaining)}` };
+    const auth = classifyForwardAuthFromBody(res.status, text);
+    if (auth) return { ok: false, error: auth };
+    return { ok: false, error: `manifest failed: ${formatUpstreamDetail(res.status, text)}` };
   } catch (err) {
+    const auth = asAuthForwardError(err);
+    if (auth) return { ok: false, error: auth };
     return { ok: false, error: `manifest failed: ${errorMessage(err)}` };
   }
 }
@@ -248,18 +294,6 @@ export function isUpgradeBusyState(state: string): boolean {
   return state === 'executing' || state === 'downloading';
 }
 
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // 非 JSON
-  }
-  return null;
-}
-
 /** 暂存启动回包：2xx 成功；409 且明确在升则已交出；其余留给决策树 fallback。 */
 export async function classifyStagedStartResponse(res: Response): Promise<StagedStartResult> {
   if (res.status >= 200 && res.status < 300) {
@@ -269,6 +303,8 @@ export async function classifyStagedStartResponse(res: Response): Promise<Staged
   const text = (await consumeBoundedBody(res)).slice(0, 800);
   const body = parseJsonObject(text);
   const code = typeof body?.code === 'string' ? body.code : '';
+  const auth = classifyForwardAuthError(res.status, code);
+  if (auth) return { kind: 'rejected', detail: auth };
   const state = typeof body?.state === 'string' ? body.state : '';
   if (res.status === 409 && (code === 'UPGRADE_IN_PROGRESS' || isUpgradeBusyState(state))) {
     return { kind: 'in-progress', detail: 'UPGRADE_IN_PROGRESS' };
@@ -305,6 +341,8 @@ export async function postStagedUpgradeStart(input: {
     const started = await withTimeout(pending, input.timeoutMs, 'start timeout');
     return await classifyStagedStartResponse(started);
   } catch (err) {
+    const auth = asAuthForwardError(err);
+    if (auth) return { kind: 'rejected', detail: auth };
     const message = errorMessage(err);
     if (message.includes('start timeout') || /timeout/i.test(message)) {
       return { kind: 'timeout', detail: 'start timeout' };
@@ -332,14 +370,14 @@ export async function probeNodeUpgradeStarted(input: {
       input.timeoutMs,
       'status timeout'
     );
-    if (res.status < 200 || res.status >= 300) {
-      await consumeBoundedBody(res);
-      return false;
-    }
     const text = await consumeBoundedBody(res);
+    throwIfForwardAuth(res.status, text);
+    if (res.status < 200 || res.status >= 300) return false;
     const state = parseJsonObject(text)?.state;
     return typeof state === 'string' && isUpgradeBusyState(state);
-  } catch {
+  } catch (err) {
+    const auth = asAuthForwardError(err);
+    if (auth) throw err;
     return false;
   }
 }
@@ -361,7 +399,10 @@ export async function classifyUpgradePushResponse(
     await consumeBoundedBody(pushed);
     return { kind: 'cancelled' };
   }
-  const detail = await describeUpstream(pushed);
+  const text = await consumeBoundedBody(pushed);
+  const auth = classifyForwardAuthFromBody(pushed.status, text);
+  if (auth) return { kind: 'fail', error: auth };
+  const detail = formatUpstreamDetail(pushed.status, text);
   const error = `push failed: ${detail}`;
   return retryablePushStatus(pushed.status, detail)
     ? { kind: 'retry', error }

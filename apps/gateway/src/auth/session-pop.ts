@@ -287,6 +287,16 @@ export function requestPopProvenKey(req: Request): Uint8Array | null {
   return provenKeys.get(req) ?? null;
 }
 
+/**
+ * 后台作业会 `new Request`：只把已验过的会话公钥挂到新对象上。
+ * 不抄 `requestOutcomes`，也不抄 `x-vibeterm-pop`（nonce 一次性，方法/路径也不同）。
+ */
+export function carryRequestPopProven(from: Request, to: Request): void {
+  if (from === to) return;
+  const key = provenKeys.get(from);
+  if (key) provenKeys.set(to, key);
+}
+
 const popForwardingRequests = new WeakSet<Request>();
 
 /**
