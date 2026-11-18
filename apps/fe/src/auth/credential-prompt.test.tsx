@@ -28,6 +28,7 @@ import {
   takeRememberedSigner,
   usablePasskeys,
 } from './credential-prompt';
+import { type PendingPrompt, type PromptSink, submitPrompt } from './credential-prompt-submit';
 
 // 单测用便宜的 argon2 参数（真实参数 64 MiB / t=3 太慢）。
 const KDF_JSON = {
@@ -178,6 +179,27 @@ describe('对话框', () => {
     expect(html).toContain('data-testid="credential-prompt-cancel"');
   });
 
+  test('仅密码：即便有可用 passkey 也不渲染 passkey 控件，并换成中继说明', () => {
+    const html = renderToStaticMarkup(
+      <CredentialPromptDialog
+        purpose="revoke"
+        passkeys={[ORIGIN_PASSKEY, passkey({ credential_id: 'c' })]}
+        passkeyCeremonies={2}
+        passwordOnly
+        busy={false}
+        error={null}
+        onSubmit={() => undefined}
+        onCancel={() => undefined}
+      />
+    );
+    expect(html).toContain('data-testid="credential-prompt-password"');
+    expect(html).not.toContain('data-testid="credential-prompt-passkey"');
+    expect(html).not.toContain('data-testid="credential-prompt-passkey-select"');
+    expect(html).not.toContain('data-testid="credential-prompt-passkey-twice"');
+    expect(html).toContain('auth.credential.passwordOnlyRelay');
+    expect(html).not.toContain('>auth.credential.hint<');
+  });
+
   test('错误文案渲染在框里，用户可以直接改密码重试', () => {
     const html = renderToStaticMarkup(
       <CredentialPromptDialog
@@ -190,6 +212,59 @@ describe('对话框', () => {
       />
     );
     expect(html).toContain('data-testid="credential-prompt-error"');
+  });
+});
+
+// 操作做完（成功或不可重试的失败）框必须关：settle 把 `open` 置空，`dialog` 随之为 null。
+describe('submitPrompt 的关框时机', () => {
+  const CHOICE = { kind: 'password', password: 'pw' } as const;
+
+  function harness(consume: (log: string[]) => Promise<unknown>) {
+    const log: string[] = [];
+    const outcome: { value?: unknown; error?: unknown } = {};
+    const pending: PendingPrompt = {
+      consume: () => consume(log),
+      resolve: (value) => {
+        outcome.value = value;
+      },
+      reject: (error) => {
+        outcome.error = error;
+      },
+    };
+    const sink: PromptSink = {
+      setBusy: (busy) => log.push(busy ? 'busy' : 'idle'),
+      setError: (error) => log.push(error ? `error:${error}` : 'clear'),
+      settle: (finish) => {
+        log.push('closed');
+        finish(pending);
+      },
+    };
+    return { pending, sink, log, outcome };
+  }
+
+  test('成功：整段操作结束后关框并交付结果', async () => {
+    const { pending, sink, log, outcome } = harness(async (events) => {
+      events.push('consume');
+      return 'done';
+    });
+    await submitPrompt(pending, CHOICE, sink);
+    expect(log).toEqual(['busy', 'clear', 'consume', 'closed']);
+    expect(outcome.value).toBe('done');
+  });
+
+  test('不可重试的失败：同样关框，错误交给调用方', async () => {
+    const boom = new Error('boom');
+    const { pending, sink, log, outcome } = harness(() => Promise.reject(boom));
+    await submitPrompt(pending, CHOICE, sink);
+    expect(log).toContain('closed');
+    expect(outcome.error).toBe(boom);
+  });
+
+  test('密码打错：框留着、给出错误并解除忙碌，让用户重试', async () => {
+    const { pending, sink, log } = harness(() => Promise.reject(new WrongPasswordError()));
+    await submitPrompt(pending, CHOICE, sink);
+    expect(log).not.toContain('closed');
+    expect(log).toEqual(['busy', 'clear', 'error:auth.errors.ROOT_KEY_MISMATCH', 'idle']);
   });
 });
 

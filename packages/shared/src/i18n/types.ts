@@ -2219,6 +2219,7 @@ export type TranslationKey =
   | 'auth.credential.usePasskey'
   | 'auth.credential.passkeySelect'
   | 'auth.credential.passkeyTwice'
+  | 'auth.credential.passwordOnlyRelay'
   | 'auth.credential.purpose'
   | 'auth.credential.purpose.enroll'
   | 'auth.credential.purpose.admit'

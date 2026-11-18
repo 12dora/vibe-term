@@ -20,6 +20,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { type RekeyDeps, reportRekey, revokeAndRekey } from './relay-rekey-after-revoke';
+import { revokeSignerOptions } from './revoke-signer-options';
 import type {
   NodeUninstallController,
   ResolvedMode,
@@ -259,11 +260,36 @@ async function uninstallBatchWithRekey(
         });
         return { value, landed: value.revoked > 0 };
       }),
-    { purpose: 'revoke' }
+    revokeSignerOptions()
   );
   if (!outcome) return null;
   uninstallSummaryToast(t, outcome.value);
   return outcome.rekey;
+}
+
+export interface UninstallConfirmRun {
+  rekeyDeps: RekeyDeps;
+  batch: Omit<UninstallBatchParams, 'revoke'>;
+  setPlan: (plan: UninstallPlan | null) => void;
+  setRunning: (running: boolean) => void;
+  onChanged: () => void;
+}
+
+/**
+ * 确认之后的整段流程。确认框先收起、再取凭据：凭据框不能叠在确认框上，
+ * 进度此后只走 `running` 与提示。
+ */
+export async function runUninstallConfirm(run: UninstallConfirmRun): Promise<void> {
+  run.setPlan(null);
+  run.setRunning(true);
+  let rekey: RelayRekeyResult | null = null;
+  try {
+    rekey = await uninstallBatchWithRekey(run.rekeyDeps, run.batch);
+  } finally {
+    run.setRunning(false);
+    run.onChanged();
+  }
+  reportRekey(run.rekeyDeps, rekey);
 }
 
 /** 卸载只用到签名与吊销那几样依赖；`mode` 未确认（缺 uid / kdf）时整个动作不可用。 */
@@ -309,28 +335,20 @@ export function useNodeUninstall(
       setPlan(null);
       return;
     }
-    setRunning(true);
-    void (async () => {
-      let rekey: RelayRekeyResult | null = null;
-      try {
-        rekey = await uninstallBatchWithRekey(
-          { api, mode, t, prompt },
-          {
-            targets,
-            io,
-            t,
-            onScheduled: (nodeId) => setScheduledIds((prev) => new Set(prev).add(nodeId)),
-            onFailed: (name, message) => toast.error(`${name}：${message}`),
-            canWrite: () => writableRef.current,
-          }
-        );
-      } finally {
-        setRunning(false);
-        setPlan(null);
-        onChanged();
-      }
-      await reportRekey({ api, mode, t, prompt }, rekey);
-    })();
+    void runUninstallConfirm({
+      rekeyDeps: { api, mode, t, prompt },
+      batch: {
+        targets,
+        io,
+        t,
+        onScheduled: (nodeId) => setScheduledIds((prev) => new Set(prev).add(nodeId)),
+        onFailed: (name, message) => toast.error(`${name}：${message}`),
+        canWrite: () => writableRef.current,
+      },
+      setPlan,
+      setRunning,
+      onChanged,
+    });
   }, [api, io, mode, onChanged, plan, prompt, t]);
 
   const clear = useCallback(

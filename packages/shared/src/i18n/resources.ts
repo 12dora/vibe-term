@@ -2494,6 +2494,7 @@ export const I18N_RESOURCES = {
         "usePasskey": "Use passkey",
         "passkeySelect": "Choose a passkey",
         "passkeyTwice": "You'll be asked for your passkey twice.",
+        "passwordOnlyRelay": "This node has joined a relay. Removing a node also renews relay credentials, so enter your account password.",
         "purpose": {
           "enroll": "Add a node",
           "admit": "Approve the new node",
@@ -6694,6 +6695,7 @@ export const I18N_RESOURCES = {
         "usePasskey": "使用通行密钥",
         "passkeySelect": "选择通行密钥",
         "passkeyTwice": "通行密钥需验证两次。",
+        "passwordOnlyRelay": "已加入中继，移除节点需同时更新中继凭据，请输入账户密码。",
         "purpose": {
           "enroll": "添加节点",
           "admit": "确认新节点加入",
@@ -10883,6 +10885,7 @@ export const I18N_RESOURCES = {
         "usePasskey": "パスキーを使う",
         "passkeySelect": "パスキーを選択",
         "passkeyTwice": "パスキーの確認は 2 回行われます。",
+        "passwordOnlyRelay": "リレーに参加しているため、ノードの削除にはリレー資格情報の更新も必要です。アカウントのパスワードを入力してください。",
         "purpose": {
           "enroll": "ノードを追加",
           "admit": "新しいノードを承認",

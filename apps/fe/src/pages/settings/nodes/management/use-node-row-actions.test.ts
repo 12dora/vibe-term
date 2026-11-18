@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { RecordSigner } from '@/auth/key-log-actions';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { resetMeshRelayStateForTest } from '@/node/mesh-relay';
+import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from '@/node/mesh-relay';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import {
   decodeBase64url,
@@ -64,11 +64,18 @@ const { createElement } = await import('react');
 
 const ROW = { id: NODE_ID, name: 'n1' } as NodeRow;
 
-function promptStub(signer: RecordSigner): CredentialPromptHandle {
+type SignerOptions = { purpose?: string; passwordOnly?: boolean } | undefined;
+
+function promptStub(
+  signer: RecordSigner,
+  seenOptions: SignerOptions[] = []
+): CredentialPromptHandle {
   return {
     request: () => Promise.resolve(signer),
-    withSigner: (<T>(fn: (s: RecordSigner) => Promise<T> | T) =>
-      Promise.resolve(fn(signer))) as CredentialPromptHandle['withSigner'],
+    withSigner: (<T>(fn: (s: RecordSigner) => Promise<T> | T, options?: SignerOptions) => {
+      seenOptions.push(options);
+      return Promise.resolve(fn(signer));
+    }) as CredentialPromptHandle['withSigner'],
     forget: () => undefined,
     dialog: null,
     passkeys: [],
@@ -131,12 +138,17 @@ function openedOf<T>(useIt: () => T, plan: (value: T) => unknown, open: (value: 
   return captured;
 }
 
-function revokeDeps(appended: Appended[], signer: RecordSigner, changed: string[]): NodeActionDeps {
+function revokeDeps(
+  appended: Appended[],
+  signer: RecordSigner,
+  changed: string[],
+  seenOptions: SignerOptions[] = []
+): NodeActionDeps {
   return {
     uplinkWritable: true,
     mode: MODE,
     api: authApi(appended),
-    prompt: promptStub(signer),
+    prompt: promptStub(signer, seenOptions),
     onChanged: () => changed.push('changed'),
   } as unknown as NodeActionDeps;
 }
@@ -182,6 +194,71 @@ describe('吊销的确认框', () => {
     const decoded = decodeKeyLogRecord(decodeBase64url(appended[0].bytes));
     expect(decoded.type).toBe('revoke-node');
     expect(decodeRevokeNodePayload(decoded.payload).reason).toBe('设备遗失');
+  }, 20000);
+
+  function joinRelay(): void {
+    setMeshRelayStateForTest({
+      mode: 'relay',
+      relays: [{ url: 'https://relay.example.com', priority: 0 }] as never,
+    });
+  }
+
+  test('已加入中继：行内移除的凭据框只收密码', async () => {
+    stubNoRelay();
+    joinRelay();
+    const seen: SignerOptions[] = [];
+    const changed: string[] = [];
+    const deps = revokeDeps([], await rootSigner(), changed, seen);
+    const actions = openedOf<RowActions>(
+      () => useNodeRowActions(ROW, deps),
+      (value) => value.revokeDialog.plan,
+      (value) => value.revoke()
+    );
+    actions.revokeDialog.confirm('');
+    await waitFor(() => changed.length > 0);
+    expect(seen).toEqual([{ purpose: 'revoke', passwordOnly: true }]);
+  }, 20000);
+
+  test('未加入中继：行内移除照旧（可用 passkey）', async () => {
+    stubNoRelay();
+    const seen: SignerOptions[] = [];
+    const changed: string[] = [];
+    const deps = revokeDeps([], await rootSigner(), changed, seen);
+    const actions = openedOf<RowActions>(
+      () => useNodeRowActions(ROW, deps),
+      (value) => value.revokeDialog.plan,
+      (value) => value.revoke()
+    );
+    actions.revokeDialog.confirm('');
+    await waitFor(() => changed.length > 0);
+    expect(seen).toEqual([{ purpose: 'revoke' }]);
+  }, 20000);
+
+  test('批量移除：已加入中继只收密码，未加入则不限制', async () => {
+    stubNoRelay();
+    const rows = [{ id: 'aa'.repeat(16), name: 'a' } as NodeRow];
+    const signer = await rootSigner();
+    const run = async (): Promise<SignerOptions[]> => {
+      const seen: SignerOptions[] = [];
+      const changed: string[] = [];
+      const bulk = openedOf<BulkActions>(
+        () =>
+          useBulkRevoke({
+            api: authApi([]),
+            mode: MODE,
+            prompt: promptStub(signer, seen),
+            onChanged: () => changed.push('changed'),
+          }),
+        (value) => value.revokeDialog.plan,
+        (value) => value.revokeRows(rows)
+      );
+      bulk.revokeDialog.confirm('');
+      await waitFor(() => changed.length > 0);
+      return seen;
+    };
+    expect(await run()).toEqual([{ purpose: 'revoke' }]);
+    joinRelay();
+    expect(await run()).toEqual([{ purpose: 'revoke', passwordOnly: true }]);
   }, 20000);
 
   test('取消：一条记录都不签', async () => {

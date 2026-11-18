@@ -10,7 +10,7 @@
 
 import { refreshRelayPackForSigner } from '@/node/relay-pack';
 import type { AuthApi, AuthKdfParamsJson, PasskeySummary } from '@vibeterm/api-client/auth/index';
-import { WebAuthnError, defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
 import { errorMessage } from '@vibeterm/shared';
 import { bytesEqual, decodeBase64url } from '@vibeterm/shared/auth';
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -23,6 +23,13 @@ import {
   CredentialPromptDialog,
   type CredentialPromptDialogProps,
 } from './credential-prompt-dialog';
+import {
+  type PendingPrompt,
+  WrongPasswordError,
+  credentialErrorText,
+  isRetryableCredentialError,
+  submitPrompt,
+} from './credential-prompt-submit';
 import type { RecordSigner } from './key-log-actions';
 
 /** 刚做完密码 / passkey 交互后的免二次输入窗口（设计 §2 步骤 3）。 */
@@ -165,14 +172,7 @@ export type CredentialChoice =
   | { kind: 'password'; password: string }
   | { kind: 'passkey'; credentialId: string };
 
-/** 密码派生出的根公钥与服务端下发的不一致 = 密码打错了（或后端已 rotate）。 */
-export class WrongPasswordError extends Error {
-  readonly code = 'ROOT_KEY_MISMATCH';
-  constructor() {
-    super('derived root public key does not match the server root public key');
-    this.name = 'WrongPasswordError';
-  }
-}
+export { WrongPasswordError, credentialErrorText, isRetryableCredentialError };
 
 /**
  * 本次交互里可用的 passkey。
@@ -233,12 +233,6 @@ export async function runWithChoice<T>(
     await refreshRelayPackForSigner(signer);
     return value;
   });
-}
-
-/** 这类错误是「用户输入 / 仪式」层面的：留在对话框里让用户重试，而不是把框关掉。 */
-export function isRetryableCredentialError(error: unknown): boolean {
-  if (error instanceof WrongPasswordError) return true;
-  return error instanceof WebAuthnError && error.code === 'aborted';
 }
 
 /** `/api/auth/mode` 的 `rootPublicKey`（base64url，32 字节）；缺失或畸形返回 `null`。 */
@@ -322,13 +316,19 @@ export interface CredentialRequestOptions {
   passkeyCeremonies?: number;
 }
 
+export interface WithSignerOptions {
+  purpose?: CredentialPurpose;
+  /** 只收账户密码、不给 passkey：回调里要用根钥签 enroll proof（如移除节点后换中继令牌）时用。 */
+  passwordOnly?: boolean;
+}
+
 export interface CredentialPromptHandle {
   /** 取一个签名者并放进 5 分钟复用窗口（窗口负责清零根钥 seed）。用户取消返回 `null`。 */
   request(options?: CredentialRequestOptions): Promise<RecordSigner | null>;
   /** 作用域式：回调返回即清零，**不**进复用窗口。用户取消返回 `null`。 */
   withSigner<T>(
     fn: (signer: RecordSigner) => Promise<T> | T,
-    options?: { purpose?: CredentialPurpose }
+    options?: WithSignerOptions
   ): Promise<T | null>;
   /** 立刻清零复用窗口。 */
   forget(): void;
@@ -339,16 +339,20 @@ export interface CredentialPromptHandle {
 }
 
 /** 对话框这一屏要展示的东西。 */
-type PromptView = Pick<CredentialPromptDialogProps, 'purpose' | 'passkeyCeremonies'>;
+type PromptView = Pick<
+  CredentialPromptDialogProps,
+  'purpose' | 'passkeyCeremonies' | 'passwordOnly'
+>;
 
-function promptView(options: CredentialRequestOptions, fallback: CredentialPurpose): PromptView {
-  return { purpose: options.purpose ?? fallback, passkeyCeremonies: options.passkeyCeremonies };
-}
-
-interface PendingPrompt {
-  consume: (choice: CredentialChoice) => Promise<unknown>;
-  resolve: (value: unknown) => void;
-  reject: (error: unknown) => void;
+function promptView(
+  options: CredentialRequestOptions & { passwordOnly?: boolean },
+  fallback: CredentialPurpose
+): PromptView {
+  return {
+    purpose: options.purpose ?? fallback,
+    passkeyCeremonies: options.passkeyCeremonies,
+    passwordOnly: options.passwordOnly,
+  };
 }
 
 /** 本实例的归属令牌：只清自己存进复用窗口的那个签名者。 */
@@ -414,20 +418,7 @@ export function useCredentialPrompt(config: CredentialPromptConfig): CredentialP
     async (choice: CredentialChoice) => {
       const pending = pendingRef.current;
       if (!pending || busy) return;
-      setBusy(true);
-      setError(null);
-      try {
-        const value = await pending.consume(choice);
-        settle((row) => row.resolve(value));
-      } catch (err) {
-        if (isRetryableCredentialError(err)) {
-          // 密码打错 / 仪式被取消：留在框里，让用户直接重试。
-          setError(credentialErrorText(err));
-          setBusy(false);
-          return;
-        }
-        settle((row) => row.reject(err));
-      }
+      await submitPrompt(pending, choice, { setBusy, setError, settle });
     },
     [busy, settle]
   );
@@ -451,10 +442,7 @@ export function useCredentialPrompt(config: CredentialPromptConfig): CredentialP
   );
 
   const withSigner = useCallback(
-    <T,>(
-      fn: (signer: RecordSigner) => Promise<T> | T,
-      options: { purpose?: CredentialPurpose } = {}
-    ) =>
+    <T,>(fn: (signer: RecordSigner) => Promise<T> | T, options: WithSignerOptions = {}) =>
       ask(promptView(options, 'revoke'), (choice) =>
         runWithChoice(choice, kdfParams, fn, rootPublicKey)
       ),
@@ -479,11 +467,4 @@ export function useCredentialPrompt(config: CredentialPromptConfig): CredentialP
       />
     ) : null,
   };
-}
-
-/** 对话框里的错误文案：能对上 i18n key 的返回 key，其余原样返回（对话框用 defaultValue 兜底）。 */
-export function credentialErrorText(error: unknown): string {
-  if (error instanceof WrongPasswordError) return 'auth.errors.ROOT_KEY_MISMATCH';
-  if (error instanceof WebAuthnError) return 'auth.errors.PASSKEY_ABORTED';
-  return errorMessage(error);
 }

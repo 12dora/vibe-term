@@ -17,6 +17,8 @@ export interface CredentialPromptDialogProps {
   passkeys: PasskeySummary[];
   /** 本次操作 passkey 要验证几次；为 2 时在 passkey 选项旁事先说明。 */
   passkeyCeremonies?: number;
+  /** 只收账户密码：不渲染 passkey 选项，并换一行说明原因。 */
+  passwordOnly?: boolean;
   busy: boolean;
   error: string | null;
   onSubmit: (choice: CredentialChoice) => void;
@@ -97,6 +99,7 @@ function CredentialPromptFields({
   purpose,
   passkeys,
   passkeyCeremonies,
+  passwordOnly,
   busy,
   error,
   onSubmit,
@@ -111,9 +114,10 @@ function CredentialPromptFields({
   const [password, setPassword] = useState('');
   const [credentialId, setCredentialId] = useState(passkeys[0]?.credential_id ?? '');
 
-  const canUsePasskey = passkeys.length > 0;
+  const usable = passwordOnly ? [] : passkeys;
+  const canUsePasskey = usable.length > 0;
   const selected = canUsePasskey
-    ? (passkeys.find((row) => row.credential_id === credentialId) ?? passkeys[0])
+    ? (usable.find((row) => row.credential_id === credentialId) ?? usable[0])
     : null;
 
   return (
@@ -126,7 +130,9 @@ function CredentialPromptFields({
           {t(`auth.credential.purpose.${purpose}`)}
         </p>
       </div>
-      <p className="text-xs text-muted-foreground">{t('auth.credential.hint')}</p>
+      <p className="text-xs text-muted-foreground" data-testid="credential-prompt-hint">
+        {t(passwordOnly ? 'auth.credential.passwordOnlyRelay' : 'auth.credential.hint')}
+      </p>
 
       <Input
         ref={passwordRef}
@@ -186,7 +192,7 @@ function CredentialPromptFields({
       </div>
 
       <PasskeyExtras
-        passkeys={passkeys}
+        passkeys={usable}
         selectedId={selected?.credential_id ?? ''}
         onSelect={setCredentialId}
         ceremonies={passkeyCeremonies}

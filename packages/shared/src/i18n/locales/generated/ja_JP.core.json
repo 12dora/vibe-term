@@ -809,6 +809,7 @@
         "usePasskey": "パスキーを使う",
         "passkeySelect": "パスキーを選択",
         "passkeyTwice": "パスキーの確認は 2 回行われます。",
+        "passwordOnlyRelay": "リレーに参加しているため、ノードの削除にはリレー資格情報の更新も必要です。アカウントのパスワードを入力してください。",
         "purpose": {
           "enroll": "ノードを追加",
           "admit": "新しいノードを承認",

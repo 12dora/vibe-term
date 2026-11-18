@@ -1,4 +1,4 @@
-// 吊销落账后刷新中继令牌：沿用吊销的签名者；通行密钥补一次凭据；失败只给一行错误与重试。
+// 吊销落账后刷新中继令牌：沿用吊销的签名者；失败（含需要根密码）只给一行错误与重试，绝不自动弹凭据框。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
@@ -41,8 +41,18 @@ function forgetToasts(): void {
   seen = toast.getToasts().length;
 }
 
-function newToasts(): Array<{ title?: unknown; action?: { label: string } }> {
-  return toast.getToasts().slice(seen) as Array<{ title?: unknown; action?: { label: string } }>;
+type ToastRow = { title?: unknown; action?: { label: string; onClick: () => void } };
+
+function newToasts(): ToastRow[] {
+  return toast.getToasts().slice(seen) as ToastRow[];
+}
+
+async function settled(check: () => boolean): Promise<void> {
+  for (let i = 0; i < 200; i += 1) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('condition never held');
 }
 
 function messages(): string[] {
@@ -59,7 +69,7 @@ async function depsOf(options: {
   const rootPublicKey = probe.kind === 'root' ? encodeBase64url(probe.rootKey.publicKey) : '';
   const enrolled: string[] = [];
   const statusCalls: number[] = [];
-  const prompts: Array<string | undefined> = [];
+  const prompts: Array<{ purpose?: string; passwordOnly?: boolean } | undefined> = [];
   const relayApi = {
     status: () => {
       statusCalls.push(1);
@@ -92,8 +102,11 @@ async function depsOf(options: {
   } as unknown as RelayTenantApi;
   const queue = [...options.signers];
   const prompt = {
-    withSigner: (async (fn: (signer: RecordSigner) => unknown, opts?: { purpose?: string }) => {
-      prompts.push(opts?.purpose);
+    withSigner: (async (
+      fn: (signer: RecordSigner) => unknown,
+      opts?: { purpose?: string; passwordOnly?: boolean }
+    ) => {
+      prompts.push(opts);
       const signer = queue.shift();
       return signer ? fn(signer) : null;
     }) as CredentialPromptHandle['withSigner'],
@@ -155,40 +168,44 @@ describe('revokeAndRekey', () => {
 describe('reportRekey', () => {
   test('成功或无事可做：不提示', async () => {
     const { deps, prompts } = await depsOf({ signers: [] });
-    await reportRekey(deps, null);
-    await reportRekey(deps, { ok: true });
+    reportRekey(deps, null);
+    reportRekey(deps, { ok: true });
     expect(prompts).toEqual([]);
     expect(messages()).toEqual([]);
   });
 
-  test('要根密码：补一次凭据，拿到根钥后刷新并提示完成', async () => {
+  test('要根密码：不自动弹凭据框，只给一行持久错误与重试', async () => {
     const { deps, enrolled, prompts } = await depsOf({ signers: [await rootSigner()] });
-    await reportRekey(deps, { ok: false, code: 'RELAY_REKEY_NEEDS_ROOT', urls: [URL_A] });
-    expect(prompts).toEqual(['revoke']);
-    expect(enrolled).toEqual([URL_A]);
-    expect(messages()).toEqual(['relay.tenant.rekey.done']);
-  });
-
-  test('补凭据时又选了通行密钥或取消：一行错误，不发 enroll', async () => {
-    const { deps, enrolled } = await depsOf({ signers: [PASSKEY] });
-    await reportRekey(deps, { ok: false, code: 'RELAY_REKEY_NEEDS_ROOT', urls: [URL_A] });
+    reportRekey(deps, { ok: false, code: 'RELAY_REKEY_NEEDS_ROOT', urls: [URL_A] });
+    expect(prompts).toEqual([]);
     expect(enrolled).toEqual([]);
     expect(messages()).toHaveLength(1);
     expect(messages()[0]).toContain('relay.tenant.rekey.failed');
+    expect(newToasts()[0].action?.label).toBe('common.retry');
+  });
 
-    forgetToasts();
-    const cancelled = await depsOf({ signers: [] });
-    await reportRekey(cancelled.deps, {
-      ok: false,
-      code: 'RELAY_REKEY_NEEDS_ROOT',
-      urls: [URL_A],
-    });
-    expect(messages()).toHaveLength(1);
+  test('点重试：弹仅密码的凭据框，拿到根钥后刷新并提示完成', async () => {
+    const { deps, enrolled, prompts } = await depsOf({ signers: [await rootSigner()] });
+    reportRekey(deps, { ok: false, code: 'RELAY_REKEY_NEEDS_ROOT', urls: [URL_A] });
+    newToasts()[0].action?.onClick();
+    await settled(() => enrolled.length > 0);
+    expect(prompts).toEqual([{ purpose: 'revoke', passwordOnly: true }]);
+    expect(enrolled).toEqual([URL_A]);
+    await settled(() => messages().includes('relay.tenant.rekey.done'));
+  });
+
+  test('重试时取消：再给一行错误，不发 enroll', async () => {
+    const { deps, enrolled, prompts } = await depsOf({ signers: [] });
+    reportRekey(deps, { ok: false, code: 'RELAY_REKEY_NEEDS_ROOT', urls: [URL_A] });
+    newToasts()[0].action?.onClick();
+    await settled(() => prompts.length > 0 && messages().length === 2);
+    expect(enrolled).toEqual([]);
+    expect(messages()[1]).toContain('relay.tenant.rekey.failed');
   });
 
   test('刷新失败：一行错误，带重试；吊销不受影响', async () => {
     const { deps, prompts } = await depsOf({ signers: [] });
-    await reportRekey(deps, { ok: false, code: 'RELAY_UNREACHABLE', urls: [URL_A] });
+    reportRekey(deps, { ok: false, code: 'RELAY_UNREACHABLE', urls: [URL_A] });
     expect(prompts).toEqual([]);
     expect(messages()).toHaveLength(1);
     const [row] = newToasts();

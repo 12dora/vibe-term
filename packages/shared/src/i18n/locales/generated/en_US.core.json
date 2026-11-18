@@ -814,6 +814,7 @@
         "usePasskey": "Use passkey",
         "passkeySelect": "Choose a passkey",
         "passkeyTwice": "You'll be asked for your passkey twice.",
+        "passwordOnlyRelay": "This node has joined a relay. Removing a node also renews relay credentials, so enter your account password.",
         "purpose": {
           "enroll": "Add a node",
           "admit": "Approve the new node",

@@ -18,6 +18,7 @@ import {
   revokeNodeRecord,
   revokeNodesSequentially,
 } from './revoke-node-record';
+import { revokeSignerOptions } from './revoke-signer-options';
 import type { NodeActionDeps, ResolvedMode, RevokeController, RevokePlan } from './types';
 
 export type {
@@ -92,11 +93,11 @@ export function useNodeRowActions(row: NodeRow, { mode, api, prompt, onChanged }
               const attempt = await revokeNodeRecord(signer, row, reason, { api, mode, t });
               return { value: attempt, landed: revokeLanded(attempt) };
             }),
-          { purpose: 'revoke' }
+          revokeSignerOptions()
         );
         if (!outcome) return;
         if (reportRevokeAttempt(t, outcome.value)) onChanged();
-        await reportRekey(rekeyDeps, outcome.rekey);
+        reportRekey(rekeyDeps, outcome.rekey);
       } finally {
         setBusy(false);
       }
@@ -169,12 +170,12 @@ export function useBulkRevoke({ mode, api, prompt, onChanged }: BulkRevokeDeps):
               });
               return { value: summary, landed: summary.succeeded > 0 };
             }),
-          { purpose: 'revoke' }
+          revokeSignerOptions()
         );
         if (!outcome) return;
         reportBulkRevokeSummary(t, outcome.value);
         onChanged();
-        await reportRekey(rekeyDeps, outcome.rekey);
+        reportRekey(rekeyDeps, outcome.rekey);
       } finally {
         setBusy(false);
       }
