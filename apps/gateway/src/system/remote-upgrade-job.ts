@@ -492,6 +492,7 @@ async function runPushPhase(
       shouldRestartFromZero: shouldReuploadFromZero,
     });
   } catch (err) {
+    if (job.abort.signal.aborted) return { done: true, snapshot: await cancelPush(job, deps) };
     const auth = asAuthForwardError(err);
     if (auth) return { done: true, snapshot: fail(job, auth, deps.nowFn) };
     return { done: true, snapshot: fail(job, `push failed: ${errorMessage(err)}`, deps.nowFn) };

@@ -121,6 +121,13 @@ function unreachable(): Response {
   });
 }
 
+function popRequired(): Response {
+  return new Response(JSON.stringify({ code: 'POP_REQUIRED' }), {
+    status: 401,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 function isReleaseStart(input: { method: string; path: string; body?: unknown }): boolean {
   if (input.method !== 'POST' || input.path !== '/api/system/upgrade') return false;
   const body = input.body;
@@ -469,6 +476,157 @@ describe('RemoteUpgradeJob', () => {
       'GET /api/system/upgrade/package',
     ]);
   });
+
+  test('gated release POST 401 POP_REQUIRED stops with no manifest, push, or forced fallback', async () => {
+    const nodeId = 'f4'.repeat(16);
+    const calls: string[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      upgradeCapabilities: ['staged-package', 'upgrade-cancel', 'release-speed-probe'],
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          const source =
+            input.body && typeof input.body === 'object'
+              ? (input.body as { source?: string }).source
+              : undefined;
+          calls.push(`${input.method} ${input.path}${source ? ` ${source}` : ''}`);
+          return popRequired();
+        },
+      },
+      download: async () => {
+        throw new Error('must not download after gated release 401');
+      },
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toBe('auth: POP_REQUIRED');
+    expect(calls).toEqual(['POST /api/system/upgrade release']);
+  });
+
+  test('staged start 401 POP_REQUIRED finishes as auth: POP_REQUIRED with no further calls', async () => {
+    const nodeId = 'f5'.repeat(16);
+    const path = tempFile(new Uint8Array([1]));
+    const calls: string[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) {
+            calls.push(`${input.method} ${input.path}`);
+            return manifestAccepted();
+          }
+          if (input.rawBody) await new Response(input.rawBody).bytes();
+          const source =
+            input.body && typeof input.body === 'object'
+              ? (input.body as { source?: string }).source
+              : undefined;
+          calls.push(`${input.method} ${input.path}${source ? ` ${source}` : ''}`);
+          if (input.method === 'PUT') return new Response('{}', { status: 200 });
+          if (input.method === 'POST' && source === 'staged') return popRequired();
+          throw new Error(`unexpected ${input.method} ${input.path}`);
+        },
+      },
+      download: async () => signed({ path, sha256: 'ab'.repeat(32), bytes: 1 }),
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toBe('auth: POP_REQUIRED');
+    expect(calls).toEqual([
+      'POST /api/system/upgrade/package/manifest',
+      'PUT /api/system/upgrade/package',
+      'POST /api/system/upgrade staged',
+    ]);
+  });
+
+  test('staged start timeout then status probe 401 finishes as auth: POP_REQUIRED', async () => {
+    const nodeId = 'f6'.repeat(16);
+    const path = tempFile(new Uint8Array([1]));
+    const calls: string[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      timeouts: { startMs: 40 },
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) {
+            calls.push(`${input.method} ${input.path}`);
+            return manifestAccepted();
+          }
+          if (input.rawBody) await new Response(input.rawBody).bytes();
+          calls.push(`${input.method} ${input.path}`);
+          if (input.method === 'PUT') return new Response('{}', { status: 200 });
+          if (input.method === 'POST') {
+            await new Promise(() => {});
+            return new Response('never');
+          }
+          if (input.method === 'GET' && input.path === '/api/system/upgrade') return popRequired();
+          throw new Error(`unexpected ${input.method} ${input.path}`);
+        },
+      },
+      download: async () => signed({ path, sha256: 'ab'.repeat(32), bytes: 1 }),
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toBe('auth: POP_REQUIRED');
+    expect(calls).toEqual([
+      'POST /api/system/upgrade/package/manifest',
+      'PUT /api/system/upgrade/package',
+      'POST /api/system/upgrade',
+      'GET /api/system/upgrade',
+    ]);
+  });
+
+  test('cancel racing a push 401 ends cancelled not failed', async () => {
+    const nodeId = 'f7'.repeat(16);
+    const path = tempFile(new Uint8Array([1, 2, 3, 4]));
+    let releasePut!: () => void;
+    const holdPut = new Promise<void>((resolve) => {
+      releasePut = resolve;
+    });
+    let sawPut!: () => void;
+    const gotPut = new Promise<void>((resolve) => {
+      sawPut = resolve;
+    });
+    const forward: AuthorizedUpgradeForward = {
+      async forwardAuthorizedHttp(_req, input) {
+        if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+        if (input.method === 'PUT') {
+          sawPut();
+          await holdPut;
+          return popRequired();
+        }
+        if (input.method === 'DELETE') return new Response('{}', { status: 200 });
+        throw new Error(`unexpected ${input.method} ${input.path}`);
+      },
+    };
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward,
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: 4 }),
+      sleep: noSleep,
+    });
+    await gotPut;
+    const cancelPromise = cancelRemoteUpgradeJob({
+      nodeId,
+      req: authed(nodeId),
+      forward,
+    });
+    releasePut();
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('cancelled');
+    expect(done.error).toBe('UPGRADE_CANCELLED');
+    const cancelled = await cancelPromise;
+    expect(cancelled.handled).toBe(true);
+  }, 8_000);
 
   test('download failure records which step failed', async () => {
     const nodeId = 'bb'.repeat(16);
@@ -2338,4 +2496,72 @@ describe('RemoteUpgradeJob ranged push', () => {
     expect(new Set(offsets).size).toBeGreaterThan(1);
     expect(coveredPairs(landed)).toBe(bytes.byteLength);
   });
+
+  test('PUT 401 with several ranged lanes aborts the others without unhandled rejection', async () => {
+    const nodeId = 'f8'.repeat(16);
+    const bytes = new Uint8Array(32).fill(7);
+    const path = tempFile(bytes);
+    const calls: string[] = [];
+    const signals: AbortSignal[] = [];
+    let authSent = false;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      startRemoteUpgradeJob({
+        nodeId,
+        version: '9.9.9',
+        req: authed(nodeId),
+        upgradeCapabilities: RANGED_CAPS,
+        pushStreams: 4,
+        pushChunkBytes: 8,
+        forward: {
+          async forwardAuthorizedHttp(_req, input) {
+            calls.push(`${input.method} ${input.path}`);
+            if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+            if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
+              return offsetResponse(0);
+            }
+            if (input.method === 'PUT') {
+              if (input.signal) signals.push(input.signal);
+              if (!authSent) {
+                authSent = true;
+                await input.rawBody?.cancel().catch(() => {});
+                return popRequired();
+              }
+              await new Promise<never>((_, reject) => {
+                const fail = (): void => {
+                  void input.rawBody?.cancel().catch(() => {});
+                  const err = new Error('aborted');
+                  err.name = 'AbortError';
+                  reject(err);
+                };
+                if (input.signal?.aborted) {
+                  fail();
+                  return;
+                }
+                input.signal?.addEventListener('abort', fail, { once: true });
+              });
+            }
+            throw new Error(`unexpected ${input.method} ${input.path}`);
+          },
+        },
+        download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+        sleep: noSleep,
+      });
+      const done = await waitForRemoteUpgradeJob(nodeId);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(done.state).toBe('failed');
+      expect(done.error).toBe('auth: POP_REQUIRED');
+      expect(calls.filter((c) => c.startsWith('POST /api/system/upgrade')).length).toBe(1);
+      expect(calls.some((c) => c === 'PUT /api/system/upgrade/package')).toBe(true);
+      expect(signals.length).toBeGreaterThan(1);
+      expect(signals.slice(1).every((s) => s.aborted)).toBe(true);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  }, 8_000);
 });
