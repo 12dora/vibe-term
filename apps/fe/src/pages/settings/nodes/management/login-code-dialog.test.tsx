@@ -14,9 +14,9 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const { createLoginCodeController, hasPendingNodes } = await import('./login-code-controller');
 const { LoginCodeForm } = await import('./login-code-form');
 const { LoginCodeResultView, buildResultRows } = await import('./login-code-result');
-const { buildProof, draftResetForFailure, effectiveNodeIds, initialDraft } = await import(
-  './login-code-draft'
-);
+const { buildProof, draftResetForFailure, effectiveNodeIds, initialDraft, planForDraft } =
+  await import('./login-code-draft');
+const { planLoginCodeTargets } = await import('@/auth/login-code-issue');
 const { formatCountdown, loginCodeErrorText, loginCodeReasonText } = await import(
   './login-code-text'
 );
@@ -210,6 +210,36 @@ describe('验证方式随 proofKinds 渲染', () => {
     expect(effectiveNodeIds({ nodeIds: ['node-b', 'node-c'] }, OPTIONS)).toEqual(['node-b']);
     expect(effectiveNodeIds({ nodeIds: [] }, OPTIONS)).toEqual([]);
     expect(effectiveNodeIds({ nodeIds: ['node-c'] }, OPTIONS)).toEqual([]);
+  });
+
+  test('选择器变更 → 草稿补丁 → 计划：只签发所选节点，不含入口，暂停的节点只列出不选中', () => {
+    const SELF = 'a'.repeat(32);
+    const mesh = (id: string, extra: Record<string, unknown> = {}) =>
+      ({
+        id,
+        name: `n-${id}`,
+        publicKey: 'pk',
+        online: true,
+        version: '2.18.0',
+        ...extra,
+      }) as never;
+    const nodes = [mesh(SELF), mesh('b1'), mesh('b2'), mesh('b3', { paused: true })];
+    const input = { nodes, sorted: nodes, selfMeshId: SELF };
+    let draft = initialDraft(['b1']);
+    const idsOf = (d: typeof draft) =>
+      planForDraft(planLoginCodeTargets, input, d).plan.targets.map((x) => x.meshId);
+    expect(idsOf(draft)).toEqual(['b1']);
+    // NodePicker.onChange(next) → onDraft({ nodeIds: next })
+    draft = { ...draft, nodeIds: ['b3', 'b2', 'b1'] };
+    const planned = planForDraft(planLoginCodeTargets, input, draft);
+    expect(planned.selectedIds).toEqual(['b1', 'b2']);
+    expect(planned.plan.targets.map((x) => x.meshId)).toEqual(['b1', 'b2']);
+    expect(planned.options.find((o) => o.meshId === 'b3')?.reason).toBe('paused');
+    draft = { ...draft, nodeIds: [] };
+    expect(idsOf(draft)).toEqual([]);
+    expect(
+      planForDraft(planLoginCodeTargets, input, { scope: 'all', nodeIds: null }).plan.targets
+    ).toHaveLength(3);
   });
 
   test('buildProof：输入完整前不可生成', () => {
@@ -407,11 +437,14 @@ describe('行内菜单与登录历史', () => {
   const row = (overrides: Partial<NodeRow>) =>
     ({ isSelf: false, online: true, version: '2.17.0', ...overrides }) as Pick<
       NodeRow,
-      'isSelf' | 'online' | 'version'
+      'isSelf' | 'online' | 'version' | 'paused'
     >;
 
   test('离线、版本过低（含缺版本）禁用；本机与达标版本可用', () => {
     expect(loginCodeIneligibleReason(row({ online: false }))).toBe('offline');
+    expect(loginCodeIneligibleReason(row({ paused: true }))).toBe('paused');
+    expect(loginCodeIneligibleReason(row({ isSelf: true, paused: true }))).toBeNull();
+    expect(loginCodeIneligibleReason(row({ online: false, paused: true }))).toBe('offline');
     expect(loginCodeIneligibleReason(row({ version: '2.16.9' }))).toBe('outdated');
     expect(loginCodeIneligibleReason(row({ version: null }))).toBe('outdated');
     expect(loginCodeIneligibleReason(row({}))).toBeNull();
@@ -420,6 +453,7 @@ describe('行内菜单与登录历史', () => {
     expect(loginCodeMenuTitle('outdated', t)).toBe(
       'nodes.loginCode.menuOutdated:{"version":"2.17.0"}'
     );
+    expect(loginCodeMenuTitle('paused', t)).toBe('nodes.loginCode.menuPaused');
     expect(loginCodeMenuTitle(null, t)).toBeUndefined();
   });
 

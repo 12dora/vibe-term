@@ -27,10 +27,10 @@ import {
   type LoginCodeDraft,
   buildProof,
   draftResetForFailure,
-  effectiveNodeIds,
   initialDraft,
+  planForDraft,
 } from './login-code-draft';
-import { LoginCodeForm, type LoginCodeNodeOption } from './login-code-form';
+import { LoginCodeForm } from './login-code-form';
 import type { LoginCodeSelection } from './login-code-request';
 import { LoginCodeResultView } from './login-code-result';
 import { loginCodeErrorText } from './login-code-text';
@@ -59,18 +59,10 @@ function usePlan(state: LoginCodeViewState, draft: LoginCodeDraft) {
   const { mod, context } = state;
   return useMemo(() => {
     if (!mod || !context) return null;
-    const self = context.selfMeshId;
-    const options: LoginCodeNodeOption[] = sortNodes(nodes, self).map((node) => ({
-      meshId: node.id,
-      name: node.name,
-      reason: mod.planLoginCodeTargets([node], [node.id], self).skipped[0]?.reason ?? null,
-    }));
-    const selectedIds = effectiveNodeIds({ nodeIds }, options);
-    const plan =
-      scope === 'all'
-        ? mod.planLoginCodeTargets(nodes, 'all', self)
-        : mod.planLoginCodeTargets(nodes, selectedIds, self);
-    return { options, selectedIds, plan };
+    const selfMeshId = context.selfMeshId;
+    const sorted = sortNodes(nodes, selfMeshId);
+    const input = { nodes, sorted, selfMeshId };
+    return planForDraft(mod.planLoginCodeTargets, input, { scope, nodeIds });
   }, [mod, context, nodes, scope, nodeIds]);
 }
 

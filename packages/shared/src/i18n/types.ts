@@ -2753,6 +2753,7 @@ export type TranslationKey =
   | 'nodes.loginCode.title'
   | 'nodes.loginCode.description'
   | 'nodes.loginCode.menuOffline'
+  | 'nodes.loginCode.menuPaused'
   | 'nodes.loginCode.menuOutdated'
   | 'nodes.loginCode.selectionNone'
   | 'nodes.loginCode.target'

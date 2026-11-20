@@ -238,6 +238,11 @@ describe('planLoginCodeTargets', () => {
   });
 });
 
+const mismatched = (target: LoginCodeTarget): LoginCodeTarget => ({
+  ...target,
+  publicKey: encodeBase64url(fill(32, 1)),
+});
+
 describe('issueLoginCode', () => {
   test('验证码证明：请求体字段、code_hash 派生、purpose 与 login 绑定', async () => {
     const { api, calls } = fakeApi();
@@ -316,6 +321,59 @@ describe('issueLoginCode', () => {
     await revokeLoginCode(result.handle);
     expect(calls.map((c) => c.nodeId)).toEqual([NODE_B, NODE_B]);
     disposeLoginCode(result.handle);
+  });
+
+  test('首台不是 self 且只是自己的节点问题（公钥不符）：记为该台失败，其余节点照常签发', async () => {
+    const { api, calls } = fakeApi();
+    const planned = planLoginCodeTargets([row(NODE_A), row(NODE_B)], 'all', SELF).targets;
+    const targets = [mismatched(planned[0] as LoginCodeTarget), planned[1] as LoginCodeTarget];
+    const result = await issueLoginCode({
+      context: context(),
+      targets,
+      proof: { kind: 'totp', code: '123456' },
+      api,
+      now: NOW,
+      deps: { readSecrets: () => rootSecrets() },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.nodes.map((n) => (n.ok ? 'ok' : n.code))).toEqual(['NODE_PK_MISMATCH', 'ok']);
+    expect(result.handle.meshIds).toEqual([NODE_B]);
+    expect(calls.filter((c) => c.kind === 'login-code').map((c) => c.nodeId)).toEqual([NODE_B]);
+    disposeLoginCode(result.handle);
+  });
+
+  test('首台是 self 时公钥不符仍整次中止', async () => {
+    const { api, calls } = fakeApi();
+    const planned = planLoginCodeTargets([row(SELF), row(NODE_A)], 'all', SELF).targets;
+    const targets = [mismatched(planned[0] as LoginCodeTarget), planned[1] as LoginCodeTarget];
+    const result = await issueLoginCode({
+      context: context(),
+      targets,
+      proof: { kind: 'totp', code: '123456' },
+      api,
+      now: NOW,
+      deps: { readSecrets: () => rootSecrets() },
+    });
+    expect(result).toMatchObject({ ok: false, code: 'NODE_PK_MISMATCH' });
+    expect(calls.filter((c) => c.kind === 'login-code')).toEqual([]);
+  });
+
+  test('首台不是 self 但证明本身被拒（TOTP_INVALID）：仍整次中止', async () => {
+    const { api, calls } = fakeApi({
+      issue: () => Response.json({ code: 'TOTP_INVALID' }, { status: 401 }),
+    });
+    const targets = planLoginCodeTargets([row(NODE_A), row(NODE_B)], 'all', SELF).targets;
+    const result = await issueLoginCode({
+      context: context(),
+      targets,
+      proof: { kind: 'totp', code: '000000' },
+      api,
+      now: NOW,
+      deps: { readSecrets: () => rootSecrets() },
+    });
+    expect(result).toMatchObject({ ok: false, code: 'TOTP_INVALID' });
+    expect(calls.filter((c) => c.kind === 'login-code').map((c) => c.nodeId)).toEqual([NODE_A]);
   });
 
   test('首台 TOTP_INVALID 整次中止，不再请求其余节点', async () => {

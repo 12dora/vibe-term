@@ -146,7 +146,7 @@ export type IssueLoginCodeResult =
   | { ok: true; handle: LoginCodeHandle; nodes: LoginCodeNodeOutcome[] }
   | { ok: false; code: string; retryAfterMs?: number; nodes: LoginCodeNodeOutcome[] };
 
-/** 首台节点出现这些码说明证明本身不成立，整次签发中止（用户需重新验证）。 */
+/** 首台节点出现这些码说明证明本身不成立，整次签发中止（用户需重新验证）；节点自身的问题见 `NODE_LOCAL_FAILURES`。 */
 export const LOGIN_CODE_PROOF_FAILURES: ReadonlySet<string> = new Set([
   'TOTP_INVALID',
   'TOTP_ALREADY_USED',
@@ -160,6 +160,21 @@ export const LOGIN_CODE_PROOF_FAILURES: ReadonlySet<string> = new Set([
   'PASSWORD_LOGIN_PAUSED',
   'NODE_PK_MISMATCH',
 ]);
+
+/** 只说明那一台节点自己的问题：首台不是 self 时不能据此中止整次签发。 */
+const NODE_LOCAL_FAILURES: ReadonlySet<string> = new Set([
+  'NODE_PK_MISMATCH',
+  'RATE_LIMITED',
+  'PASSWORD_LOGIN_PAUSED',
+]);
+
+/** 首台的失败是否说明证明本身不成立：首台是 self 时沿用全部证明类失败码。 */
+function abortsIssuance(first: LoginCodeNodeOutcome, target: LoginCodeTarget): boolean {
+  if (first.ok) return false;
+  if (first.code === 'ABORTED') return true;
+  if (!LOGIN_CODE_PROOF_FAILURES.has(first.code)) return false;
+  return target.runtimeId === SELF_NODE_ID || !NODE_LOCAL_FAILURES.has(first.code);
+}
 
 const LOGIN_CODE_CONCURRENCY = 4;
 
@@ -247,10 +262,9 @@ async function issueAll(
       ? Promise.resolve(abortedRow(target))
       : issueOnTarget({ api, material, secret, target });
 
-  const first = await issueOne(targets[0] as LoginCodeTarget);
-  if (!first.ok && (LOGIN_CODE_PROOF_FAILURES.has(first.code) || first.code === 'ABORTED')) {
-    return failureOf(first, [first]);
-  }
+  const firstTarget = targets[0] as LoginCodeTarget;
+  const first = await issueOne(firstTarget);
+  if (!first.ok && abortsIssuance(first, firstTarget)) return failureOf(first, [first]);
   const rest = await runLimited(targets.slice(1), LOGIN_CODE_CONCURRENCY, issueOne);
   const rows = [first, ...rest];
   if (signal?.aborted) {

@@ -1,6 +1,13 @@
 // 「登录命令」表单草稿：目标选择与验证输入。纯函数，不碰 React。
 
-import type { LoginCodeContext, LoginCodeProof, LoginCodeProofKind } from '@/auth/login-code-issue';
+import type {
+  LoginCodeContext,
+  LoginCodeProof,
+  LoginCodeProofKind,
+  planLoginCodeTargets,
+} from '@/auth/login-code-issue';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
+import type { LoginCodeNodeOption } from './login-code-form';
 import type { LoginCodeSelection } from './login-code-request';
 import { TOTP_RETRY_CODES } from './login-code-text';
 
@@ -38,6 +45,24 @@ export function effectiveNodeIds(
   if (draft.nodeIds === null) return usable.slice(0, 1).map((option) => option.meshId);
   const picked = new Set(draft.nodeIds);
   return usable.filter((option) => picked.has(option.meshId)).map((option) => option.meshId);
+}
+
+/** 由草稿算出可选项、实际选中与签发计划；`plan` 注入签发模块的 `planLoginCodeTargets`。 */
+export function planForDraft(
+  plan: typeof planLoginCodeTargets,
+  input: { nodes: readonly MeshNode[]; sorted: readonly MeshNode[]; selfMeshId: string },
+  draft: Pick<LoginCodeDraft, 'scope' | 'nodeIds'>
+) {
+  const { nodes, sorted, selfMeshId } = input;
+  const options: LoginCodeNodeOption[] = sorted.map((node) => ({
+    meshId: node.id,
+    name: node.name,
+    reason: plan([node], [node.id], selfMeshId).skipped[0]?.reason ?? null,
+  }));
+  const selectedIds = effectiveNodeIds(draft, options);
+  const planned =
+    draft.scope === 'all' ? plan(nodes, 'all', selfMeshId) : plan(nodes, selectedIds, selfMeshId);
+  return { options, selectedIds, plan: planned };
 }
 
 /** 实际生效的验证方式：偏好不在可选范围内就取首选。 */
