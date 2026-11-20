@@ -9,8 +9,8 @@ import {
   SET_SESSION_HEADER,
   readHeaderPair,
 } from '@vibeterm/shared/http/mesh-headers';
-import { NetworkError } from './errors';
-import { httpStatusError } from './http-status';
+import { type CliError, NetworkError } from './errors';
+import { type HttpStatusContext, hasEntryCredential, httpStatusError } from './http-status';
 import { isPopUnauthorizedResponse, isReplayableBody, stampPopHeader } from './session-pop';
 import {
   type CookieJar,
@@ -23,12 +23,15 @@ import type { TokenSource } from './token-store';
 
 export {
   TOKEN_SCOPE_CODE,
+  hasEntryCredential,
   httpStatusError,
   isEntryAuthFallback,
   isSessionAuthFailure,
   loginRequiredError,
   missingEntrySessionError,
 } from './http-status';
+
+export type { HttpStatusContext } from './http-status';
 
 export type { CookieJar } from './session-store';
 export { createMemoryCookieJar, createSessionCookieJar };
@@ -158,6 +161,23 @@ export class HttpClient {
 
   get jar(): CookieJar {
     return this.options.jar;
+  }
+
+  get tokens(): TokenSource | undefined {
+    return this.options.tokens;
+  }
+
+  hasEntryCredential(): boolean {
+    return hasEntryCredential(this.jar, this.options.tokens);
+  }
+
+  statusContext(): HttpStatusContext {
+    return { entry: this.entry, jar: this.jar, tokens: this.options.tokens };
+  }
+
+  /** 非 2xx → CliError；始终带上 entry / jar / tokens，SELF 401 文案才一致。 */
+  statusError(nodeId: string, path: string, status: number, body: string): CliError {
+    return httpStatusError(nodeId, path, status, body, this.statusContext());
   }
 
   url(nodeId: string, path: string): string {
@@ -295,10 +315,7 @@ export class HttpClient {
   /** 非 2xx 一律抛；状态码 → 退出码的映射见 `httpStatusError`。 */
   async assertOk(nodeId: string, response: Response, path: string): Promise<Response> {
     if (response.ok) return response;
-    throw httpStatusError(nodeId, path, response.status, await peekBody(response), {
-      entry: this.entry,
-      jar: this.jar,
-    });
+    throw this.statusError(nodeId, path, response.status, await peekBody(response));
   }
 
   async json<T>(

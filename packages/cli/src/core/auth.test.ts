@@ -51,7 +51,7 @@ describe('fetchMeshNodes', () => {
 
   test('404 is an empty roster', async () => {
     const http = httpWith(404, { error: 'Not found' });
-    expect(await fetchMeshNodes(http)).toEqual({ ok: true, nodes: [] });
+    expect(await fetchMeshNodes(http)).toEqual({ ok: true, nodes: [], source: 'self' });
   });
 
   test('200 returns the nodes list', async () => {

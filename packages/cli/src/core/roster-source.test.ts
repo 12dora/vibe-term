@@ -70,13 +70,18 @@ describe('fetchMeshRoster', () => {
     expect(await fetchMeshRoster(http)).toEqual({
       nodes: [OFFICE],
       pendingMemberIds: ['pend'],
+      source: 'self',
     });
     expect(seen).toEqual(['/api/mesh/nodes']);
   });
 
   test('self 404 is an empty roster', async () => {
     const http = client(async () => json({ error: 'Not found' }, 404));
-    expect(await fetchMeshRoster(http)).toEqual({ nodes: [], pendingMemberIds: [] });
+    expect(await fetchMeshRoster(http)).toEqual({
+      nodes: [],
+      pendingMemberIds: [],
+      source: 'self',
+    });
   });
 
   test('self 401 falls back to a live node', async () => {
@@ -89,7 +94,11 @@ describe('fetchMeshRoster', () => {
       },
       liveJar([NODE_A])
     );
-    expect(await fetchMeshRoster(http)).toEqual({ nodes: [OFFICE], pendingMemberIds: [] });
+    expect(await fetchMeshRoster(http)).toEqual({
+      nodes: [OFFICE],
+      pendingMemberIds: [],
+      source: NODE_A,
+    });
     expect(seen).toEqual(['/api/mesh/nodes', `/n/${NODE_A}/api/mesh/nodes`]);
   });
 
@@ -122,8 +131,11 @@ describe('fetchMeshRoster', () => {
     const error = (await fetchMeshRoster(http).catch((err) => err)) as AuthError;
     expect(error).toBeInstanceOf(AuthError);
     expect(error.exitCode).toBe(3);
-    expect(error.message).toBe('not authenticated for node self (UNAUTHORIZED)');
-    expect(error.hint).toBe('run: vibeterm login');
+    expect(error.message).toBe(`this command runs on the entry ${ENTRY}, which has no session`);
+    expect(error.hint).toBe(
+      'run: vibeterm login, or redeem a login command that includes the entry'
+    );
+    expect(error.code).toBe('UNAUTHORIZED');
   });
 
   test('PoP on self is not treated as logged out and is not swallowed', async () => {
@@ -170,7 +182,40 @@ describe('fetchMeshRoster', () => {
       liveJar(['self', NODE_A])
     );
     await fetchMeshRoster(http).catch(() => undefined);
-    expect(seen).toEqual(['/api/mesh/nodes', `/n/${NODE_A}/api/mesh/nodes`]);
+    expect(seen).toEqual(['/api/mesh/nodes']);
+  });
+
+  test('an expired self row does not fall back', async () => {
+    const seen: string[] = [];
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-old', Date.now() - 1000);
+    jar.set(NODE_A, 'sid-a', Date.now() + 60_000);
+    const http = client(async (url) => {
+      seen.push(meshPath(url));
+      return json({ error: 'expired' }, 401);
+    }, jar);
+    const error = (await fetchMeshRoster(http).catch((err) => err)) as AuthError;
+    expect(error.message).toBe('not authenticated for node self (expired)');
+    expect(error.code).toBe('expired');
+    expect(seen).toEqual(['/api/mesh/nodes']);
+  });
+
+  test('a stored self token does not fall back', async () => {
+    const seen: string[] = [];
+    const jar = liveJar([NODE_A]);
+    const http = new HttpClient({
+      entry: ENTRY,
+      timeoutMs: 1000,
+      jar,
+      tokens: { get: (id) => (id === 'self' ? { secret: 'vtk_self' } : null) },
+      fetchImpl: async (url) => {
+        seen.push(meshPath(url));
+        return json({ error: 'UNAUTHORIZED' }, 401);
+      },
+    });
+    const error = (await fetchMeshRoster(http).catch((err) => err)) as AuthError;
+    expect(error.message).toBe('not authenticated for node self (UNAUTHORIZED)');
+    expect(seen).toEqual(['/api/mesh/nodes']);
   });
 });
 
@@ -189,7 +234,11 @@ describe('fetchMeshNodes', () => {
       },
       liveJar([NODE_A])
     );
-    expect(await fetchMeshNodes(http)).toEqual({ ok: true, nodes: [OFFICE] });
+    expect(await fetchMeshNodes(http)).toEqual({
+      ok: true,
+      nodes: [OFFICE],
+      source: NODE_A,
+    });
   });
 
   test('non-auth failures stay network errors', async () => {

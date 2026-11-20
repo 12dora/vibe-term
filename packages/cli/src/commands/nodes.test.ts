@@ -42,6 +42,42 @@ describe('vibeterm nodes', () => {
     expect(payload.nodes[0].id).toBe(NODE);
   });
 
+  test('ls with a fallback roster notes the source on stderr', async () => {
+    const peer = 'b'.repeat(32);
+    const { ctx: cli, stderr } = await ctx(
+      {
+        'GET /api/mesh/nodes': () =>
+          new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), { status: 401 }),
+        [`GET /n/${peer}/api/mesh/nodes`]: () => ({
+          nodes: [meshNode({ id: peer, name: 'office' })],
+        }),
+      },
+      false
+    );
+    cli.http.jar.set(peer, 'sid-peer', Date.now() + 60_000);
+    await nodes.run(cli, ['ls']);
+    expect(stderr.text()).toContain('roster via office (entry has no session)');
+  });
+
+  test('ls --json with a fallback roster keeps the note off stdout', async () => {
+    const peer = 'b'.repeat(32);
+    const {
+      ctx: cli,
+      stdout,
+      stderr,
+    } = await ctx({
+      'GET /api/mesh/nodes': () =>
+        new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), { status: 401 }),
+      [`GET /n/${peer}/api/mesh/nodes`]: () => ({
+        nodes: [meshNode({ id: peer, name: 'office' })],
+      }),
+    });
+    cli.http.jar.set(peer, 'sid-peer', Date.now() + 60_000);
+    await nodes.run(cli, ['ls']);
+    expect(JSON.parse(stdout.text())).toMatchObject({ nodes: [{ name: 'office' }] });
+    expect(stderr.text()).not.toContain('roster via');
+  });
+
   test('ls --json passes paused', async () => {
     const { ctx: cli, stdout } = await ctx({
       'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ paused: true })] }),
@@ -177,6 +213,23 @@ describe('vibeterm nodes', () => {
     await nodes.run(cli, ['ls']);
     const payload = JSON.parse(stdout.text()) as { nodes: Array<{ login: string }> };
     expect(payload.nodes[0]?.login).toBe('session');
+  });
+
+  test('show with a fallback roster notes the source on stderr', async () => {
+    const peer = 'b'.repeat(32);
+    const { ctx: cli, stderr } = await ctx(
+      {
+        'GET /api/mesh/nodes': () =>
+          new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), { status: 401 }),
+        [`GET /n/${peer}/api/mesh/nodes`]: () => ({
+          nodes: [meshNode({ id: peer, name: 'office' })],
+        }),
+      },
+      false
+    );
+    cli.http.jar.set(peer, 'sid-peer', Date.now() + 60_000);
+    await nodes.run(cli, ['show', 'office']);
+    expect(stderr.text()).toContain('roster via office (entry has no session)');
   });
 
   test('show prints State / Last seen / Login lines', async () => {

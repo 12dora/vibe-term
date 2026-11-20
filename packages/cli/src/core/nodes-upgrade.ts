@@ -7,7 +7,7 @@ import { type FlagValues, flagBool, flagString } from './args';
 import { dash, rejectExtra, sleep } from './cmd';
 import type { CliContext } from './context';
 import { AuthError, UsageError } from './errors';
-import { type CookieJar, loginRequiredError } from './http';
+import { type CookieJar, type HttpClient, loginRequiredError } from './http';
 import { findMeshNode, listMeshNodesFull } from './nodes-roster';
 import {
   isNodeLoginRequiredJobError,
@@ -51,14 +51,20 @@ function nodeCookieOpts(nodeId: string) {
   return { withNodeCookies: [nodeId] as const };
 }
 
-async function readUpgradeFailure(nodeId: string, response: Response): Promise<string> {
+async function readUpgradeFailure(
+  http: HttpClient,
+  nodeId: string,
+  response: Response
+): Promise<string> {
   let body = '';
   try {
     body = (await response.text()).trim();
   } catch {
     body = '';
   }
-  if (response.status === 401) throw loginRequiredError(nodeId, body);
+  if (response.status === 401) {
+    throw http.statusError(nodeId, upgradePath(nodeId), response.status, body);
+  }
   try {
     const payload = JSON.parse(body) as { code?: unknown; error?: unknown };
     if (typeof payload.code === 'string') return payload.code;
@@ -81,7 +87,7 @@ export async function startNodeUpgrade(
     ...nodeCookieOpts(nodeId),
   });
   if (response.ok) return { kind: 'started' };
-  const code = await readUpgradeFailure(nodeId, response);
+  const code = await readUpgradeFailure(ctx.http, nodeId, response);
   if (code === 'UPGRADE_ALREADY_LATEST') return { kind: 'alreadyLatest', code };
   if (code === 'NODE_UNREACHABLE') return { kind: 'unconfirmed', code };
   return { kind: 'failed', code };
@@ -96,7 +102,7 @@ export async function pollNodeUpgrade(
     return { kind: 'status', status: (await response.json()) as UpgradeStatus };
   }
   if (response.status >= 500) return { kind: 'unreachable' };
-  return { kind: 'failed', code: await readUpgradeFailure(nodeId, response) };
+  return { kind: 'failed', code: await readUpgradeFailure(ctx.http, nodeId, response) };
 }
 
 export async function cancelNodeUpgrade(
@@ -108,7 +114,7 @@ export async function cancelNodeUpgrade(
     ...nodeCookieOpts(nodeId),
   });
   if (response.ok) return { kind: 'cancelled' };
-  return { kind: 'failed', code: await readUpgradeFailure(nodeId, response) };
+  return { kind: 'failed', code: await readUpgradeFailure(ctx.http, nodeId, response) };
 }
 
 function versionOf(nodes: MeshNode[], nodeId: string): string | null | undefined {

@@ -8,7 +8,7 @@ import type { DeviceWithRuntime } from '@vibeterm/api-client/devices';
 import { SELF_NODE_ID, isValidNodeId, normalizeNodeId } from '@vibeterm/api-client/node-url';
 import { AuthError, NotFoundError, UsageError } from './errors';
 import type { HttpClient } from './http';
-import { fetchMeshRoster } from './roster-source';
+import { type MeshRoster, fetchMeshRoster } from './roster-source';
 
 export interface TargetPart {
   /** 原文；可能是序号也可能是名字。 */
@@ -108,7 +108,7 @@ export function isSelfAlias(ref: string): boolean {
 }
 
 export class Resolver {
-  private nodesCache: MeshNode[] | null = null;
+  private rosterCache: MeshRoster | null = null;
   private entryNodeIdCache: string | null | undefined;
   private readonly devicesCache = new Map<string, DeviceWithRuntime[]>();
 
@@ -140,10 +140,18 @@ export class Resolver {
   }
 
   /** `GET /api/mesh/nodes`；standalone 入口没有这个路由（404），返回空表。 */
+  async listRoster(): Promise<MeshRoster> {
+    if (this.rosterCache) return this.rosterCache;
+    this.rosterCache = await fetchMeshRoster(this.http);
+    return this.rosterCache;
+  }
+
   async listNodes(): Promise<MeshNode[]> {
-    if (this.nodesCache) return this.nodesCache;
-    this.nodesCache = (await fetchMeshRoster(this.http)).nodes;
-    return this.nodesCache;
+    return (await this.listRoster()).nodes;
+  }
+
+  peekRoster(): MeshRoster | null {
+    return this.rosterCache;
   }
 
   /** node id、node 名字或 `self` 都接受；不给（undefined / 空）即 entry 自身。 */

@@ -92,13 +92,14 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
 
   const mesh = await fetchMeshNodes(ctx.http);
   if (!mesh.ok) return emitLoggedOut(ctx, entry);
+  const fromSelf = mesh.source === SELF_NODE_ID;
 
   const stored = ctx.sessions.entry(entry);
   const statuses: NodeStatus[] = [
     asNodeStatus(
       SELF_NODE_ID,
       `${displayUser(mode.username, mode.uid, 'unknown')} @ ${mode.nodeId}`,
-      selfLive,
+      fromSelf,
       true,
       localExpiry(ctx, SELF_NODE_ID)
     ),
@@ -122,7 +123,7 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
       auth: 'mesh',
       user: { uid: mode.uid, username: mode.username ?? stored?.username ?? null },
       entryNodeId: mode.nodeId,
-      loggedIn: selfLive,
+      loggedIn: fromSelf,
       nodes: statuses,
       sessionFile: ctx.sessions.path,
     });

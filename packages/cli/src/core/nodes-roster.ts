@@ -5,16 +5,20 @@ import type { MeshNode } from '@vibeterm/shared';
 import { fetchAuthMode } from './auth';
 import type { CliContext } from './context';
 import { CliError, NotFoundError } from './errors';
-import { fetchMeshRoster } from './roster-source';
+import type { MeshRoster } from './roster-source';
 import { isLiveNodeSession } from './session-store';
 
-export interface MeshNodesList {
-  nodes: MeshNode[];
-  pendingMemberIds: string[];
-}
+export type MeshNodesList = MeshRoster;
 
 export async function listMeshNodesDetailed(ctx: CliContext): Promise<MeshNodesList> {
-  return fetchMeshRoster(ctx.http);
+  return ctx.resolver.listRoster();
+}
+
+/** 名册来自其它节点时打一行 stderr（`--json` / `-q` 由 `out.info` 自己吞掉）。 */
+export function noticeFallbackRoster(ctx: CliContext, roster: MeshRoster): void {
+  if (roster.source === SELF_NODE_ID) return;
+  const name = roster.nodes.find((node) => node.id === roster.source)?.name ?? roster.source;
+  ctx.out.info(`roster via ${name} (entry has no session)`);
 }
 
 export async function listMeshNodesFull(ctx: CliContext): Promise<MeshNode[]> {
@@ -39,7 +43,9 @@ function pendingStub(id: string): ListedNode {
 }
 
 export async function listListedNodes(ctx: CliContext): Promise<ListedNode[]> {
-  const { nodes, pendingMemberIds } = await listMeshNodesDetailed(ctx);
+  const roster = await listMeshNodesDetailed(ctx);
+  noticeFallbackRoster(ctx, roster);
+  const { nodes, pendingMemberIds } = roster;
   const meshIds = new Set(nodes.map((node) => node.id));
   const admitted: ListedNode[] = nodes.map((node) => ({ ...node, status: 'admitted' as const }));
   const pending: ListedNode[] = [];
@@ -55,6 +61,8 @@ export async function listListedNodes(ctx: CliContext): Promise<ListedNode[]> {
 
 export async function findMeshNode(ctx: CliContext, ref: string): Promise<MeshNode> {
   const resolved = await ctx.resolver.resolveNode(ref);
+  const roster = ctx.resolver.peekRoster();
+  if (roster) noticeFallbackRoster(ctx, roster);
   if (resolved.row) return resolved.row;
   const nodes = await listMeshNodesFull(ctx);
   const row = nodes.find((node) => node.id === resolved.id);

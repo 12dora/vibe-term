@@ -5,7 +5,7 @@ import type { ReadStream, WriteStream } from 'node:tty';
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import type { ExecCommand, ExecOpenSpec, ExecReady } from '@vibeterm/shared/exec-channel';
 import type { CliContext } from './context';
-import { NotFoundError } from './errors';
+import { AuthError, NotFoundError } from './errors';
 import {
   type ExecChannelOptions,
   type ExecChannelResult,
@@ -19,7 +19,7 @@ import {
   legacyTargetText,
   planExecTarget,
 } from './exec-target';
-import { isEntryAuthFallback } from './http';
+import { isEntryAuthFallback, missingEntrySessionError } from './http';
 import {
   PTY_NOT_ALLOCATED,
   type StdinMode,
@@ -144,15 +144,28 @@ class RemoteRun {
    * 单段目标：先当入口上的设备（设备优先于同名 node，缓存不得改变这个优先级，所以每次都先探），
    * 再试缓存的 node，最后按 node 名解析（该 node 的默认设备）。缓存的 node 带期望名字，由它自检。
    */
+  private entryDeviceMiss(error: unknown): boolean {
+    if (this.ready) return false;
+    return (
+      error instanceof NotFoundError ||
+      isEntryAuthFallback(error, this.ctx.http.jar, this.ctx.http.tokens)
+    );
+  }
+
   private async viaBare(token: string): Promise<ExecChannelResult> {
+    let entryAuth: AuthError | null = null;
     try {
       return await this.attempt({ nodeId: SELF_NODE_ID, nodeName: SELF_NODE_ID, device: token });
     } catch (error) {
-      const miss = error instanceof NotFoundError || isEntryAuthFallback(error, this.ctx.http.jar);
-      if (!miss || this.ready) throw error;
+      if (!this.entryDeviceMiss(error)) throw error;
+      if (error instanceof AuthError) entryAuth = error;
     } finally {
       if (this.ready) this.targets.forget(this.prep.plan);
     }
+    return this.finishBare(token, entryAuth);
+  }
+
+  private async finishBare(token: string, entryAuth: AuthError | null): Promise<ExecChannelResult> {
     const cached = this.targets.cachedBareRoute(token);
     if (cached) {
       try {
@@ -162,7 +175,14 @@ class RemoteRun {
         this.targets.forget(this.prep.plan);
       }
     }
-    return this.attempt(await this.targets.bareNodeRoute(token));
+    try {
+      return await this.attempt(await this.targets.bareNodeRoute(token));
+    } catch (error) {
+      if (entryAuth && error instanceof NotFoundError) {
+        throw missingEntrySessionError(this.ctx.globals.entry, entryAuth.code);
+      }
+      throw error;
+    }
   }
 
   private retryable(error: unknown): boolean {

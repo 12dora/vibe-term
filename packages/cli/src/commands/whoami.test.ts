@@ -138,6 +138,32 @@ describe('vibeterm whoami READY', () => {
     expect(stdout.text()).toBe('');
   });
 
+  test('a rejected live self row does not fall back to a peer roster', async () => {
+    const { ctx, stdout } = await testContext(
+      routeFetch({
+        'GET /api/auth/mode': () => ({
+          mode: 'mesh',
+          nodeId: NODE,
+          uid: 'u-1',
+          username: 'root',
+        }),
+        'GET /api/mesh/nodes': () => jsonResponse({ error: 'UNAUTHORIZED' }, 401),
+        [`GET /n/${PEER}/api/mesh/nodes`]: () => ({
+          nodes: [
+            meshNode({ id: NODE, name: 'entry', loggedIn: true, online: true }),
+            meshNode({ id: PEER, name: 'office', loggedIn: true, online: true }),
+          ],
+        }),
+      })
+    );
+    ctx.http.jar.set('self', 'sid-self', Date.now() + 60_000);
+    ctx.http.jar.set(PEER, 'sid-peer', Date.now() + 60_000);
+    const error = (await whoami.run(ctx, []).catch((err) => err)) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.message).toBe(`not logged in to ${ENTRY}`);
+    expect(stdout.text()).toBe('');
+  });
+
   test('no self session but a live peer still prints the table', async () => {
     const { ctx, stdout, stderr } = await testContext(
       routeFetch({

@@ -247,4 +247,18 @@ describe('mapFilesStatusError', () => {
     expect(error).not.toBeInstanceOf(NetworkError);
     expect(error.exitCode).toBe(1);
   });
+
+  test('SELF 401 with no entry credential uses the entry message', () => {
+    const http = client(async () => json({ error: 'UNAUTHORIZED' }, 401));
+    const error = mapFilesStatusError(
+      'self',
+      '/api/portmap',
+      401,
+      JSON.stringify({ error: 'UNAUTHORIZED' }),
+      http
+    );
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.code).toBe('UNAUTHORIZED');
+    expect(error.message).toBe(`this command runs on the entry ${ENTRY}, which has no session`);
+  });
 });

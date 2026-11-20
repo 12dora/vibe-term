@@ -9,7 +9,7 @@ import {
 } from '@vibeterm/shared/auth';
 import type { CliContext } from './context';
 import { CliError, NetworkError, NotFoundError, UsageError } from './errors';
-import { httpStatusError, loginRequiredError } from './http';
+import type { HttpClient } from './http';
 import {
   type KeyLogAppendResult,
   appendKeyLog,
@@ -88,7 +88,7 @@ export async function removeRelayPrepare(
       'use vibeterm relay leave to leave all relays'
     );
   }
-  throw httpStatusError(
+  throw ctx.http.statusError(
     SELF_NODE_ID,
     '/api/mesh/relay/remove/prepare',
     response.status,
@@ -216,14 +216,12 @@ const PASSWORD_CODE_ERRORS: Record<string, (body: Record<string, unknown>) => Cl
 };
 
 function throwRelayPasswordError(
+  http: HttpClient,
   status: number,
   body: Record<string, unknown>,
   raw: string
 ): never {
   const code = codeOf(body);
-  if (status === 401 && (code === 'UNAUTHORIZED' || !code)) {
-    throw loginRequiredError(SELF_NODE_ID, raw);
-  }
   if (code === 'relay_not_attached' || (status === 404 && code !== 'INVALID_URL')) {
     throw new NotFoundError(
       `relay not attached (${code ?? '404'})`,
@@ -233,7 +231,7 @@ function throwRelayPasswordError(
   const mapped = code ? PASSWORD_CODE_ERRORS[code] : undefined;
   if (mapped) throw mapped(body);
   if (status === 502) throw new NetworkError('relay unreachable (HTTP 502)');
-  throw httpStatusError(SELF_NODE_ID, RELAY_PASSWORD_PATH, status, raw);
+  throw http.statusError(SELF_NODE_ID, RELAY_PASSWORD_PATH, status, raw);
 }
 
 async function relayPasswordResponse(
@@ -251,7 +249,7 @@ async function relayPasswordResponse(
   });
   const body = await readJson(response);
   if (response.ok) return body;
-  throwRelayPasswordError(response.status, body, JSON.stringify(body));
+  throwRelayPasswordError(ctx.http, response.status, body, JSON.stringify(body));
 }
 
 export function enrollPasswordView(body: Record<string, unknown>): RelayEnrollPasswordView {

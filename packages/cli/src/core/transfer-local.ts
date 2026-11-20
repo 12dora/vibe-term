@@ -223,7 +223,7 @@ async function commitUpload(input: {
     signal,
     timeoutMs: null,
   });
-  await assertFilesOk(nodeId, response, `/api/files/upload/${uploadId}/commit`);
+  await assertFilesOk(nodeId, response, `/api/files/upload/${uploadId}/commit`, http);
   let done = false;
   await consumeNdjson<CommitEvent>(response, (event) => {
     if (event.type === 'progress') {
@@ -310,7 +310,7 @@ async function prepareDownload(input: {
     signal,
     timeoutMs: null,
   });
-  await assertFilesOk(nodeId, response, '/api/files/download/prepare');
+  await assertFilesOk(nodeId, response, '/api/files/download/prepare', http);
   let downloadId = '';
   let size = 0;
   let fileName = name;
@@ -412,7 +412,7 @@ async function readContentOnce(input: {
     signal,
     timeoutMs: null,
   });
-  await assertFilesOk(nodeId, response, `/api/files/download/${downloadId}/content`);
+  await assertFilesOk(nodeId, response, `/api/files/download/${downloadId}/content`, http);
   if (received > 0 && response.status !== 206) {
     received = 0;
     await handle.truncate(0);

@@ -180,8 +180,46 @@ describe('HttpClient', () => {
     const error = (await http.json('self', 'GET', '/api/portmap').catch((err) => err)) as AuthError;
     expect(error).toBeInstanceOf(AuthError);
     expect(error.exitCode).toBe(3);
+    expect(error.code).toBe('UNAUTHORIZED');
     expect(error.message).toBe(`this command runs on the entry ${ENTRY}, which has no session`);
-    expect(error.hint).toBe('run: vibeterm login, or a login command that includes this node');
+    expect(error.hint).toBe(
+      'run: vibeterm login, or redeem a login command that includes the entry'
+    );
+  });
+
+  test('401 on self with an expired self row keeps the old login required error', async () => {
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-old', Date.now() - 1000);
+    const http = client(
+      async () =>
+        new Response(JSON.stringify({ error: 'expired' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+      jar
+    );
+    const error = (await http.json('self', 'GET', '/api/portmap').catch((err) => err)) as AuthError;
+    expect(error.message).toBe('not authenticated for node self (expired)');
+    expect(error.code).toBe('expired');
+    expect(error.hint).toBe('run: vibeterm login');
+  });
+
+  test('401 on self with a stored self token keeps the old login required error', async () => {
+    const http = new HttpClient({
+      entry: ENTRY,
+      timeoutMs: 1000,
+      jar: createMemoryCookieJar(),
+      tokens: { get: (id) => (id === 'self' ? { secret: 'vtk_self' } : null) },
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    const error = (await http.json('self', 'GET', '/api/portmap').catch((err) => err)) as AuthError;
+    expect(error.message).toBe('not authenticated for node self (UNAUTHORIZED)');
+    expect(error.code).toBe('UNAUTHORIZED');
+    expect(error.hint).toBe('run: vibeterm login');
   });
 
   test('403 with an auth code still asks for a fresh login (exit 3)', async () => {

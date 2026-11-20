@@ -53,6 +53,13 @@ async function deviceNotFoundOnNode(
   );
 }
 
+function canProbeBareNode(ctx: CliContext, target: ParsedTarget, error: unknown): boolean {
+  if (target.node || ctx.globals.node) return false;
+  return (
+    error instanceof NotFoundError || isEntryAuthFallback(error, ctx.http.jar, ctx.http.tokens)
+  );
+}
+
 /** 解析目标里的 node 与 device（只打 REST，不建 WS）。`--node` 只在目标没写 node 时生效。 */
 export async function resolveTargetDevice(
   ctx: CliContext,
@@ -68,11 +75,7 @@ export async function resolveTargetDevice(
     // 文档约定的回退：`exec <meshNodeName>`（无 `--node`、无 slash）→ 该节点第一台 local。
     // `--node` 已经选定节点后，未知设备是硬错误，绝不能再把设备 token 当节点名。
     // entry 没有会话时 GET /api/devices 是 AuthError 而不是 NotFoundError，同样按节点名再探一次。
-    const probeSelf =
-      !target.node &&
-      !ctx.globals.node &&
-      (error instanceof NotFoundError || isEntryAuthFallback(error, ctx.http.jar));
-    if (probeSelf) {
+    if (canProbeBareNode(ctx, target, error)) {
       const fallback = await ctx.resolver.resolveNodeLocalDevice(target.device);
       if (fallback) {
         if (options.notice !== false) {

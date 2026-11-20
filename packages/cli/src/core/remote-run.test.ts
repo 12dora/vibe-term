@@ -529,6 +529,39 @@ describe('runRemote target resolution', () => {
     expect(link.conns).toHaveLength(1);
   });
 
+  test('a PoP error with no self row does not fall back to a node name', async () => {
+    const { ctx, terminal } = await setup();
+    const link = fakeLink((conn) => conn.drop(4401, 'POP_REQUIRED'));
+    const error = await runRemote(ctx, optionsOf(terminal, link, { target: 'office' })).catch(
+      (err) => err
+    );
+    expect(error).toBeInstanceOf(AuthError);
+    expect((error as AuthError).code).toBe('POP_REQUIRED');
+    expect(link.conns).toHaveLength(1);
+  });
+
+  test('an expired self row does not fall back to a node name', async () => {
+    const { ctx, terminal } = await setup();
+    ctx.http.jar.set('self', 'sid-old', Date.now() - 1000);
+    const link = fakeLink((conn) => conn.drop(4401, 'UNAUTHORIZED'));
+    const error = await runRemote(ctx, optionsOf(terminal, link, { target: 'office' })).catch(
+      (err) => err
+    );
+    expect(error).toBeInstanceOf(AuthError);
+    expect(link.conns).toHaveLength(1);
+  });
+
+  test('entry 401 plus an unknown token is AuthError exit 3', async () => {
+    const { ctx, terminal } = await setup();
+    const link = fakeLink((conn) => conn.drop(4401, 'UNAUTHORIZED'));
+    const error = await runRemote(ctx, optionsOf(terminal, link, { target: 'ghost' })).catch(
+      (err) => err
+    );
+    expect(error).toBeInstanceOf(AuthError);
+    expect((error as AuthError).exitCode).toBe(3);
+    expect((error as AuthError).message).toContain('which has no session');
+  });
+
   test('a token that is neither device nor node is a NotFoundError', async () => {
     const { ctx, terminal } = await setup();
     const link = fakeLink(deviceMissing);

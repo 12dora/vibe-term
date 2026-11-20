@@ -102,7 +102,7 @@ export async function filesJson<T>(
     headers,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  await assertFilesOk(nodeId, response, path);
+  await assertFilesOk(nodeId, response, path, http);
   return readOkBody<T>(response);
 }
 
@@ -110,21 +110,25 @@ export function mapFilesStatusError(
   nodeId: string,
   path: string,
   status: number,
-  body: string
+  body: string,
+  http?: HttpClient
 ): CliError {
   if (errorCode(body) === RSYNC_MISSING_LOCAL_CODE) {
     return new NetworkError(RSYNC_MISSING_LOCAL_MESSAGE);
   }
-  return httpStatusError(nodeId, path, status, body);
+  return http
+    ? http.statusError(nodeId, path, status, body)
+    : httpStatusError(nodeId, path, status, body);
 }
 
 export async function assertFilesOk(
   nodeId: string,
   response: Response,
-  path: string
+  path: string,
+  http?: HttpClient
 ): Promise<Response> {
   if (response.ok) return response;
-  throw mapFilesStatusError(nodeId, path, response.status, await response.text());
+  throw mapFilesStatusError(nodeId, path, response.status, await response.text(), http);
 }
 
 export function throwFilesEventError(code: string | undefined, message: string): never {
@@ -206,7 +210,7 @@ export async function mkdirRemote(
   } catch (error) {
     if (!(error instanceof FileApiError)) throw error;
     if (isMissingRoute(error.status, errorBody)) throw new MkdirUnsupportedError(nodeId);
-    throw mapFilesStatusError(nodeId, '/api/files/mkdir', error.status, errorBody);
+    throw mapFilesStatusError(nodeId, '/api/files/mkdir', error.status, errorBody, http);
   }
 }
 

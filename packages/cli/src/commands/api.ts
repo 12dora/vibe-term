@@ -74,9 +74,8 @@ async function run(ctx: CliContext, argv: string[]): Promise<undefined> {
   if (!response.ok) {
     const body = new TextDecoder().decode(bytes).trim();
     // 401/403 是「去登录」，其余非 2xx 都是普通失败：原样把响应体交给调用方。
-    if (response.status === 401 || response.status === 403) {
-      throw loginRequiredError(nodeId, body);
-    }
+    if (response.status === 401) throw ctx.http.statusError(nodeId, path, response.status, body);
+    if (response.status === 403) throw loginRequiredError(nodeId, body);
     throw new CliError(`${method} ${path} → HTTP ${response.status}${body ? `\n${body}` : ''}`);
   }
   if (raw) {

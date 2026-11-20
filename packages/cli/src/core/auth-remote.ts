@@ -14,7 +14,6 @@ import {
 } from '@vibeterm/shared';
 import { CliError } from './errors';
 import type { HttpClient } from './http';
-import { httpStatusError } from './http';
 
 function nodeApiClient(http: HttpClient, nodeId: string): ApiClient {
   return new ApiClient('', async (url, init) => {
@@ -26,12 +25,17 @@ function nodeApiClient(http: HttpClient, nodeId: string): ApiClient {
   });
 }
 
-async function callNode<T>(nodeId: string, path: string, run: () => Promise<T>): Promise<T> {
+async function callNode<T>(
+  http: HttpClient,
+  nodeId: string,
+  path: string,
+  run: () => Promise<T>
+): Promise<T> {
   try {
     return await run();
   } catch (error) {
     if (error instanceof ApiError) {
-      throw httpStatusError(nodeId, path, error.status, error.message);
+      throw http.statusError(nodeId, path, error.status, error.message);
     }
     throw error;
   }
@@ -42,7 +46,7 @@ export async function listLoginRecords(
   nodeId: string,
   query: LoginRecordsQuery
 ): Promise<LoginRecord[]> {
-  const page = await callNode(nodeId, '/api/auth/login-records', () =>
+  const page = await callNode(http, nodeId, '/api/auth/login-records', () =>
     listRemoteRecords(nodeApiClient(http, nodeId), query)
   );
   if (!page || !Array.isArray(page.records)) {
@@ -52,14 +56,14 @@ export async function listLoginRecords(
 }
 
 export async function clearLoginRecords(http: HttpClient, nodeId: string): Promise<number> {
-  const payload = await callNode(nodeId, '/api/auth/login-records', () =>
+  const payload = await callNode(http, nodeId, '/api/auth/login-records', () =>
     clearRemoteRecords(nodeApiClient(http, nodeId))
   );
   return typeof payload.deleted === 'number' ? payload.deleted : 0;
 }
 
 export async function getLoginRetention(http: HttpClient, nodeId: string): Promise<number> {
-  const payload = await callNode(nodeId, '/api/auth/login-records/settings', () =>
+  const payload = await callNode(http, nodeId, '/api/auth/login-records/settings', () =>
     getLoginRecordSettings(nodeApiClient(http, nodeId))
   );
   if (!isLoginRecordRetentionDays(payload.retentionDays)) {
@@ -73,7 +77,7 @@ export async function putLoginRetention(
   nodeId: string,
   retentionDays: LoginRecordRetentionDays
 ): Promise<number> {
-  const payload = await callNode(nodeId, '/api/auth/login-records/settings', () =>
+  const payload = await callNode(http, nodeId, '/api/auth/login-records/settings', () =>
     putLoginRecordSettings(nodeApiClient(http, nodeId), { retentionDays })
   );
   if (!isLoginRecordRetentionDays(payload.retentionDays)) {
@@ -83,7 +87,7 @@ export async function putLoginRetention(
 }
 
 export async function getLoginPolicy(http: HttpClient, nodeId: string): Promise<unknown> {
-  return callNode(nodeId, '/api/auth/login-policy', () =>
+  return callNode(http, nodeId, '/api/auth/login-policy', () =>
     getRemoteLoginPolicy(nodeApiClient(http, nodeId))
   );
 }

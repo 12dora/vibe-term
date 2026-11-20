@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TmuxSession } from '@vibeterm/shared';
 import { buildContext } from './context';
-import { NotFoundError, UsageError } from './errors';
+import { AuthError, NotFoundError, UsageError } from './errors';
 import type { FetchLike } from './http';
 import { parseTarget } from './resolve';
 import { locatePane, locateWindow, resolveTargetDevice } from './term-target';
@@ -240,5 +240,44 @@ describe('resolveTargetDevice', () => {
     const resolved = await resolveTargetDevice(ctx, 'oracle-jp');
     expect(resolved.nodeName).toBe('oracle-jp');
     expect(resolved.device.name).toBe('box');
+  });
+
+  test('an expired self row does not fall back to a node name', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-target-'));
+    dirs.push(dir);
+    const fetchImpl: FetchLike = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/devices') {
+        return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), { status: 401 });
+      }
+      if (url.pathname === '/api/mesh/nodes') {
+        return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), { status: 401 });
+      }
+      if (url.pathname === `/n/${ORACLE}/api/mesh/nodes`) {
+        return Response.json({
+          nodes: [{ id: ORACLE, name: 'oracle-jp', publicKey: 'pk', online: true }],
+        });
+      }
+      if (url.pathname === `/n/${ORACLE}/api/devices`) {
+        return Response.json({ devices: [fakeDevice('d-box', 'box')] });
+      }
+      return new Response('not found', { status: 404 });
+    };
+    const ctx = buildContext({
+      entryFlag: ENTRY,
+      node: null,
+      json: false,
+      quiet: false,
+      noColor: true,
+      configDir: dir,
+      installEntry: null,
+      env: {},
+      fetchImpl,
+    });
+    ctx.http.jar.set('self', 'sid-old', Date.now() - 1000);
+    ctx.http.jar.set(ORACLE, 'sid-oracle', Date.now() + 60_000);
+    const error = (await resolveTargetDevice(ctx, 'oracle-jp').catch((err) => err)) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.message).toBe('not authenticated for node self (UNAUTHORIZED)');
   });
 });

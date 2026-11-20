@@ -3,7 +3,8 @@
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import { AuthError, CliError, EXIT_GENERIC, NotFoundError, PermissionError } from './errors';
 import { isPopErrorCode, popAuthError, popCodeFromMessage } from './session-pop';
-import { type CookieJar, isLiveNodeSession } from './session-store';
+import type { CookieJar } from './session-store';
+import type { TokenSource } from './token-store';
 
 /** 会话失效的服务端判词；命中即提示重新登录该 node。 */
 const REJECTED_SESSION_REASONS: ReadonlySet<string> = new Set([
@@ -20,6 +21,16 @@ export const TOKEN_SCOPE_CODE = 'TOKEN_SCOPE';
 export interface HttpStatusContext {
   entry: string;
   jar: CookieJar;
+  tokens?: TokenSource | null;
+}
+
+/**
+ * 入口「没有任何凭据」：jar 里没有 self 行（有 sid 就算，过期也算），且 tokens 里没有 self。
+ * 只有这时才走名册 fallback / 裸目标按节点名路由 / 新的入口无会话文案。
+ */
+export function hasEntryCredential(jar: CookieJar, tokens?: TokenSource | null): boolean {
+  if (jar.get(SELF_NODE_ID)?.sid) return true;
+  return Boolean(tokens?.get(SELF_NODE_ID));
 }
 
 function reasonFromBody(body: string): string | null {
@@ -93,22 +104,28 @@ function tokenScopeError(path: string): PermissionError {
   );
 }
 
-export function missingEntrySessionError(entry: string): AuthError {
+export function missingEntrySessionError(entry: string, reason?: string | null): AuthError {
+  const known = reason && REJECTED_SESSION_REASONS.has(reason);
   return new AuthError(
     `this command runs on the entry ${entry}, which has no session`,
-    'run: vibeterm login, or a login command that includes this node'
+    'run: vibeterm login, or redeem a login command that includes the entry',
+    known ? reason : undefined
   );
 }
 
-/** SELF 上的会话鉴权失败，且 jar 里没有有效的 entry 会话（PoP 不算）。 */
-export function isEntryAuthFallback(error: unknown, jar: CookieJar): boolean {
+/** SELF 上的会话鉴权失败，且入口没有任何凭据（PoP 不算）。 */
+export function isEntryAuthFallback(
+  error: unknown,
+  jar: CookieJar,
+  tokens?: TokenSource | null
+): boolean {
   if (!(error instanceof AuthError)) return false;
   if (isPopErrorCode(error.code)) return false;
-  return !isLiveNodeSession(jar.get(SELF_NODE_ID));
+  return !hasEntryCredential(jar, tokens);
 }
 
-function missingSelfSession(ctx: HttpStatusContext | undefined): boolean {
-  return Boolean(ctx && !isLiveNodeSession(ctx.jar.get(SELF_NODE_ID)));
+function missingEntryCredential(ctx: HttpStatusContext | undefined): boolean {
+  return Boolean(ctx && !hasEntryCredential(ctx.jar, ctx.tokens));
 }
 
 function isLoginRequiredCode(code: string | null): boolean {
@@ -122,7 +139,7 @@ function isTargetNodeAuth(body: string, code: string | null): boolean {
   return isLoginRequiredCode(code);
 }
 
-/** 入口自身 401（无目标 nodeId / 非 LOGIN_REQUIRED）且 jar 没有活的 self 会话。 */
+/** 入口自身 401（无目标 nodeId / 非 LOGIN_REQUIRED）且入口没有任何凭据。 */
 function isEntryUnauthenticated(
   nodeId: string,
   status: number,
@@ -131,7 +148,7 @@ function isEntryUnauthenticated(
   ctx?: HttpStatusContext
 ): ctx is HttpStatusContext {
   if (status !== 401 || nodeId !== SELF_NODE_ID || !ctx) return false;
-  if (!missingSelfSession(ctx)) return false;
+  if (!missingEntryCredential(ctx)) return false;
   return !isTargetNodeAuth(body, code);
 }
 
@@ -143,7 +160,7 @@ function sessionStatusError(
   ctx?: HttpStatusContext
 ): CliError | null {
   if (isEntryUnauthenticated(nodeId, status, body, code, ctx)) {
-    return missingEntrySessionError(ctx.entry);
+    return missingEntrySessionError(ctx.entry, code);
   }
   if (status === 401 || (status === 403 && isAuthErrorCode(code))) {
     return loginRequiredError(nodeId, body);

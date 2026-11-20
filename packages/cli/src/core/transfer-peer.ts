@@ -124,7 +124,12 @@ async function followJob(
     `/api/transfer/jobs/${encodeURIComponent(initial.jobId)}/events`,
     { timeoutMs: null, signal }
   );
-  await assertFilesOk(sourceNodeId, response, `/api/transfer/jobs/${initial.jobId}/events`);
+  await assertFilesOk(
+    sourceNodeId,
+    response,
+    `/api/transfer/jobs/${initial.jobId}/events`,
+    ctx.http
+  );
   await consumeNdjson<TransferJobEvent>(response, (event) => {
     snapshot = applyEvent(snapshot, event);
     if (event.type === 'progress') {

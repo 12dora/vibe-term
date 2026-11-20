@@ -280,6 +280,7 @@ async function deleteExport(ctx: CliContext, nodeId: string, mapId: string): Pro
     return true;
   } catch (error) {
     if (error instanceof NotFoundError) return true;
+    if (error instanceof AuthError) throw error;
     if (error instanceof CliError && error.exitCode === 3) {
       throw loginRequiredError(nodeId, error.message);
     }
