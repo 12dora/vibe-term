@@ -5,13 +5,14 @@ import type { MeshNode } from '@vibeterm/shared';
 import { fetchAuthMode } from './auth';
 import type { CliContext } from './context';
 import { CliError, NotFoundError } from './errors';
-import type { MeshRoster } from './roster-source';
+import { type MeshRoster, fetchMeshRoster } from './roster-source';
 import { isLiveNodeSession } from './session-store';
 
 export type MeshNodesList = MeshRoster;
 
+/** 每次现取：升级轮询靠它看到新版本，不能走 Resolver 的进程内缓存。 */
 export async function listMeshNodesDetailed(ctx: CliContext): Promise<MeshNodesList> {
-  return ctx.resolver.listRoster();
+  return fetchMeshRoster(ctx.http);
 }
 
 /** 名册来自其它节点时打一行 stderr（`--json` / `-q` 由 `out.info` 自己吞掉）。 */

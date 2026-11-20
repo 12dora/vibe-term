@@ -9,6 +9,7 @@ import {
   isTrustedPublicUrl,
   joinCommand,
   lastSeenOf,
+  listMeshNodesFull,
   loginStateOf,
   nodeAddressOf,
   nodeStateOf,
@@ -52,6 +53,18 @@ describe('findAdminNode', () => {
       'GET /api/mesh/nodes': () => ({ nodes: [meshNode()] }),
     });
     await expect(findAdminNode(cli, 'missing')).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe('listMeshNodesFull', () => {
+  test('reads the roster fresh on every call', async () => {
+    let version = '2.18.2';
+    const cli = await ctx({
+      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ id: NODE, version })] }),
+    });
+    expect((await listMeshNodesFull(cli))[0]?.version).toBe('2.18.2');
+    version = '2.19.0';
+    expect((await listMeshNodesFull(cli))[0]?.version).toBe('2.19.0');
   });
 });
 
