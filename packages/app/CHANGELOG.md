@@ -1,21 +1,27 @@
-# 2.18.2
+# 2.19.0
 
-_2026-11-19_
+_2026-11-20_
 
 ## English
 
+### Features
+
+- **Login commands for any set of nodes**: Settings → Nodes → Login command now lets you pick several nodes under "Specific nodes", not just one. You can also select rows in the node table and choose "Login command" from the bulk actions menu. The command contains exactly the nodes you pick; the current entry is no longer added automatically.
+
 ### Bug Fixes
 
-- **Remote upgrades no longer fail with POP_REQUIRED**: upgrading another node from Settings → Nodes or with `vibeterm nodes upgrade` could fail on some nodes with `POP_REQUIRED`. The entry now keeps your sign-in proof for the whole upgrade, so these nodes upgrade normally. If a node was signed in under an older session, the browser signs it in again and retries. A sign-in problem during an upgrade now stops it right away with "Sign in to this node first" instead of a raw error code.
-- **`vibeterm login --node` keeps other nodes working**: signing in to a single node (or redeeming a login command for some nodes) no longer breaks later operations on the other nodes. A full `vibeterm login` still issues a new session key for every node.
-- **Removing a node asks for confirmation only once**: when this machine is connected to a relay, removing or uninstalling a node now asks for the account password once. That single confirmation also renews the relay credentials, and the dialog closes when the node is removed.
+- **Login commands work on any machine**: a login command that does not include the node the CLI connects through no longer prints "this login command does not include the entry …". Commands that only touch remote nodes (`exec`, `rsh`, `cp`, `devices ls`, `nodes ls`, `whoami`) now work through an entry you are not signed in to; node names are looked up through a node you are signed in to. Operations that run on the entry itself (for example `forward -L` or `port ls` there) still need its session and now say so plainly.
+- **Paused nodes**: the node menu and bulk menu no longer offer a login command for paused nodes, matching the dialog.
 
 ---
 
 ## 中文
 
+### 新功能
+
+- **登录命令可选任意多台节点**：「设置 → 节点 → 登录命令」的「指定节点」改为多选；也可以在节点表中勾选若干行，从批量操作菜单生成。命令只包含所选节点，不再自动加入当前入口。
+
 ### 问题修复
 
-- **远程升级不再报 POP_REQUIRED**：在「设置 → 节点」或用 `vibeterm nodes upgrade` 升级其他节点时，部分节点会因 `POP_REQUIRED` 失败。现在入口在整个升级过程中都保留你的登录证明，这些节点可以正常升级。若某节点仍沿用较早的登录，浏览器会自动重新登录并重试一次。升级过程中出现登录问题时会立即停止，并提示「请先登录该节点」，不再显示原始错误码。
-- **`vibeterm login --node` 不再影响其他节点**：单独登录某个节点（或兑换只含部分节点的登录命令）后，对其余节点的操作不再失败。完整执行 `vibeterm login` 仍会为全部节点更换会话密钥。
-- **移除节点只需确认一次**：本机已加入中继时，移除或卸载节点只需输入一次账户密码，同时完成中继凭据更新，节点移除后确认框随即关闭。
+- **登录命令在任何机器上都能用**：命令未包含 CLI 所用的入口节点时，不再提示「this login command does not include the entry …」。只访问远端节点的命令（`exec`、`rsh`、`cp`、`devices ls`、`nodes ls`、`whoami`）在入口未登录时也能正常使用，节点名经已登录的节点解析。在入口本机执行的操作（如在入口上 `forward -L`、`port ls`）仍需登录入口，并给出明确提示。
+- **已暂停的节点**：节点菜单与批量菜单不再为已暂停的节点提供登录命令，与对话框一致。
