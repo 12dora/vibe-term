@@ -5,6 +5,7 @@ import type { MeshNode } from '@vibeterm/shared';
 import { fetchAuthMode } from './auth';
 import type { CliContext } from './context';
 import { CliError, NotFoundError } from './errors';
+import { fetchMeshRoster } from './roster-source';
 import { isLiveNodeSession } from './session-store';
 
 export interface MeshNodesList {
@@ -13,14 +14,7 @@ export interface MeshNodesList {
 }
 
 export async function listMeshNodesDetailed(ctx: CliContext): Promise<MeshNodesList> {
-  const response = await ctx.http.fetch(SELF_NODE_ID, '/api/mesh/nodes');
-  if (response.status === 404) return { nodes: [], pendingMemberIds: [] };
-  await ctx.http.assertOk(SELF_NODE_ID, response, '/api/mesh/nodes');
-  const payload = (await response.json()) as { nodes?: MeshNode[]; pendingMemberIds?: unknown };
-  const pending = Array.isArray(payload.pendingMemberIds)
-    ? payload.pendingMemberIds.filter((id): id is string => typeof id === 'string')
-    : [];
-  return { nodes: payload.nodes ?? [], pendingMemberIds: pending };
+  return fetchMeshRoster(ctx.http);
 }
 
 export async function listMeshNodesFull(ctx: CliContext): Promise<MeshNode[]> {

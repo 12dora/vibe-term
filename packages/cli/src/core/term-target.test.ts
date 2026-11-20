@@ -200,4 +200,45 @@ describe('resolveTargetDevice', () => {
     expect(resolved.nodeName).toBe('oracle-jp');
     expect(resolved.device.name).toBe('box');
   });
+
+  test('entry 401 on a bare token still falls back to that node first local device', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-target-'));
+    dirs.push(dir);
+    const fetchImpl: FetchLike = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/devices') {
+        return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), { status: 401 });
+      }
+      if (url.pathname === '/api/mesh/nodes') {
+        return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), { status: 401 });
+      }
+      if (url.pathname === `/n/${ORACLE}/api/mesh/nodes`) {
+        return Response.json({
+          nodes: [{ id: ORACLE, name: 'oracle-jp', publicKey: 'pk', online: true }],
+        });
+      }
+      if (url.pathname === `/n/${ORACLE}/api/devices`) {
+        return Response.json({ devices: [fakeDevice('d-box', 'box')] });
+      }
+      if (url.pathname === '/api/auth/mode') {
+        return Response.json({ nodeId: 'e'.repeat(32) });
+      }
+      return new Response('not found', { status: 404 });
+    };
+    const ctx = buildContext({
+      entryFlag: ENTRY,
+      node: null,
+      json: false,
+      quiet: false,
+      noColor: true,
+      configDir: dir,
+      installEntry: null,
+      env: {},
+      fetchImpl,
+    });
+    ctx.http.jar.set(ORACLE, 'sid-oracle', Date.now() + 60_000);
+    const resolved = await resolveTargetDevice(ctx, 'oracle-jp');
+    expect(resolved.nodeName).toBe('oracle-jp');
+    expect(resolved.device.name).toBe('box');
+  });
 });

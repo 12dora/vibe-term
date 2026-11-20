@@ -19,6 +19,7 @@ import {
   legacyTargetText,
   planExecTarget,
 } from './exec-target';
+import { isEntryAuthFallback } from './http';
 import {
   PTY_NOT_ALLOCATED,
   type StdinMode,
@@ -147,7 +148,8 @@ class RemoteRun {
     try {
       return await this.attempt({ nodeId: SELF_NODE_ID, nodeName: SELF_NODE_ID, device: token });
     } catch (error) {
-      if (!(error instanceof NotFoundError) || this.ready) throw error;
+      const miss = error instanceof NotFoundError || isEntryAuthFallback(error, this.ctx.http.jar);
+      if (!miss || this.ready) throw error;
     } finally {
       if (this.ready) this.targets.forget(this.prep.plan);
     }

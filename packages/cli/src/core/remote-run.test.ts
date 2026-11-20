@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { EcKind, type ExecCommand, type ExecOpenSpec } from '@vibeterm/shared/exec-channel';
 import { ENTRY, NODE, jsonResponse, meshNode, testContext } from '../commands/cli-test-harness';
-import { NetworkError, NotFoundError, UsageError } from './errors';
+import { AuthError, NetworkError, NotFoundError, UsageError } from './errors';
 import { ExecChannelUnsupportedError, exitCodeOf } from './exec-channel';
 import {
   EXIT_OK,
@@ -500,6 +500,33 @@ describe('runRemote target resolution', () => {
     expect(specOf(fresh)).not.toHaveProperty('nodeName');
     expect(fixture.mesh.calls).toBe(1);
     expect(TargetCache.open(dir, ENTRY).get(bareKey('office'))?.nodeId).toBe(NODE);
+  });
+
+  test('entry auth failure on a bare token continues as a node name', async () => {
+    const { ctx, terminal } = await setup();
+    const link = fakeLink((conn) => {
+      if (!conn.target.url.includes('/n/')) {
+        conn.drop(4401, 'UNAUTHORIZED');
+        return;
+      }
+      serveExit()(conn);
+    });
+    await runRemote(ctx, optionsOf(terminal, link, { target: 'office' }));
+    expect(link.conns).toHaveLength(2);
+    expect((link.conns[0] as ServerConn).target.url).not.toContain('/n/');
+    expect((link.conns[1] as ServerConn).target.url).toContain(NODE);
+  });
+
+  test('a PoP error on a live entry session does not fall back to a node name', async () => {
+    const { ctx, terminal } = await setup();
+    ctx.http.jar.set('self', 'sid-self', Date.now() + 60_000);
+    const link = fakeLink((conn) => conn.drop(4401, 'POP_REQUIRED'));
+    const error = await runRemote(ctx, optionsOf(terminal, link, { target: 'office' })).catch(
+      (err) => err
+    );
+    expect(error).toBeInstanceOf(AuthError);
+    expect((error as AuthError).code).toBe('POP_REQUIRED');
+    expect(link.conns).toHaveLength(1);
   });
 
   test('a token that is neither device nor node is a NotFoundError', async () => {

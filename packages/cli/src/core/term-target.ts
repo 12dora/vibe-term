@@ -16,6 +16,7 @@ import {
 } from '@vibeterm/ws-client/canonical-tree';
 import type { CliContext } from './context';
 import { NotFoundError, UsageError } from './errors';
+import { isEntryAuthFallback } from './http';
 import { type ParsedTarget, type ResolvedNode, parseTarget } from './resolve';
 
 export interface ResolvedTargetDevice {
@@ -66,7 +67,12 @@ export async function resolveTargetDevice(
   } catch (error) {
     // 文档约定的回退：`exec <meshNodeName>`（无 `--node`、无 slash）→ 该节点第一台 local。
     // `--node` 已经选定节点后，未知设备是硬错误，绝不能再把设备 token 当节点名。
-    if (error instanceof NotFoundError && !target.node && !ctx.globals.node) {
+    // entry 没有会话时 GET /api/devices 是 AuthError 而不是 NotFoundError，同样按节点名再探一次。
+    const probeSelf =
+      !target.node &&
+      !ctx.globals.node &&
+      (error instanceof NotFoundError || isEntryAuthFallback(error, ctx.http.jar));
+    if (probeSelf) {
       const fallback = await ctx.resolver.resolveNodeLocalDevice(target.device);
       if (fallback) {
         if (options.notice !== false) {

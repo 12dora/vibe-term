@@ -84,8 +84,11 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
     return;
   }
 
-  const selfSession = ctx.http.jar.get(SELF_NODE_ID);
-  if (!selfSession) return emitLoggedOut(ctx, entry);
+  const selfLive = isLiveNodeSession(ctx.http.jar.get(SELF_NODE_ID));
+  const peerLive = ctx.http.jar
+    .list()
+    .some((row) => row.nodeId !== SELF_NODE_ID && isLiveNodeSession(row));
+  if (!selfLive && !peerLive) return emitLoggedOut(ctx, entry);
 
   const mesh = await fetchMeshNodes(ctx.http);
   if (!mesh.ok) return emitLoggedOut(ctx, entry);
@@ -95,7 +98,7 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
     asNodeStatus(
       SELF_NODE_ID,
       `${displayUser(mode.username, mode.uid, 'unknown')} @ ${mode.nodeId}`,
-      true,
+      selfLive,
       true,
       localExpiry(ctx, SELF_NODE_ID)
     ),
@@ -105,8 +108,8 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
         asNodeStatus(
           node.id,
           node.name,
-          // 名册请求只带 entry 的 cookie，服务端看不到其余节点的会话：以本地有效会话为准。
-          node.loggedIn || isLiveNodeSession(ctx.http.jar.get(node.id)),
+          // 名册请求只带应答节点的 cookie：登录态以本地 jar 为准。
+          isLiveNodeSession(ctx.http.jar.get(node.id)),
           node.online,
           localExpiry(ctx, node.id)
         )
@@ -119,7 +122,7 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
       auth: 'mesh',
       user: { uid: mode.uid, username: mode.username ?? stored?.username ?? null },
       entryNodeId: mode.nodeId,
-      loggedIn: true,
+      loggedIn: selfLive,
       nodes: statuses,
       sessionFile: ctx.sessions.path,
     });
@@ -143,12 +146,14 @@ export const command: Command = {
     'READY = SESSION yes and ONLINE yes. SESSION=no ONLINE=yes means the node is',
     'reachable but this CLI has no cookie — run: vibeterm login --node <name>',
     '',
-    'Not logged in (no session, or GET /api/mesh/nodes → 401): stdout is empty,',
-    'stderr is `not logged in to <entry>` plus `run: vibeterm login`, exit 3.',
-    '--json then prints { loggedIn: false, entry, hint: "vibeterm login" } on stdout',
-    '(no sessionFile, no user) and still exits 3. sessionFile is only included when',
-    'logged in. Override the jar with VIBETERM_SESSION_FILE (mode 0600; the file is',
-    'a full session capability, protect it).',
+    'No live session anywhere (or GET /api/mesh/nodes → 401 with none to fall back',
+    'on): stdout is empty, stderr is `not logged in to <entry>` plus',
+    '`run: vibeterm login`, exit 3. --json then prints',
+    '{ loggedIn: false, entry, hint: "vibeterm login" } on stdout (no sessionFile,',
+    'no user) and still exits 3. loggedIn means the entry session. A live session',
+    'on another node still prints the table (entry SESSION=no). Override the jar',
+    'with VIBETERM_SESSION_FILE (mode 0600; the file is a full session capability,',
+    'protect it).',
   ].join('\n'),
   run,
 };

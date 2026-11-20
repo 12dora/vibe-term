@@ -138,6 +138,65 @@ describe('vibeterm whoami READY', () => {
     expect(stdout.text()).toBe('');
   });
 
+  test('no self session but a live peer still prints the table', async () => {
+    const { ctx, stdout, stderr } = await testContext(
+      routeFetch({
+        'GET /api/auth/mode': () => ({
+          mode: 'mesh',
+          nodeId: NODE,
+          uid: 'u-1',
+          username: 'root',
+        }),
+        'GET /api/mesh/nodes': () => jsonResponse({ error: 'UNAUTHORIZED' }, 401),
+        [`GET /n/${PEER}/api/mesh/nodes`]: () => ({
+          nodes: [
+            meshNode({ id: NODE, name: 'entry', loggedIn: true, online: true }),
+            meshNode({ id: PEER, name: 'office', loggedIn: true, online: true }),
+          ],
+        }),
+      })
+    );
+    ctx.http.jar.set(PEER, 'sid-peer', Date.now() + 60_000);
+    await whoami.run(ctx, []);
+    expect(stdout.text()).toContain('office');
+    expect(stdout.text()).toContain('self');
+    expect(stdout.text()).toContain('no');
+    expect(stderr.text()).toContain('vibeterm login');
+    expect(stderr.text()).not.toContain('not logged in');
+  });
+
+  test('--json with only a peer session keeps loggedIn as the entry session', async () => {
+    const { ctx, stdout } = await testContext(
+      routeFetch({
+        'GET /api/auth/mode': () => ({
+          mode: 'mesh',
+          nodeId: NODE,
+          uid: 'u-1',
+          username: 'root',
+        }),
+        'GET /api/mesh/nodes': () => jsonResponse({ error: 'UNAUTHORIZED' }, 401),
+        [`GET /n/${PEER}/api/mesh/nodes`]: () => ({
+          nodes: [meshNode({ id: PEER, name: 'office', loggedIn: true, online: true })],
+        }),
+      }),
+      { json: true }
+    );
+    ctx.http.jar.set(PEER, 'sid-peer', Date.now() + 60_000);
+    const code = await whoami.run(ctx, []);
+    expect(code).toBeUndefined();
+    const payload = JSON.parse(stdout.text()) as {
+      loggedIn: boolean;
+      nodes: Array<{ node: string; loggedIn: boolean; name: string }>;
+    };
+    expect(payload.loggedIn).toBe(false);
+    expect(payload.nodes.find((row) => row.node === 'self')?.loggedIn).toBe(false);
+    expect(payload.nodes.find((row) => row.node === PEER)).toMatchObject({
+      name: 'office',
+      loggedIn: true,
+    });
+    expect(typeof (payload as { sessionFile?: string }).sessionFile).toBe('string');
+  });
+
   test('--json stale cookie omits sessionFile and user', async () => {
     const { ctx, stdout } = await testContext(
       routeFetch({

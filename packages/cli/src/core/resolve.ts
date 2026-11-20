@@ -8,6 +8,7 @@ import type { DeviceWithRuntime } from '@vibeterm/api-client/devices';
 import { SELF_NODE_ID, isValidNodeId, normalizeNodeId } from '@vibeterm/api-client/node-url';
 import { AuthError, NotFoundError, UsageError } from './errors';
 import type { HttpClient } from './http';
+import { fetchMeshRoster } from './roster-source';
 
 export interface TargetPart {
   /** 原文；可能是序号也可能是名字。 */
@@ -141,14 +142,7 @@ export class Resolver {
   /** `GET /api/mesh/nodes`；standalone 入口没有这个路由（404），返回空表。 */
   async listNodes(): Promise<MeshNode[]> {
     if (this.nodesCache) return this.nodesCache;
-    const response = await this.http.fetch(SELF_NODE_ID, '/api/mesh/nodes');
-    if (response.status === 404) {
-      this.nodesCache = [];
-      return this.nodesCache;
-    }
-    await this.http.assertOk(SELF_NODE_ID, response, '/api/mesh/nodes');
-    const payload = (await response.json()) as { nodes?: MeshNode[] };
-    this.nodesCache = payload.nodes ?? [];
+    this.nodesCache = (await fetchMeshRoster(this.http)).nodes;
     return this.nodesCache;
   }
 

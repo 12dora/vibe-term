@@ -349,8 +349,8 @@ async function route(state: GatewayState, target: string, path: string, request:
     state.issued.delete(target);
     return json({ ok: true });
   }
-  // `/api/mesh/nodes` 永远按 entry 自身鉴权，与真实网关一致。
-  return handleAuthedPath(state, path === '/api/mesh/nodes' ? SELF : target, path);
+  // `/n/<id>/api/mesh/nodes` 由目标节点鉴权（入口只转发）；无前缀的走 entry 自身。
+  return handleAuthedPath(state, target, path);
 }
 
 export function createFakeGateway(options: FakeGatewayOptions): FakeGateway {

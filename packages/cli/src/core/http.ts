@@ -9,22 +9,9 @@ import {
   SET_SESSION_HEADER,
   readHeaderPair,
 } from '@vibeterm/shared/http/mesh-headers';
-import {
-  AuthError,
-  CliError,
-  EXIT_GENERIC,
-  NetworkError,
-  NotFoundError,
-  PermissionError,
-} from './errors';
-import {
-  isPopErrorCode,
-  isPopUnauthorizedResponse,
-  isReplayableBody,
-  popAuthError,
-  popCodeFromMessage,
-  stampPopHeader,
-} from './session-pop';
+import { NetworkError } from './errors';
+import { httpStatusError } from './http-status';
+import { isPopUnauthorizedResponse, isReplayableBody, stampPopHeader } from './session-pop';
 import {
   type CookieJar,
   createMemoryCookieJar,
@@ -33,6 +20,15 @@ import {
 } from './session-store';
 import { DEFAULT_TLS, type TlsSettings, fetchTlsInit } from './tls';
 import type { TokenSource } from './token-store';
+
+export {
+  TOKEN_SCOPE_CODE,
+  httpStatusError,
+  isEntryAuthFallback,
+  isSessionAuthFailure,
+  loginRequiredError,
+  missingEntrySessionError,
+} from './http-status';
 
 export type { CookieJar } from './session-store';
 export { createMemoryCookieJar, createSessionCookieJar };
@@ -67,16 +63,6 @@ export type FetchLike = (input: string, init?: FetchInit) => Promise<Response>;
 export function nodeSessionCookieName(nodeId: string): string {
   return `${NODE_SESSION_COOKIE_PREFIX}${nodeId}`;
 }
-
-/** 会话失效的服务端判词；命中即提示重新登录该 node。 */
-const REJECTED_SESSION_REASONS: ReadonlySet<string> = new Set([
-  'via_mismatch',
-  'expired',
-  'revoked',
-  'unknown',
-  'NODE_LOGIN_REQUIRED',
-  'UNAUTHORIZED',
-]);
 
 function setCookieHeaders(response: Response): string[] {
   const headers = response.headers as Headers & { getSetCookie?: () => string[] };
@@ -309,7 +295,10 @@ export class HttpClient {
   /** 非 2xx 一律抛；状态码 → 退出码的映射见 `httpStatusError`。 */
   async assertOk(nodeId: string, response: Response, path: string): Promise<Response> {
     if (response.ok) return response;
-    throw httpStatusError(nodeId, path, response.status, await peekBody(response));
+    throw httpStatusError(nodeId, path, response.status, await peekBody(response), {
+      entry: this.entry,
+      jar: this.jar,
+    });
   }
 
   async json<T>(
@@ -381,119 +370,4 @@ async function peekBody(response: Response): Promise<string> {
   } catch {
     return '';
   }
-}
-
-function reasonFromBody(body: string): string | null {
-  try {
-    const parsed = JSON.parse(body) as { error?: unknown; code?: unknown };
-    if (typeof parsed.code === 'string') return parsed.code;
-    if (typeof parsed.error === 'string') return parsed.error;
-  } catch {
-    // 非 JSON 体：没有业务码
-  }
-  return null;
-}
-
-/** 入口代操作的 401 体会带目标 `nodeId`；比请求自身的 `self` 更准。 */
-function nodeIdFromBody(body: string): string | null {
-  try {
-    const parsed = JSON.parse(body) as { nodeId?: unknown };
-    if (typeof parsed.nodeId === 'string' && parsed.nodeId) return parsed.nodeId;
-  } catch {
-    // 非 JSON 体
-  }
-  return null;
-}
-
-/**
- * 403 里仍属于「会话 / 需要登录」的判词。其余 403（`outside_roots`、`FORBIDDEN`、
- * `UPGRADE_NOT_ALLOWED`、`peer_mismatch` 等）是权限不足，重新登录也没用。
- */
-function isAuthErrorCode(code: string | null): boolean {
-  if (!code) return false;
-  return (
-    REJECTED_SESSION_REASONS.has(code) ||
-    code.startsWith('SESSION_') ||
-    code.endsWith('LOGIN_REQUIRED')
-  );
-}
-
-/** 401，或 403 且业务码属于会话失效（`via_mismatch` / `expired` / `revoked` / `SESSION_*`）。 */
-export function isSessionAuthFailure(status: number, body: string): boolean {
-  const code = reasonFromBody(body);
-  if (isPopErrorCode(code)) return false;
-  if (status === 401) return true;
-  if (status !== 403) return false;
-  return isAuthErrorCode(code);
-}
-
-function isUnupgradedAuthPath(path: string): boolean {
-  return path.includes('/api/auth/login-records') || path.includes('/api/auth/login-policy');
-}
-
-function forbiddenError(path: string, code: string | null, body: string): PermissionError {
-  const detail = body && body !== code ? `: ${body}` : '';
-  return new PermissionError(`${path} → ${code ?? 'forbidden'}${detail}`.trim(), code ?? undefined);
-}
-
-function isNotFoundStatus(status: number, path: string): boolean {
-  return status === 404 || (status === 405 && isUnupgradedAuthPath(path));
-}
-
-function notFoundError(path: string, status: number, body: string): NotFoundError {
-  const detail = status === 405 ? 'needs upgrade to 2.10.0' : body || 'not found';
-  return new NotFoundError(`${path} → ${status} ${detail}`);
-}
-
-export const TOKEN_SCOPE_CODE = 'TOKEN_SCOPE';
-
-/** 令牌调用方越权：重新登录救不了，要换一把带对应 scope 的令牌。 */
-function tokenScopeError(path: string): PermissionError {
-  return new PermissionError(
-    `access token lacks the scope for ${path} (TOKEN_SCOPE)`,
-    TOKEN_SCOPE_CODE,
-    'create a token with the needed scope: vibeterm token create --name <name> --scope exec,files,forward; or log in: vibeterm login'
-  );
-}
-
-/**
- * 非 2xx 响应 → CliError：401 与会话类 403 提示重新登录（退出码 3），其余 403 是权限
- * 不足（退出码 1，message 带服务端的业务码），404 → 4，其它 → 1。
- */
-export function httpStatusError(
-  nodeId: string,
-  path: string,
-  status: number,
-  body: string
-): CliError {
-  const code = reasonFromBody(body);
-  if (isPopErrorCode(code)) return popAuthError(code);
-  if (status === 401 || (status === 403 && isAuthErrorCode(code))) {
-    return loginRequiredError(nodeId, body);
-  }
-  if (status === 403) {
-    return code === TOKEN_SCOPE_CODE ? tokenScopeError(path) : forbiddenError(path, code, body);
-  }
-  if (isNotFoundStatus(status, path)) return notFoundError(path, status, body);
-  return new CliError(
-    `${path} → HTTP ${status} ${body}`.trim(),
-    EXIT_GENERIC,
-    undefined,
-    code ?? undefined
-  );
-}
-
-export function loginRequiredError(nodeId: string, body: string): AuthError {
-  const pop = popCodeFromMessage(body);
-  if (pop) return popAuthError(pop);
-  const reason = reasonFromBody(body);
-  const hintNode = nodeIdFromBody(body) ?? nodeId;
-  const target = hintNode === SELF_NODE_ID ? '' : ` --node ${hintNode}`;
-  const known = reason && REJECTED_SESSION_REASONS.has(reason);
-  const detail = reason ? ` (${reason})` : '';
-  return new AuthError(
-    `not authenticated for node ${hintNode}${detail}`,
-    `run: vibeterm login${target}`,
-    known ? reason : undefined
-  );
 }

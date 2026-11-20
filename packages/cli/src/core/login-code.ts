@@ -231,18 +231,6 @@ function resolveRedeemKeyPair(
   return { secretKey: copy.sessSk, publicKey: copy.sessPk };
 }
 
-/** 经入口访问任何节点都要先有入口自己的会话：命令没覆盖入口时提前说清楚。 */
-function warnEntryNotCovered(
-  ctx: CliContext,
-  nodeIds: readonly string[],
-  entryNodeId: string
-): void {
-  if (nodeIds.includes(entryNodeId)) return;
-  ctx.out.warn(
-    `this login command does not include the entry ${ctx.globals.entry} (node ${entryNodeId.slice(0, 8)}); commands through this entry will need its session. Generate the command for all nodes, or pass --entry pointing at a node it includes.`
-  );
-}
-
 /** 用一次性登录命令兑换入口及码里点名的节点；会话密钥对本机生成、用完即清零。 */
 export async function loginWithCode(ctx: CliContext, opts: LoginCodeOptions): Promise<number> {
   const parts = decodeLoginCode(opts.code);
@@ -256,7 +244,6 @@ export async function loginWithCode(ctx: CliContext, opts: LoginCodeOptions): Pr
         `${ctx.globals.entry} does not use accounts; a login code cannot be used here`
       );
     }
-    warnEntryNotCovered(ctx, parts.nodeIds, mode.nodeId);
     const pair = resolveRedeemKeyPair(ctx, mode.nodeId, parts.nodeIds, mode.uid);
     try {
       const ordered = orderNodeIds(parts.nodeIds, mode.nodeId);
@@ -271,14 +258,15 @@ export async function loginWithCode(ctx: CliContext, opts: LoginCodeOptions): Pr
           timeoutMs: opts.timeoutMs,
           identitySet,
         });
-      const firstTargets = asTargets(ordered.slice(0, 1), mode.nodeId, []);
+      let roster = await loadRoster(ctx);
+      const firstTargets = asTargets(ordered.slice(0, 1), mode.nodeId, roster);
       const first = await runFanoutTarget({
         out: ctx.out,
         target: firstTargets[0],
         attempt: () => attempt(firstTargets[0]),
         emitDone: true,
       });
-      let roster = first.ok ? await loadRoster(ctx) : [];
+      if (first.ok) roster = await loadRoster(ctx);
       const restIds = ordered.slice(1);
       const rest = await mapBounded(
         asTargets(restIds, mode.nodeId, roster),

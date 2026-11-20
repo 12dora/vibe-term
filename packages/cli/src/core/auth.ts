@@ -6,8 +6,7 @@
 // 安全边界与浏览器完全一致：根种子只在内存里活到签完 delegation，之后立即清零；访问别的
 // node 一律经 entry 的 `/n/<id>/…` 转发并用该 node 自己的会话 cookie，CLI 不碰本机 mesh 身份。
 
-import type { AuthModeResponse, MeshNode } from '@vibeterm/api-client/auth/types';
-import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/types';
 import {
   buildLogin,
   bytesEqual,
@@ -30,13 +29,9 @@ import {
   NotFoundError,
   PermissionError,
 } from './errors';
-import {
-  type HttpClient,
-  type RequestOptions,
-  httpStatusError,
-  isSessionAuthFailure,
-} from './http';
-import { codeFromBody, isPopErrorCode } from './session-pop';
+import type { HttpClient, RequestOptions } from './http';
+
+export { fetchMeshNodes, listMeshNodes } from './roster-source';
 
 /**
  * 服务端的两步验证策略：`either` = 有效 TOTP 或本 origin 的通行密钥断言其一即可。
@@ -326,24 +321,6 @@ async function loginToNodeOnce(args: LoginToNodeArgs): Promise<LoginNodeResult> 
   return { nodeId, ok: false, code: await readLoginErrorCode(response), nodePk: challenge.nodePk };
 }
 
-/** `/api/mesh/nodes`：404 当空表；401 / 会话类 403 表示 self 会话失效（whoami 要跟没登录同一条路）。 */
-export async function fetchMeshNodes(
-  http: HttpClient
-): Promise<{ ok: true; nodes: MeshNode[] } | { ok: false; unauthorized: true }> {
-  const response = await http.fetch(SELF_NODE_ID, '/api/mesh/nodes');
-  if (response.status === 404) return { ok: true, nodes: [] };
-  if (!response.ok) {
-    const body = await response.text();
-    if (isPopErrorCode(codeFromBody(body))) {
-      throw httpStatusError(SELF_NODE_ID, '/api/mesh/nodes', response.status, body);
-    }
-    if (isSessionAuthFailure(response.status, body)) return { ok: false, unauthorized: true };
-    throw new NetworkError(`GET /api/mesh/nodes → HTTP ${response.status}`);
-  }
-  const payload = (await response.json()) as { nodes?: MeshNode[] };
-  return { ok: true, nodes: payload.nodes ?? [] };
-}
-
 async function readLoginErrorCode(response: Response): Promise<string> {
   // 5xx 是反代/转发层故障，不是鉴权拒绝；不要被 JSON 体里的 error 字符串带跑。
   if (response.status >= 500) return `HTTP_${response.status}`;
@@ -355,12 +332,6 @@ async function readLoginErrorCode(response: Response): Promise<string> {
     // 非 JSON 体
   }
   return `HTTP_${response.status}`;
-}
-
-/** `/api/mesh/nodes`：standalone 入口没有这个路由，视为「只有 entry 自己」。 */
-export async function listMeshNodes(http: HttpClient): Promise<MeshNode[]> {
-  const result = await fetchMeshNodes(http);
-  return result.ok ? result.nodes : [];
 }
 
 const LOGIN_CODE_HINTS: Record<string, (nodeId: string) => string> = {

@@ -154,16 +154,34 @@ describe('HttpClient', () => {
   });
 
   test('via_mismatch is treated as an invalid session', async () => {
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-self', Date.now() + 60_000);
     const http = client(
       async () =>
         new Response(JSON.stringify({ error: 'via_mismatch' }), {
           status: 401,
           headers: { 'content-type': 'application/json' },
-        })
+        }),
+      jar
     );
     const error = (await http.json('self', 'GET', '/api/devices').catch((err) => err)) as AuthError;
     expect(error.code).toBe('via_mismatch');
     expect(error.hint).toBe('run: vibeterm login');
+  });
+
+  test('401 on self with no live session names the entry', async () => {
+    const http = client(
+      async () =>
+        new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    const error = (await http.json('self', 'GET', '/api/portmap').catch((err) => err)) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.exitCode).toBe(3);
+    expect(error.message).toBe(`this command runs on the entry ${ENTRY}, which has no session`);
+    expect(error.hint).toBe('run: vibeterm login, or a login command that includes this node');
   });
 
   test('403 with an auth code still asks for a fresh login (exit 3)', async () => {

@@ -150,6 +150,28 @@ describe('vibeterm login --code', () => {
     expect(stderr.text()).toContain('logged in to office: ok');
   });
 
+  test('a login code that omits the entry does not warn and still labels nodes', async () => {
+    const user = await createFakeUser({ password: 'pw', username: 'alice' });
+    const secret = generateLoginCodeSecret();
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office' },
+      loginCode: { secret },
+    });
+    const { ctx, stdout, stderr } = await testContext(gateway, { json: true });
+
+    const exit = await login.run(ctx, ['--code', makeCode(secret, [NODE_A])]);
+
+    expect(exit).toBe(0);
+    expect(gateway.issued.has(NODE_A)).toBe(true);
+    expect(gateway.issued.has('self')).toBe(false);
+    expect(stderr.text()).not.toContain('does not include the entry');
+    const payload = JSON.parse(stdout.text()) as {
+      nodes: Array<{ node: string; name: string; ok: boolean }>;
+    };
+    expect(payload.nodes).toMatchObject([{ node: NODE_A, name: 'office', ok: true }]);
+  });
+
   test('a partial login code reuses the stored self pair', async () => {
     const user = await createFakeUser({ password: 'pw' });
     const secret = generateLoginCodeSecret();
