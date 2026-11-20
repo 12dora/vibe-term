@@ -27,6 +27,7 @@ import {
   type LoginCodeDraft,
   buildProof,
   draftResetForFailure,
+  effectiveNodeIds,
   initialDraft,
 } from './login-code-draft';
 import { LoginCodeForm, type LoginCodeNodeOption } from './login-code-form';
@@ -51,9 +52,10 @@ function useDraft(selection: LoginCodeSelection) {
   return { draft, patch, focusSeq, bumpFocus: () => setFocusSeq((n) => n + 1) };
 }
 
-/** 指定节点的可选项与「全部节点」的计划：规则全部来自签发模块的 `planLoginCodeTargets`。 */
+/** 指定节点的可选项与计划：规则全部来自签发模块的 `planLoginCodeTargets`。 */
 function usePlan(state: LoginCodeViewState, draft: LoginCodeDraft) {
   const { nodes } = useMeshNodes();
+  const { scope, nodeIds } = draft;
   const { mod, context } = state;
   return useMemo(() => {
     if (!mod || !context) return null;
@@ -61,16 +63,15 @@ function usePlan(state: LoginCodeViewState, draft: LoginCodeDraft) {
     const options: LoginCodeNodeOption[] = sortNodes(nodes, self).map((node) => ({
       meshId: node.id,
       name: node.name,
-      reason: mod.planLoginCodeTargets([node], node.id, self).skipped[0]?.reason ?? null,
+      reason: mod.planLoginCodeTargets([node], [node.id], self).skipped[0]?.reason ?? null,
     }));
-    const nodeId = draft.nodeId ?? options.find((option) => option.reason === null)?.meshId ?? null;
-    const selectionValue = draft.scope === 'all' ? 'all' : (nodeId ?? '');
+    const selectedIds = effectiveNodeIds({ nodeIds }, options);
     const plan =
-      nodeId === null && draft.scope === 'one'
-        ? { targets: [], skipped: [] }
-        : mod.planLoginCodeTargets(nodes, selectionValue, self);
-    return { options, nodeId, plan };
-  }, [mod, context, nodes, draft.scope, draft.nodeId]);
+      scope === 'all'
+        ? mod.planLoginCodeTargets(nodes, 'all', self)
+        : mod.planLoginCodeTargets(nodes, selectedIds, self);
+    return { options, selectedIds, plan };
+  }, [mod, context, nodes, scope, nodeIds]);
 }
 
 function LoadErrorStep({
@@ -194,7 +195,7 @@ function GenerateStep({
           draft={draft}
           onDraft={onDraft}
           options={planned.options}
-          nodeId={planned.nodeId}
+          selectedIds={planned.selectedIds}
           targetCount={targets.length}
           skippedCount={planned.plan.skipped.length}
           busy={busy}

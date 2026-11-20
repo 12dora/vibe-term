@@ -898,6 +898,7 @@ describe('「更多」菜单的可点性', () => {
     pauseBusy: false,
     eligibleMemoryCount: 2,
     memoryBusy: false,
+    eligibleLoginCodeCount: 2,
   };
 
   test('选中了节点、上联收写入、没有别的批量在跑：升级 / 移除 / 卸载可点', () => {
@@ -910,11 +911,12 @@ describe('「更多」菜单的可点性', () => {
     expect(states.resume.title).toBe('nodes.selection.resumeNone');
   });
 
-  test('一个都没勾：五项都禁用并说明', () => {
+  test('一个都没勾：各项都禁用并说明', () => {
     const states = bulkMenuStates({ ...base, selectedCount: 0 }, t);
     for (const item of [
       states.pause,
       states.resume,
+      states.loginCode,
       states.upgrade,
       states.revoke,
       states.uninstall,
@@ -931,6 +933,17 @@ describe('「更多」菜单的可点性', () => {
     expect(
       bulkMenuStates({ ...base, eligiblePauseCount: 0, eligibleResumeCount: 2 }, t).resume.disabled
     ).toBe(false);
+  });
+
+  test('登录命令：没有可用节点时禁用；别的批量在跑、上联不收写入都不影响', () => {
+    expect(bulkMenuStates(base, t).loginCode).toEqual({ disabled: false });
+    expect(bulkMenuStates({ ...base, eligibleLoginCodeCount: 0 }, t).loginCode).toEqual({
+      disabled: true,
+      title: 'nodes.loginCode.selectionNone',
+    });
+    const busy = bulkMenuStates({ ...base, upgradeBusy: true, writable: false }, t);
+    expect(busy.loginCode.disabled).toBe(false);
+    expect(busy.upgrade.disabled).toBe(true);
   });
 
   test('上联不收写入：移除与卸载一并禁用，升级不受影响', () => {
@@ -975,13 +988,14 @@ describe('「更多」菜单的可点性', () => {
   });
 
   // 菜单内容走 portal，SSR 什么都不输出：直接对元素树断言（同 AddDeviceMenuList）。
-  test('六个菜单项：暂停 / 恢复 / 内存限额在前，升级带选中数量，禁用原因进 title', () => {
+  test('七个菜单项：暂停 / 恢复 / 内存限额在前，升级带选中数量，禁用原因进 title', () => {
     const list = BulkActionsMenuList({
       states: bulkMenuStates({ ...base, selectedCount: 0 }, t),
       labels: {
         pause: '暂停',
         resume: '恢复',
         memory: '内存限额',
+        loginCode: '登录命令',
         upgrade: '升级（3）',
         revoke: '移除节点',
         uninstall: '卸载 VibeTerm',
@@ -989,6 +1003,7 @@ describe('「更多」菜单的可点性', () => {
       onPause: () => undefined,
       onResume: () => undefined,
       onMemory: () => undefined,
+      onLoginCode: () => undefined,
       onUpgrade: () => undefined,
       onRevoke: () => undefined,
       onUninstall: () => undefined,
@@ -1003,6 +1018,7 @@ describe('「更多」菜单的可点性', () => {
       'nodes-bulk-pause',
       'nodes-bulk-resume',
       'nodes-bulk-memory',
+      'nodes-bulk-login-code',
       'nodes-bulk-upgrade',
       'nodes-bulk-revoke',
       'nodes-bulk-uninstall',
@@ -1012,7 +1028,8 @@ describe('「更多」菜单的可点性', () => {
       expect(item.props.title).toBe('nodes.selection.none');
     }
     expect(JSON.stringify(items[2].props.children)).toContain('内存限额');
-    expect(JSON.stringify(items[3].props.children)).toContain('升级（3）');
+    expect(JSON.stringify(items[3].props.children)).toContain('登录命令');
+    expect(JSON.stringify(items[4].props.children)).toContain('升级（3）');
   });
 });
 

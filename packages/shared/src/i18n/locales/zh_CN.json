@@ -3072,10 +3072,11 @@
         "description": "生成一次性命令，供 agent 在终端登录节点。",
         "menuOffline": "节点离线，无法生成登录命令",
         "menuOutdated": "节点版本低于 {{version}}，无法生成登录命令",
+        "selectionNone": "所选节点均不能生成登录命令。",
         "target": {
           "label": "目标",
           "all": "全部节点",
-          "one": "指定节点",
+          "some": "指定节点",
           "placeholder": "选择节点",
           "none": "没有可用的节点",
           "count": "{{count}} 台节点",
@@ -3083,7 +3084,7 @@
           "offline": "离线",
           "outdated": "版本过低",
           "paused": "已暂停",
-          "withEntry": "同时登录当前入口 {{name}}"
+          "selected": "已选 {{count}} 台"
         },
         "proof": {
           "label": "验证",

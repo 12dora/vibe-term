@@ -14,7 +14,9 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const { createLoginCodeController, hasPendingNodes } = await import('./login-code-controller');
 const { LoginCodeForm } = await import('./login-code-form');
 const { LoginCodeResultView, buildResultRows } = await import('./login-code-result');
-const { buildProof, draftResetForFailure, initialDraft } = await import('./login-code-draft');
+const { buildProof, draftResetForFailure, effectiveNodeIds, initialDraft } = await import(
+  './login-code-draft'
+);
 const { formatCountdown, loginCodeErrorText, loginCodeReasonText } = await import(
   './login-code-text'
 );
@@ -118,15 +120,25 @@ const GENERATE_INPUT = {
   proof: { kind: 'totp' as const, code: '123456' },
 };
 
-function renderForm(ctx: LoginCodeContext, scope: 'all' | 'one' = 'all'): string {
+const OPTIONS = [
+  { meshId: 'node-a', name: 'alpha', reason: null },
+  { meshId: 'node-b', name: 'bravo', reason: null },
+  { meshId: 'node-c', name: 'charlie', reason: 'offline' as const },
+];
+
+function renderForm(
+  ctx: LoginCodeContext,
+  scope: 'all' | 'some' = 'all',
+  selectedIds: string[] = []
+): string {
   const draft = { ...initialDraft('all'), scope };
   return renderToStaticMarkup(
     <LoginCodeForm
       context={ctx}
       draft={draft}
       onDraft={() => undefined}
-      options={[]}
-      nodeId={null}
+      options={OPTIONS}
+      selectedIds={selectedIds}
       targetCount={2}
       skippedCount={1}
       busy={false}
@@ -172,6 +184,32 @@ describe('验证方式随 proofKinds 渲染', () => {
     // 无 i18n 实例时 t 只回键名（不插值）。
     expect(html).toContain('nodes.loginCode.target.count');
     expect(html).toContain('nodes.loginCode.target.skipped');
+  });
+
+  test('指定节点：触发器一台显示名字，多台显示数量，未选显示占位；不再有入口提示', () => {
+    const ctx = context(['totp']);
+    const one = renderForm(ctx, 'some', ['node-b']);
+    expect(one).toContain('data-testid="login-code-node"');
+    expect(one).toContain('bravo');
+    expect(one).not.toContain('login-code-count');
+    expect(one).not.toContain('login-code-entry-hint');
+    expect(one).not.toContain('withEntry');
+    const many = renderForm(ctx, 'some', ['node-a', 'node-b']);
+    expect(many).toContain('nodes.loginCode.target.selected');
+    expect(renderForm(ctx, 'some', [])).toContain('nodes.loginCode.target.placeholder');
+  });
+
+  test('草稿：数组预选；空数组默认第一台可用；勾选后只留可用节点', () => {
+    expect(initialDraft('all')).toMatchObject({ scope: 'all', nodeIds: null });
+    expect(initialDraft(['node-a', 'node-b'])).toMatchObject({
+      scope: 'some',
+      nodeIds: ['node-a', 'node-b'],
+    });
+    expect(initialDraft([])).toMatchObject({ scope: 'some', nodeIds: null });
+    expect(effectiveNodeIds({ nodeIds: null }, OPTIONS)).toEqual(['node-a']);
+    expect(effectiveNodeIds({ nodeIds: ['node-b', 'node-c'] }, OPTIONS)).toEqual(['node-b']);
+    expect(effectiveNodeIds({ nodeIds: [] }, OPTIONS)).toEqual([]);
+    expect(effectiveNodeIds({ nodeIds: ['node-c'] }, OPTIONS)).toEqual([]);
   });
 
   test('buildProof：输入完整前不可生成', () => {

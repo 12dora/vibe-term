@@ -7,9 +7,9 @@ import { TOTP_RETRY_CODES } from './login-code-text';
 export const OTP_LENGTH = 6;
 
 export interface LoginCodeDraft {
-  scope: 'all' | 'one';
-  /** 指定节点时的 mesh id；null = 取第一台可用节点。 */
-  nodeId: string | null;
+  scope: 'all' | 'some';
+  /** 指定节点时勾选的 mesh id；null = 未动过，默认取第一台可用节点。 */
+  nodeIds: string[] | null;
   /** 双因素可选时的偏好；上下文里没有该项时回落到第一项。 */
   proofKind: LoginCodeProofKind;
   totp: string;
@@ -18,14 +18,26 @@ export interface LoginCodeDraft {
 }
 
 export function initialDraft(selection: LoginCodeSelection): LoginCodeDraft {
+  const ids = selection === 'all' ? [] : [...selection];
   return {
-    scope: selection === 'all' ? 'all' : 'one',
-    nodeId: selection === 'all' ? null : selection,
+    scope: selection === 'all' ? 'all' : 'some',
+    nodeIds: ids.length > 0 ? ids : null,
     proofKind: 'totp',
     totp: '',
     password: '',
     passwordTotp: '',
   };
+}
+
+/** 指定节点时实际选中的 mesh id：只留可用的；没动过勾选就取第一台可用节点。 */
+export function effectiveNodeIds(
+  draft: Pick<LoginCodeDraft, 'nodeIds'>,
+  options: ReadonlyArray<{ meshId: string; reason: unknown }>
+): string[] {
+  const usable = options.filter((option) => option.reason === null);
+  if (draft.nodeIds === null) return usable.slice(0, 1).map((option) => option.meshId);
+  const picked = new Set(draft.nodeIds);
+  return usable.filter((option) => picked.has(option.meshId)).map((option) => option.meshId);
 }
 
 /** 实际生效的验证方式：偏好不在可选范围内就取首选。 */

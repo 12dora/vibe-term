@@ -23,8 +23,8 @@ export interface LoginCodeFormProps {
   draft: LoginCodeDraft;
   onDraft: (patch: Partial<LoginCodeDraft>) => void;
   options: LoginCodeNodeOption[];
-  /** 指定节点时生效的 mesh id（已套用「第一台可用」默认）。 */
-  nodeId: string | null;
+  /** 指定节点时生效的 mesh id（已套用默认与可用性过滤）。 */
+  selectedIds: string[];
   targetCount: number;
   skippedCount: number;
   busy: boolean;
@@ -97,36 +97,36 @@ function NodePicker({
   disabled,
 }: {
   options: LoginCodeNodeOption[];
-  value: string | null;
-  onChange: (meshId: string) => void;
+  value: string[];
+  onChange: (meshIds: string[]) => void;
   disabled: boolean;
 }) {
   const { t } = useTranslation();
-  const selected = options.find((option) => option.meshId === value);
+  // 一台显示名字，多台只给数量：触发器始终一行。
+  const only = value.length === 1 ? options.find((option) => option.meshId === value[0]) : null;
+  const summary =
+    value.length === 0 ? null : (only?.name ?? t(`${NS}.target.selected`, { count: value.length }));
   return (
-    <Select
-      value={value ?? ''}
-      onValueChange={(next: string | null) => {
-        if (next) onChange(next);
-      }}
-    >
+    <Select multiple value={value} onValueChange={(next: string[]) => onChange(next)}>
       <SelectTrigger
         className="h-9 w-full"
-        aria-label={t(`${NS}.target.one`)}
+        aria-label={t(`${NS}.target.some`)}
         disabled={disabled || options.length === 0}
         data-testid="login-code-node"
       >
         <SelectValue>
-          {selected ? (
-            <span className="truncate">{selected.name}</span>
-          ) : (
-            <span className="text-muted-foreground">
-              {t(options.length === 0 ? 'common.loading' : `${NS}.target.placeholder`)}
-            </span>
-          )}
+          {() =>
+            summary ? (
+              <span className="truncate">{summary}</span>
+            ) : (
+              <span className="text-muted-foreground">
+                {t(options.length === 0 ? 'common.loading' : `${NS}.target.placeholder`)}
+              </span>
+            )
+          }
         </SelectValue>
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent alignItemWithTrigger={false}>
         {options.map((option) => (
           <SelectItem key={option.meshId} value={option.meshId} disabled={option.reason !== null}>
             <span className="min-w-0 truncate">{option.name}</span>
@@ -135,20 +135,6 @@ function NodePicker({
         ))}
       </SelectContent>
     </Select>
-  );
-}
-
-/** 选了别的节点时说明入口也会一起登录（见 planLoginCodeTargets）。 */
-function EntryHint(props: LoginCodeFormProps) {
-  const { t } = useTranslation();
-  const selfMeshId = props.context.selfMeshId;
-  if (!props.nodeId || props.nodeId === selfMeshId) return null;
-  const entry = props.options.find((option) => option.meshId === selfMeshId);
-  if (!entry) return null;
-  return (
-    <p className="text-xs text-muted-foreground" data-testid="login-code-entry-hint">
-      {t(`${NS}.target.withEntry`, { name: entry.name })}
-    </p>
   );
 }
 
@@ -165,19 +151,16 @@ function TargetSection(props: LoginCodeFormProps) {
         ariaLabel={t(`${NS}.target.label`)}
         items={[
           { value: 'all', label: t(`${NS}.target.all`) },
-          { value: 'one', label: t(`${NS}.target.one`) },
+          { value: 'some', label: t(`${NS}.target.some`) },
         ]}
       />
-      {draft.scope === 'one' ? (
-        <>
-          <NodePicker
-            options={props.options}
-            value={props.nodeId}
-            onChange={(nodeId) => onDraft({ nodeId })}
-            disabled={busy}
-          />
-          <EntryHint {...props} />
-        </>
+      {draft.scope === 'some' ? (
+        <NodePicker
+          options={props.options}
+          value={props.selectedIds}
+          onChange={(nodeIds) => onDraft({ nodeIds })}
+          disabled={busy}
+        />
       ) : (
         <p className="text-xs text-muted-foreground" data-testid="login-code-count">
           {props.targetCount === 0

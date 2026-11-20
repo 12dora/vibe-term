@@ -208,11 +208,33 @@ describe('planLoginCodeTargets', () => {
     ]);
   });
 
-  test('单选时带上当前入口', () => {
-    const plan = planLoginCodeTargets([row(SELF), row(NODE_A)], NODE_A, SELF);
+  test('指定节点：只含所选，不再强行带上当前入口', () => {
+    const nodes = [row(SELF), row(NODE_A), row(NODE_B)];
+    const one = planLoginCodeTargets(nodes, [NODE_A], SELF);
+    expect(one.targets.map((t) => t.meshId)).toEqual([NODE_A]);
+    expect(one.targets[0]?.runtimeId).toBe(NODE_A);
+    expect(one.skipped).toEqual([]);
+    expect(planLoginCodeTargets(nodes, [SELF], SELF).targets.map((t) => t.runtimeId)).toEqual([
+      'self',
+    ]);
+  });
+
+  test('多选：self 选中时排首位，其余保持节点顺序；未选与重复 id 不影响结果', () => {
+    const nodes = [row(NODE_A), row(NODE_B), row(SELF)];
+    const plan = planLoginCodeTargets(nodes, [NODE_B, SELF, NODE_B], SELF);
+    expect(plan.targets.map((t) => [t.meshId, t.runtimeId])).toEqual([
+      [SELF, 'self'],
+      [NODE_B, NODE_B],
+    ]);
+    expect(planLoginCodeTargets(nodes, [], SELF).targets).toEqual([]);
+    expect(planLoginCodeTargets(nodes, ['missing'], SELF)).toEqual({ targets: [], skipped: [] });
+  });
+
+  test('多选里不可用的节点进 skipped，不进 targets', () => {
+    const nodes = [row(NODE_A), row(NODE_B, { online: false }), row(SELF, { version: null })];
+    const plan = planLoginCodeTargets(nodes, [NODE_A, NODE_B, SELF], SELF);
     expect(plan.targets.map((t) => t.meshId)).toEqual([SELF, NODE_A]);
-    expect(planLoginCodeTargets([row(SELF), row(NODE_A)], SELF, SELF).targets).toHaveLength(1);
-    expect(plan.skipped).toEqual([]);
+    expect(plan.skipped).toEqual([{ meshId: NODE_B, name: expect.any(String), reason: 'offline' }]);
   });
 });
 
@@ -261,6 +283,38 @@ describe('issueLoginCode', () => {
     }
     // 全局会话材料只被拷贝，不被清零。
     expect(secrets.kTotp).toEqual(fill(32, 0x77));
+    disposeLoginCode(result.handle);
+  });
+
+  test('目标不含 self：只登记所选节点，命令只含它们，状态轮询与作废也只打这些节点', async () => {
+    const { api, calls } = fakeApi();
+    const secrets = rootSecrets();
+    const targets = planLoginCodeTargets(
+      [row(SELF), row(NODE_A), row(NODE_B)],
+      [NODE_B],
+      SELF
+    ).targets;
+    const result = await issueLoginCode({
+      context: context(),
+      targets,
+      proof: { kind: 'totp', code: '123456' },
+      api,
+      now: NOW,
+      deps: { readSecrets: () => secrets },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const parts = decodeLoginCode(result.handle.command.slice('vibeterm login --code '.length));
+    expect(parts?.nodeIds).toEqual([NODE_B]);
+    expect(calls.filter((c) => c.kind === 'login-code').map((c) => c.nodeId)).toEqual([NODE_B]);
+    // 证明里的入口仍是会话入口，与目标无关。
+    const issued = calls.find((c) => c.kind === 'login-code');
+    const login = decodeLogin(decodeBase64url(String(issued?.body.login)));
+    expect(login.entry).toBe(SELF);
+    calls.length = 0;
+    expect(await pollLoginCodeStates(result.handle)).toEqual({ [NODE_B]: 'pending' });
+    await revokeLoginCode(result.handle);
+    expect(calls.map((c) => c.nodeId)).toEqual([NODE_B, NODE_B]);
     disposeLoginCode(result.handle);
   });
 

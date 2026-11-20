@@ -318,6 +318,7 @@ describe('批量「内存限额」菜单项', () => {
     pauseBusy: false,
     eligibleMemoryCount: 2,
     memoryBusy: false,
+    eligibleLoginCodeCount: 2,
   };
 
   test('有可写的节点就可点', () => {

@@ -1,10 +1,10 @@
-// 「登录命令」对话框的打开请求：卡头按钮与行内菜单各自发请求，由应用外壳里唯一一份
+// 「登录命令」对话框的打开请求：卡头按钮、行内菜单与批量菜单各自发请求，由应用外壳里唯一一份
 // `LoginCodeDialogHost`（`login-code-host.tsx`）接收，免得把开关一路传进表格与卡片列表。
 
 import { useSyncExternalStore } from 'react';
 
-/** `'all'` = 全部节点；其余为单个节点的 mesh id。 */
-export type LoginCodeSelection = 'all' | string;
+/** `'all'` = 全部节点；否则为预选的一组节点 mesh id（可为空，对话框会默认选第一台可用节点）。 */
+export type LoginCodeSelection = 'all' | readonly string[];
 
 export interface LoginCodeRequest {
   selection: LoginCodeSelection;

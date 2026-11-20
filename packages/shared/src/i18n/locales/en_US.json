@@ -3084,11 +3084,12 @@
         "description": "Generate a one-time command for an agent to sign in to nodes from a terminal.",
         "menuOffline": "Node is offline; a login command can't be generated",
         "menuOutdated": "Node is older than {{version}}; a login command can't be generated",
+        "selectionNone": "None of the selected nodes can generate a login command.",
         "target": {
           "label": "Target",
           "all": "All nodes",
-          "one": "Specific node",
-          "placeholder": "Select a node",
+          "some": "Specific nodes",
+          "placeholder": "Select nodes",
           "none": "No eligible nodes",
           "count_one": "{{count}} node",
           "count_other": "{{count}} nodes",
@@ -3097,7 +3098,8 @@
           "offline": "Offline",
           "outdated": "Outdated",
           "paused": "Paused",
-          "withEntry": "Also signs in to the current entry, {{name}}"
+          "selected_one": "{{count}} node selected",
+          "selected_other": "{{count}} nodes selected"
         },
         "proof": {
           "label": "Verification",

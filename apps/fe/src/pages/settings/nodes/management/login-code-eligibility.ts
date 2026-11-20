@@ -28,3 +28,10 @@ export function loginCodeMenuTitle(
   }
   return undefined;
 }
+
+/** 选中行里能生成登录命令的那些。 */
+export function loginCodeEligibleRows<T extends Pick<NodeRow, 'isSelf' | 'online' | 'version'>>(
+  rows: readonly T[]
+): T[] {
+  return rows.filter((row) => loginCodeIneligibleReason(row) === null);
+}

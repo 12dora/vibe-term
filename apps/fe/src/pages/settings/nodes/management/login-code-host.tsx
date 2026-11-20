@@ -7,10 +7,14 @@ import { toast } from '@vibeterm/ui/toast';
 import i18n from 'i18next';
 import { type ComponentType, useEffect, useState } from 'react';
 import type { LoginCodeModuleLoader } from './login-code-controller';
-import { closeLoginCodeRequest, useLoginCodeRequest } from './login-code-request';
+import {
+  type LoginCodeSelection,
+  closeLoginCodeRequest,
+  useLoginCodeRequest,
+} from './login-code-request';
 
 interface DialogProps {
-  selection: string;
+  selection: LoginCodeSelection;
   onClose: () => void;
   loadModule?: LoginCodeModuleLoader;
 }

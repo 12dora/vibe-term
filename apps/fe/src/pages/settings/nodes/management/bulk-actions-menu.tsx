@@ -18,12 +18,15 @@ import {
   Pause,
   Play,
   ShieldAlert,
+  SquareTerminal,
   Trash2,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';
 import { toast } from 'sonner';
+import { loginCodeEligibleRows } from './login-code-eligibility';
+import { requestLoginCode } from './login-code-request';
 import type { Translate } from './node-detail-types';
 import { planMemoryLimits } from './node-memory-limits';
 import { eligiblePauseRows, eligibleResumeRows } from './pause-eligibility';
@@ -102,9 +105,11 @@ export interface BulkMenuInput {
   eligibleMemoryCount: number;
   /** 批量内存限额正在写入。 */
   memoryBusy: boolean;
+  /** 选中行里能生成登录命令的台数（离线 / 版本过低的除外）。 */
+  eligibleLoginCodeCount: number;
 }
 
-type BulkAction = 'pause' | 'resume' | 'memory' | 'upgrade' | 'revoke' | 'uninstall';
+type BulkAction = 'pause' | 'resume' | 'memory' | 'loginCode' | 'upgrade' | 'revoke' | 'uninstall';
 
 export type BulkMenuStates = Record<BulkAction, BulkItemState>;
 
@@ -134,6 +139,8 @@ function upgradeOwnState(input: BulkMenuInput, t: Translate): BulkItemState | un
 interface BulkRule {
   /** 这个动作要求上联收得下写入，且这一关排在「有别的批量在跑」前面。 */
   needsWritable?: boolean;
+  /** 只读动作：不受别的批量在跑影响。 */
+  ignoresBusy?: boolean;
   /** 动作自己的那一关；返回 undefined 表示可点。 */
   own?: (input: BulkMenuInput, t: Translate) => BulkItemState | undefined;
 }
@@ -148,6 +155,11 @@ const BULK_RULES: Record<BulkAction, BulkRule> = {
   },
   memory: {
     own: (input, t) => noneEligible(input.eligibleMemoryCount, 'nodes.memory.selectionNone', t),
+  },
+  loginCode: {
+    ignoresBusy: true,
+    own: (input, t) =>
+      noneEligible(input.eligibleLoginCodeCount, 'nodes.loginCode.selectionNone', t),
   },
   upgrade: { own: upgradeOwnState },
   revoke: { needsWritable: true },
@@ -171,13 +183,14 @@ export function bulkMenuStates(input: BulkMenuInput, t: Translate): BulkMenuStat
     const rule = BULK_RULES[action];
     if (input.selectedCount === 0) return { disabled: true, title: t('nodes.selection.none') };
     if (rule.needsWritable && !input.writable) return { disabled: true, title: input.blockedHint };
-    if (anyBusy) return busy;
+    if (anyBusy && !rule.ignoresBusy) return busy;
     return rule.own?.(input, t) ?? { disabled: false };
   };
   return {
     pause: state('pause'),
     resume: state('resume'),
     memory: state('memory'),
+    loginCode: state('loginCode'),
     upgrade: state('upgrade'),
     revoke: state('revoke'),
     uninstall: state('uninstall'),
@@ -190,6 +203,7 @@ export interface BulkActionsMenuListProps {
     pause: string;
     resume: string;
     memory: string;
+    loginCode: string;
     upgrade: string;
     revoke: string;
     uninstall: string;
@@ -197,6 +211,7 @@ export interface BulkActionsMenuListProps {
   onPause: () => void;
   onResume: () => void;
   onMemory: () => void;
+  onLoginCode: () => void;
   onUpgrade: () => void;
   onRevoke: () => void;
   onUninstall: () => void;
@@ -212,6 +227,7 @@ export function BulkActionsMenuList({
   onPause,
   onResume,
   onMemory,
+  onLoginCode,
   onUpgrade,
   onRevoke,
   onUninstall,
@@ -244,6 +260,15 @@ export function BulkActionsMenuList({
       >
         <MemoryStick className="size-4" />
         {labels.memory}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        disabled={states.loginCode.disabled}
+        title={states.loginCode.title}
+        onClick={onLoginCode}
+        data-testid="nodes-bulk-login-code"
+      >
+        <SquareTerminal className="size-4" />
+        {labels.loginCode}
       </DropdownMenuItem>
       <DropdownMenuItem
         disabled={states.upgrade.disabled}
@@ -362,6 +387,7 @@ function useBulkMenuPlan(props: BulkActionsMenuProps, pauseBusy: boolean): BulkM
       pauseBusy,
       eligibleMemoryCount: planMemoryLimits(rows).targets.length,
       memoryBusy: memory.running,
+      eligibleLoginCodeCount: loginCodeEligibleRows(rows).length,
     },
     t
   );
@@ -376,7 +402,7 @@ function useBulkMenuPlan(props: BulkActionsMenuProps, pauseBusy: boolean): BulkM
 }
 
 /**
- * 「更多」：对**选中的行**批量暂停 / 恢复 / 改内存限额 / 升级 / 移除 / 卸载。没有单独的「全部升级」了——
+ * 「更多」：对**选中的行**批量暂停 / 恢复 / 改内存限额 / 生成登录命令 / 升级 / 移除 / 卸载。没有单独的「全部升级」了——
  * 全选再走这个菜单即可，两个入口做同一件事只会让人猜它们有什么区别。
  * 升级是唯一会自动带上本机的动作，标签里写明「含本机」。
  */
@@ -414,6 +440,7 @@ export function BulkActionsMenu(props: BulkActionsMenuProps) {
             pause: t('nodes.selection.pause'),
             resume: t('nodes.selection.resume'),
             memory: t('nodes.selection.memory'),
+            loginCode: t('nodes.loginCode.title'),
             upgrade: t(
               plan.selfIncluded ? 'nodes.selection.upgradeWithSelf' : 'nodes.selection.upgrade',
               { count: plan.upgradeCount }
@@ -424,6 +451,7 @@ export function BulkActionsMenu(props: BulkActionsMenuProps) {
           onPause={() => void runBatch('pause', plan.pauseTargets)}
           onResume={() => void runBatch('resume', plan.resumeTargets)}
           onMemory={() => memory.request(rows)}
+          onLoginCode={() => requestLoginCode(rows.map((row) => row.id))}
           onUpgrade={() => upgrade.startAll(plan.upgradeRows)}
           onRevoke={onRevoke}
           onUninstall={() => uninstall.request(rows)}

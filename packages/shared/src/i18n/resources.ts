@@ -3096,11 +3096,12 @@ export const I18N_RESOURCES = {
         "description": "Generate a one-time command for an agent to sign in to nodes from a terminal.",
         "menuOffline": "Node is offline; a login command can't be generated",
         "menuOutdated": "Node is older than {{version}}; a login command can't be generated",
+        "selectionNone": "None of the selected nodes can generate a login command.",
         "target": {
           "label": "Target",
           "all": "All nodes",
-          "one": "Specific node",
-          "placeholder": "Select a node",
+          "some": "Specific nodes",
+          "placeholder": "Select nodes",
           "none": "No eligible nodes",
           "count_one": "{{count}} node",
           "count_other": "{{count}} nodes",
@@ -3109,7 +3110,8 @@ export const I18N_RESOURCES = {
           "offline": "Offline",
           "outdated": "Outdated",
           "paused": "Paused",
-          "withEntry": "Also signs in to the current entry, {{name}}"
+          "selected_one": "{{count}} node selected",
+          "selected_other": "{{count}} nodes selected"
         },
         "proof": {
           "label": "Verification",
@@ -7293,10 +7295,11 @@ export const I18N_RESOURCES = {
         "description": "生成一次性命令，供 agent 在终端登录节点。",
         "menuOffline": "节点离线，无法生成登录命令",
         "menuOutdated": "节点版本低于 {{version}}，无法生成登录命令",
+        "selectionNone": "所选节点均不能生成登录命令。",
         "target": {
           "label": "目标",
           "all": "全部节点",
-          "one": "指定节点",
+          "some": "指定节点",
           "placeholder": "选择节点",
           "none": "没有可用的节点",
           "count": "{{count}} 台节点",
@@ -7304,7 +7307,7 @@ export const I18N_RESOURCES = {
           "offline": "离线",
           "outdated": "版本过低",
           "paused": "已暂停",
-          "withEntry": "同时登录当前入口 {{name}}"
+          "selected": "已选 {{count}} 台"
         },
         "proof": {
           "label": "验证",
@@ -11483,10 +11486,11 @@ export const I18N_RESOURCES = {
         "description": "エージェントがターミナルからノードにログインするための、1 回限りのコマンドを生成します。",
         "menuOffline": "ノードがオフラインのため、ログインコマンドを生成できません",
         "menuOutdated": "ノードのバージョンが {{version}} 未満のため、ログインコマンドを生成できません",
+        "selectionNone": "選択したノードはいずれもログインコマンドを生成できません。",
         "target": {
           "label": "対象",
           "all": "すべてのノード",
-          "one": "ノードを指定",
+          "some": "ノードを指定",
           "placeholder": "ノードを選択",
           "none": "利用可能なノードがありません",
           "count": "{{count}} 台のノード",
@@ -11494,7 +11498,7 @@ export const I18N_RESOURCES = {
           "offline": "オフライン",
           "outdated": "バージョン不足",
           "paused": "一時停止中",
-          "withEntry": "現在の入口 {{name}} にも同時にログインします"
+          "selected": "{{count}} 台を選択"
         },
         "proof": {
           "label": "認証",

@@ -155,7 +155,7 @@ export function NodeMoreMenu({
           }}
           onDetail={onDetail}
           onMemory={onMemory}
-          onLoginCode={() => requestLoginCode(row.id)}
+          onLoginCode={() => requestLoginCode([row.id])}
           onPause={() => void toggle()}
         />
       </DropdownMenuContent>

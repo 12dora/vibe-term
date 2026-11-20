@@ -100,16 +100,15 @@ function skipReasonOf(node: MeshNode): LoginCodeSkipReason | null {
   return null;
 }
 
-/** selection = 'all' 或一个 mesh id；self 由 selfMeshId 认出（runtimeId 为 'self'），恒在首位。 */
+/** selection = 'all' 或一组 mesh id；self 由 selfMeshId 认出（runtimeId 为 'self'），选中时恒在首位。 */
 export function planLoginCodeTargets(
   nodes: readonly MeshNode[],
-  selection: 'all' | string,
+  selection: 'all' | readonly string[],
   selfMeshId: string
 ): { targets: LoginCodeTarget[]; skipped: LoginCodeSkipped[] } {
-  // 指定节点时总带上当前入口：CLI 经入口访问任何节点都要先有入口自己的会话。
-  const chosen = nodes.filter(
-    (node) => selection === 'all' || node.id === selection || node.id === selfMeshId
-  );
+  // 只含所选节点：命令不必带上浏览器当前入口，CLI 经任一入口都能工作。
+  const picked = selection === 'all' ? null : new Set(selection);
+  const chosen = nodes.filter((node) => picked === null || picked.has(node.id));
   const ordered = [
     ...chosen.filter((node) => node.id === selfMeshId),
     ...chosen.filter((node) => node.id !== selfMeshId),
