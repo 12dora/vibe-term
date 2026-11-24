@@ -19,6 +19,7 @@ import { assertAcceptableHandshakePeer } from '../peer-hello';
 import type { MeshIdentity } from '../types';
 import { PeerHandshakeError } from '../types';
 import { type FanoutDataChannel, fanoutMaxPendingBytes } from './channel-fanout';
+import { DC_CAP_FAST_PATH } from './dc-fast-path';
 import type { DataChannelLike, PeerConnectionLike } from './native';
 import { toUint8Array } from './native';
 import { rtcLog } from './rtc-log';
@@ -52,6 +53,7 @@ function parseHello(msg: Record<string, unknown>): {
   hello: PeerHello;
   nodeIdHex: string;
   fingerprint: DtlsFingerprint;
+  caps: string[];
 } {
   const nodeIdHex = requireString(msg.node_id, 'node_id').toLowerCase();
   const nonce = decodeBase64url(requireString(msg.nonce, 'nonce'));
@@ -70,9 +72,13 @@ function parseHello(msg: Record<string, unknown>): {
     algorithm: requireString(fpRaw.algorithm, 'dtls_fingerprint.algorithm'),
     value: requireString(fpRaw.value, 'dtls_fingerprint.value'),
   });
+  const caps = Array.isArray(msg.caps)
+    ? msg.caps.filter((cap): cap is string => typeof cap === 'string')
+    : [];
   return {
     nodeIdHex,
     fingerprint: dtls,
+    caps,
     hello: {
       node_id: nodeId,
       nonce,
@@ -321,6 +327,7 @@ type HandshakeProgress = {
   peerHello: PeerHello | null;
   peerFingerprint: DtlsFingerprint | null;
   peerNodeId: string;
+  peerCaps: string[];
   gotSig: Uint8Array | null;
   sentSig: boolean;
   gotDone: boolean;
@@ -341,6 +348,7 @@ async function exchangeHandshake(opts: {
     peerHello: null,
     peerFingerprint: null,
     peerNodeId: '',
+    peerCaps: [],
     gotSig: null,
     sentSig: false,
     gotDone: false,
@@ -390,6 +398,7 @@ async function exchangeHandshake(opts: {
       progress.peerHello = hello.hello;
       progress.peerFingerprint = hello.fingerprint;
       progress.peerNodeId = hello.nodeIdHex;
+      progress.peerCaps = hello.caps;
       sendSigIfReady();
     } else if (parsed.t === 'sig') {
       opts.stopHello();
@@ -410,7 +419,9 @@ export async function handshakeDataChannel(opts: {
   timeoutMs?: number;
   queue?: HandshakeRecv;
   expectedPeerId?: string;
-}): Promise<{ peerNodeId: string; peerHello: PeerHello }> {
+  /** 在 hello 里通告 peer-rt 快路径能力。 */
+  fastPath?: boolean;
+}): Promise<{ peerNodeId: string; peerHello: PeerHello; fastPath: boolean }> {
   const timeoutMs = opts.timeoutMs ?? DC_HANDSHAKE_TIMEOUT_MS;
   const localFp = normalizeFingerprint(opts.localFingerprint);
   const selfHello = buildSelfHello(opts.identity, localFp);
@@ -422,6 +433,7 @@ export async function handshakeDataChannel(opts: {
     node_id: nodeIdToHex(selfHello.node_id),
     nonce: encodeBase64url(selfHello.nonce),
     dtls_fingerprint: localFp,
+    ...(opts.fastPath ? { caps: [DC_CAP_FAST_PATH] } : {}),
   };
   sendHandshake(opts.channel, helloMsg);
   const stopHello = startHelloRetransmit(opts.channel, helloMsg);
@@ -450,5 +462,9 @@ export async function handshakeDataChannel(opts: {
     throw new PeerHandshakeError('protocol', 'incomplete dc handshake');
   }
   reinjectPayloads(opts.channel, leftovers);
-  return { peerNodeId: progress.peerNodeId, peerHello: progress.peerHello };
+  return {
+    peerNodeId: progress.peerNodeId,
+    peerHello: progress.peerHello,
+    fastPath: opts.fastPath === true && progress.peerCaps.includes(DC_CAP_FAST_PATH),
+  };
 }

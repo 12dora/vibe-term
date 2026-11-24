@@ -268,6 +268,17 @@ hello 全落进 fanout 的 8 槽 dump 缓冲，跨 NAT、offerer 先 connected �
 
 兼容：≤ 2.2.x 的 offerer 仍按 40 ms 狂发 hello，新的 answerer 靠「先挂队列 + 按类型去重」吞得下；线格式没变。
 
+### DataChannel 快路径（`peer-rt`）
+
+`peer` 是有序可靠通道，丢一个 UDP 包会让该通道上所有 mux 流等一次 SCTP 重传（usrsctp 初始 RTO 1 s）。快路径给小消息加一份冗余副本：
+
+- 协商：两端在 DC hello 里带 `caps: ['peer-rt']`（字段不进签名 transcript，旧版本忽略）。双方都带时，offerer 在握手完成、`DataChannelLink` 建好之后再建第二条通道 `peer-rt`（`unordered: true, maxRetransmits: 0`）。SCTP 已建链时 libdatachannel 直接走 DCEP 开通道，不触发 SDP 重协商。应答侧拿到 `peer` 后接管 `onDataChannel` 按 label 分流，`peer-rt` 先于本端 Link 到达时暂存，其它 label 关闭；旧版本永远只看到一条 `peer`。
+- 隐式序号：两端各自从本端 `DataChannelLink` 的第一条 raw 消息起计数（发送端每次 `trySendRaw` 把消息交给 native 计一次，接收端每条非握手消息计一次）。libdatachannel 的 `send()` 返回 false 只表示已入队、不会丢，通道关闭时抛异常，所以「没抛异常」即已接受，不再按返回值或 `bufferedAmount` 变化判定后重发；背压由发送前的高水位检查（4 MiB）和 `onBufferedAmountLow` / 定时重试承担。握手 JSON 都是字符串、在对端 `done` 之前发完，Link 发出的分片头第 7 字节恒为 0、不会被识别成握手 JSON，所以两端计数集合一致。
+- 发送：单分片且 raw 长度 ≤ `FAST_COPY_MAX_BYTES = 1100` 的消息（按键、小输出、ctl / WINDOW、liveness）在写入 `peer` 后约 5 ms 把 `[u32 LE 序号][原消息]` 发到 `peer-rt`；`peer-rt` 未开、其积压超过 4 KiB，或 `peer` 自身积压超过 16 KiB 时不发，副本失败不影响可靠写。延迟是为了不和原消息挤进同一个 SCTP 包。
+- 接收：`FastPathMerge`（`packages/shared/src/link/fast-path-merge.ts`）只按序号递增交付，先到者交付、后到者丢弃，交付后的处理（liveness、分片重组、mux）与可靠消息完全相同。超前副本有条数 / 字节 / 超前窗口上限，超了就丢，可靠通道照样交付全部消息。晚到的重复副本在进入回调保护之前就丢弃，不会推迟 `peer` 上的回包。提前交付的条目保留指纹，可靠副本到达时比对，不一致以 `fast-path-desync` 关链。这只是事后兜底：若两端计数真的错位，关链前可能已经错序交付一条；内容完全相同的消息（如 liveness 块）错位时也查不出来。desync 后本端对该对端 30 min 内不再通告 `peer-rt`，这次断链按建链后损失计入 DC 熔断。
+- 观测：日志 `fast path active` / `fast path closed` / `fast path desync`；`GET /api/mesh/nodes` 与 `vibeterm nodes show` 的 `dcFastPath` 给出 `copiesSent` / `deliveredEarly` / `droppedDup` / `fastLate` / `bufferOverflows` / `desync`。`deliveredEarly > 0` 即说明发生过快路径抢先交付。
+- 开关：`VIBETERM_DC_FAST_PATH=0`。ws-secure 与 relay 不受影响。
+
 ### ICE / 拨号
 
 - ICE 服务器列表按「节点自定义 > 节点禁用 > 中继下发的自定义列表 > 发行版内置列表」求解，并按 STUN 探针 RTT 排序（新鲜可达的靠前，失败只降权不删除）。浏览器读 `GET /api/mesh/rtc-config`，回包带 `source` 字段说明这四档里的哪一档（`node-custom` / `node-disabled` / `relay-custom` / `builtin`）；语义与排查见 [mesh 运维](../operations/mesh-operations.md)。

@@ -74,6 +74,21 @@ export interface MeshNodeDcBreaker {
   lastFailureKind: string | null;
 }
 
+/** node↔node DataChannel 快路径（peer-rt 冗余副本）计数；仅两端协商成功的 dc 链路下发。 */
+export interface MeshNodeDcFastPath {
+  /** 1 = peer-rt 已打开可用。 */
+  fastActive: number;
+  copiesSent: number;
+  /** 快副本先于可靠副本交付的条数。 */
+  deliveredEarly: number;
+  /** 已由快副本交付、随后到达被丢弃的可靠副本条数。 */
+  droppedDup: number;
+  /** 可靠副本先到、随后被丢弃的快副本条数。 */
+  fastLate: number;
+  bufferOverflows: number;
+  desync: number;
+}
+
 export type MeshPortReach = {
   purpose: PortPurpose;
   proto: 'tcp' | 'udp';
@@ -116,6 +131,8 @@ export interface MeshNode {
   directFailure?: MeshNodeDirectFailure | null;
   /** DataChannel 熔断器；冷却期间不再自动拨 DC。旧后端不下发。 */
   dcBreaker?: MeshNodeDcBreaker | null;
+  /** DataChannel 快路径计数；非 dc 链路、未协商或旧后端为缺省 / null。 */
+  dcFastPath?: MeshNodeDcFastPath | null;
   version: string | null;
   direct_capable: boolean;
   inventory?: unknown;

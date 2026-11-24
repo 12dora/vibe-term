@@ -14,6 +14,7 @@ import {
 import { envInt } from '../mesh-log';
 import { AnswerRateLimit } from './rtc-answer-rate';
 import {
+  RTC_DIAL_FOREIGN_KINDS,
   type RtcDialFailureOpts,
   classifyRtcDialFailure,
   isIntentionalDcLoss,
@@ -166,13 +167,7 @@ export class RtcDialBreaker {
       onReset: opts.onReset,
       skipKinds: RTC_DIAL_BREAKER_SKIP_KINDS,
       trackAttempts: true,
-      countForeignKinds: new Set([
-        'liveness-timeout',
-        'channel-closed',
-        'missed-pong',
-        'no srflx candidates',
-        'stun unconfigured',
-      ]),
+      countForeignKinds: RTC_DIAL_FOREIGN_KINDS,
     });
   }
 

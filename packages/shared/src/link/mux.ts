@@ -469,10 +469,12 @@ export class LinkMux implements LinkSession {
   }
 
   stats() {
+    const transport = this.transport.stats?.();
     return {
       ...this.io,
       openStreams: Math.max(0, this.streams.size - (this.streams.has(CTL_STREAM_ID) ? 1 : 0)),
       unacked: this.unacked,
+      ...(transport ? { transport } : {}),
     };
   }
 

@@ -580,6 +580,7 @@ describe('node-list-projection', () => {
         lastFailureKind: null,
         disabled: false,
       },
+      dcFastPath: null,
       viaRelay: 'https://sh.example',
       relayPresence: ['https://sh.example', 'https://ty.example'],
       lastSeenAt: 1_700_000_222_000,

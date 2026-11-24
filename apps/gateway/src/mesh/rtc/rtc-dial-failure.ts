@@ -41,6 +41,16 @@ const INTENTIONAL_DC_LOSS = new Set([
   'reroll-stale',
 ]);
 
+/** 建链后的 DC 损失也计入拨号熔断的 kind（不论由哪次 attempt 引起）。 */
+export const RTC_DIAL_FOREIGN_KINDS: ReadonlySet<string> = new Set([
+  'liveness-timeout',
+  'channel-closed',
+  'missed-pong',
+  'fast-path-desync',
+  'no srflx candidates',
+  'stun unconfigured',
+]);
+
 const RTC_DIAL_FAILURE_RULES: ReadonlyArray<KeywordRule<string>> = [
   [['signal dropped'], 'signal-dropped'],
   [['liveness'], 'liveness-timeout'],

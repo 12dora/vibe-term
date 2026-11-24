@@ -104,13 +104,18 @@ export interface LinkSession {
   readonly lastFrameAt?: number;
   close(reason?: string): void;
   readonly closed: Promise<LinkCloseInfo>;
+  /** `transport` 为承载层自身的计数（如 DataChannel 快路径），承载层不提供时缺省。 */
+  stats?(): { transport?: ByteTransportStats };
 }
+
+export type ByteTransportStats = Readonly<Record<string, number>>;
 
 export type ByteTransport = {
   send(bytes: Uint8Array): void | Promise<void>;
   onData(cb: (bytes: Uint8Array) => void): void;
   onClose(cb: (reason?: string) => void): void;
   close(reason?: string): void;
+  stats?(): ByteTransportStats | null;
 };
 
 export type Frame = {

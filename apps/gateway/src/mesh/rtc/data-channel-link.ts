@@ -1,6 +1,12 @@
-import { type ByteTransport, CTL_STREAM_ID, FrameOp } from '@vibeterm/shared/link';
+import {
+  type ByteTransport,
+  type ByteTransportStats,
+  CTL_STREAM_ID,
+  FrameOp,
+} from '@vibeterm/shared/link';
 import { fanoutMaxPendingBytes } from './channel-fanout';
 import { DC_HIGH_WATER_BYTES, DC_LOW_WATER_BYTES } from './data-channel-carrier';
+import { DcFastPath, closeChannelQuietly } from './data-channel-fast-path';
 import { isDcHandshakeWire } from './dc-handshake';
 import { beginDcLinkProof, markDcLinkProof, ownDataChannelLink } from './dc-link-proof';
 import {
@@ -31,6 +37,9 @@ export type DataChannelLinkOptions = RtcLivenessClock & {
   intervalMs?: number;
   timeoutMs?: number;
   liveness?: boolean;
+  /** 两端都通告了 peer-rt：从本 Link 的第一条可靠消息起计数，并接受 attachFastChannel。 */
+  fastPath?: boolean;
+  fastCopyDelayMs?: number;
 };
 
 type QueueItem = {
@@ -92,8 +101,8 @@ export class DataChannelLink implements ByteTransport {
   private flushActive = false;
   private flushAgain = false;
   private flushRetryHandle: unknown = null;
-  private lowThresholdDropped = false;
   private callbackDepth = 0;
+  private readonly fast: DcFastPath | null;
 
   constructor(channel: DataChannelLike, opts?: DataChannelLinkOptions) {
     this.channel = channel;
@@ -105,6 +114,18 @@ export class DataChannelLink implements ByteTransport {
     this.setTimeoutFn = opts?.setTimeoutFn ?? defaultSetTimeout;
     this.clearTimeoutFn =
       opts?.clearTimeoutFn ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+    this.fast = opts?.fastPath
+      ? new DcFastPath({
+          peer: this.peer,
+          copyDelayMs: opts.fastCopyDelayMs,
+          setTimeoutFn: this.setTimeoutFn,
+          clearTimeoutFn: this.clearTimeoutFn,
+          reliableBuffered: () => channel.bufferedAmount(),
+          deliver: (bytes) => this.processInbound(bytes),
+          onDesync: () => this.close('fast-path-desync'),
+          runCallback: (fn) => this.runChannelCallback(fn),
+        })
+      : null;
     try {
       this.sizing = fragmentSizing(channel.maxMessageSize());
     } catch (err) {
@@ -133,35 +154,47 @@ export class DataChannelLink implements ByteTransport {
         if (isDcHandshakeWire(msg)) return;
         const bytes = copyBytes(toUint8Array(msg));
         this.liveness?.noteInbound();
-        const livenessKind = parseLivenessChunk(bytes);
-        if (livenessKind === 'ping') {
-          this.sendLiveness('pong');
-          return;
-        }
-        if (livenessKind === 'pong') {
-          this.noteProven();
-          return;
-        }
-        let frame: Uint8Array | null;
-        try {
-          frame = this.reassembler.push(bytes);
-        } catch (err) {
-          if (err instanceof FragmentProtocolError) {
-            this.finishClose('fragment-protocol');
-            try {
-              this.channel.close();
-            } catch {
-              // already closed
-            }
-            return;
-          }
-          throw err;
-        }
-        if (!frame) return;
-        this.dispatchFrame(frame);
+        if (this.fast) this.fast.pushReliable(bytes);
+        else this.processInbound(bytes);
       });
     });
     this.bindLifetime(opts);
+  }
+
+  private processInbound(bytes: Uint8Array): void {
+    if (this.closed) return;
+    const livenessKind = parseLivenessChunk(bytes);
+    if (livenessKind === 'ping') {
+      this.sendLiveness('pong');
+      return;
+    }
+    if (livenessKind === 'pong') {
+      this.noteProven();
+      return;
+    }
+    let frame: Uint8Array | null;
+    try {
+      frame = this.reassembler.push(bytes);
+    } catch (err) {
+      if (err instanceof FragmentProtocolError) {
+        this.finishClose('fragment-protocol');
+        closeChannelQuietly(this.channel);
+        return;
+      }
+      throw err;
+    }
+    if (!frame) return;
+    this.dispatchFrame(frame);
+  }
+
+  /** 接上 peer-rt；未协商或 Link 已关闭时直接关掉。 */
+  attachFastChannel(dc: DataChannelLike): void {
+    if (this.fast) this.fast.attach(dc);
+    else closeChannelQuietly(dc);
+  }
+
+  stats(): ByteTransportStats | null {
+    return this.fast?.stats() ?? null;
   }
 
   get proven(): boolean {
@@ -287,8 +320,7 @@ export class DataChannelLink implements ByteTransport {
       return;
     }
     if (!this.flushQueue(this.controlQueue, true)) return;
-    if (!this.flushQueue(this.dataQueue, false)) return;
-    this.restoreLowThreshold();
+    this.flushQueue(this.dataQueue, false);
   }
 
   private flushQueue(queue: QueueItem[], urgent: boolean): boolean {
@@ -314,53 +346,25 @@ export class DataChannelLink implements ByteTransport {
     return true;
   }
 
+  /**
+   * libdatachannel 的 send() 返回 false 只表示「已入队、未立即发出」，消息不会丢；通道已关时抛异常。
+   * 所以没抛异常就算已接受。背压只靠发送前的高水位检查 + onBufferedAmountLow / 定时重试。
+   */
   private trySendRaw(bytes: Uint8Array, bypassHighWater: boolean): boolean {
     if (this.closed || !this.opened || !this.channel.isOpen()) return false;
     if (this.callbackDepth > 0) return false;
     if (!bypassHighWater && this.channel.bufferedAmount() > DC_HIGH_WATER_BYTES) {
       return false;
     }
-    const before = this.channel.bufferedAmount();
-    const ok = sendBinary(this.channel, bytes);
-    const after = this.channel.bufferedAmount();
-    const accepted = ok || after > before;
-    if (!accepted) {
-      if (!this.channel.isOpen()) {
-        this.finishClose('channel-closed', 'remote');
-        return false;
-      }
-      this.dropLowThreshold();
+    try {
+      sendBinary(this.channel, bytes);
+    } catch {
+      const open = this.channel.isOpen();
+      this.finishClose(open ? 'send-error' : 'channel-closed', open ? 'local' : 'remote');
       return false;
     }
+    this.fast?.noteReliableSent(bytes);
     return true;
-  }
-
-  private dropLowThreshold(): void {
-    if (this.lowThresholdDropped) return;
-    this.lowThresholdDropped = true;
-    try {
-      this.channel.setBufferedAmountLowThreshold(0);
-    } catch {
-      // native channel may already be closed
-    }
-  }
-
-  private restoreLowThreshold(): void {
-    if (!this.lowThresholdDropped) return;
-    if (
-      this.pendingPing ||
-      this.pendingPong ||
-      this.controlQueue.length > 0 ||
-      this.dataQueue.length > 0
-    ) {
-      return;
-    }
-    this.lowThresholdDropped = false;
-    try {
-      this.channel.setBufferedAmountLowThreshold(DC_LOW_WATER_BYTES);
-    } catch {
-      // native channel may already be closed
-    }
   }
 
   private armFlushRetry(delayMs = DC_FLUSH_RETRY_MS): void {
@@ -423,6 +427,7 @@ export class DataChannelLink implements ByteTransport {
     this.liveness?.stop();
     this.liveness = null;
     this.reassembler.dispose();
+    this.fast?.close();
     if (this.wasOpen) {
       logDataChannelClosed({
         peer: this.peer,

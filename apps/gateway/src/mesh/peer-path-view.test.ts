@@ -3,7 +3,12 @@ import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { PeerManager } from './peer-manager';
-import { peerLinkDetailOf, relayPresenceOfIndex, viaRelayOfLive } from './peer-path-view';
+import {
+  dcFastPathOfLive,
+  peerLinkDetailOf,
+  relayPresenceOfIndex,
+  viaRelayOfLive,
+} from './peer-path-view';
 import type { LivePeer } from './peer-reconnect-wake';
 import { dummyUplink } from './peer-test-fixtures';
 import type { RelayPresenceIndex } from './relay-presence-types';
@@ -72,6 +77,17 @@ describe('peer path view', () => {
       'https://ty.example',
     ]);
     expect(relayPresenceOfIndex(index, 'cc'.repeat(16))).toEqual([]);
+  });
+
+  test('dcFastPathOfLive reads transport stats only for dc sessions', () => {
+    const stats = { fastActive: 1, copiesSent: 3, deliveredEarly: 2 };
+    const session = Object.assign(createInMemoryLinkPair()[0], {
+      stats: () => ({ transport: stats }),
+    });
+    expect(dcFastPathOfLive(undefined)).toBeNull();
+    expect(dcFastPathOfLive(live({ transport: 'dc', session }))).toEqual(stats);
+    expect(dcFastPathOfLive(live({ transport: 'ws-secure', session }))).toBeNull();
+    expect(dcFastPathOfLive(live({ transport: 'dc' }))).toBeNull();
   });
 
   test('peerLinkDetailOf copies viaRelay and relayPresence', () => {

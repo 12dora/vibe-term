@@ -4,6 +4,7 @@ import type { MeshIdentity } from '../types';
 import { PeerHandshakeError } from '../types';
 import { fanoutDataChannel } from './channel-fanout';
 import { DataChannelLink, type DataChannelLinkOptions } from './data-channel-link';
+import { PeerRtChannels } from './dc-fast-path';
 import { attachHandshakeRecv, handshakeDataChannel } from './dc-handshake';
 import { type RtcSignaling, encodeCandidateSignal, encodeSdpSignal, isEmptyCandidate } from './ice';
 import type { DtlsFingerprint, IceServerConfig, PeerConnectionLike } from './native';
@@ -137,6 +138,7 @@ export async function runPeerHandshake(opts: {
   role: 'initiator' | 'acceptor';
 }> {
   const { pc, peerNodeId, offerer, deadline, progress } = opts;
+  const peerRt = new PeerRtChannels(pc, peerNodeId);
   const channelP = offerer
     ? Promise.resolve(logCreatedChannel(pc.createDataChannel(PEER_CHANNEL_LABEL), peerNodeId))
     : waitDataChannel(
@@ -144,7 +146,10 @@ export async function runPeerHandshake(opts: {
         remainingDeadlineMs(deadline, 'datachannel open timeout'),
         undefined,
         peerNodeId
-      );
+      ).then((dc) => {
+        peerRt.routeInbound();
+        return dc;
+      });
   const channel = fanoutDataChannel(await channelP, { peer: peerNodeId });
   bindChannelDiagnostics(channel, peerNodeId);
   const queue = attachHandshakeRecv(channel, pc, { peer: peerNodeId });
@@ -165,6 +170,7 @@ export async function runPeerHandshake(opts: {
       timeoutMs: remainingDeadlineMs(deadline, 'peer handshake timeout'),
       queue,
       expectedPeerId: peerNodeId,
+      fastPath: peerRt.enabled,
     });
     if (!channel.isOpen()) {
       throw new PeerHandshakeError('protocol', 'datachannel closed during handshake handoff');
@@ -172,11 +178,13 @@ export async function runPeerHandshake(opts: {
     const link = new DataChannelLink(channel, {
       peer: peerNodeId,
       attempt: opts.attempt,
+      fastPath: hs.fastPath,
       ...nodeDcLiveness(opts.liveness),
     });
     if (hs.peerNodeId !== peerNodeId.toLowerCase()) {
       throw new PeerHandshakeError('protocol', 'connected peer node_id mismatch');
     }
+    peerRt.bind(link, offerer, hs.fastPath);
     return {
       link,
       pc,
@@ -185,6 +193,7 @@ export async function runPeerHandshake(opts: {
     };
   } catch (err) {
     queue.stop();
+    peerRt.dispose();
     throw err;
   }
 }

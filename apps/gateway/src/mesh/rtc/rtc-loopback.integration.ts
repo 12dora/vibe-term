@@ -15,6 +15,7 @@ import { seedNodeIdentity, seedUser } from '../test-support';
 import { PeerHandshakeError } from '../types';
 import { CarrierSwitchController, type DirectCarrier } from './carrier-switch';
 import { DataChannelCarrier } from './data-channel-carrier';
+import type { RtcSignaling } from './ice';
 import type { NodeDatachannelModule, RtcIceConfig } from './native';
 import { RtcPeerManager, type RtcPeerManagerOptions, SESS_CHANNEL_LABEL } from './rtc-peer-manager';
 import { isFakeIpv4IceCandidate } from './rtc-signal-apply';
@@ -76,6 +77,40 @@ function wrapMismatch(mod: NodeDatachannelModule): NodeDatachannelModule {
         },
       });
     } as unknown as NodeDatachannelModule['PeerConnection'],
+  };
+}
+
+function recordLocalDescriptions(mod: NodeDatachannelModule): {
+  mod: NodeDatachannelModule;
+  events: string[];
+} {
+  const events: string[] = [];
+  const PeerConnection = function RecordingPeerConnection(name: string, config: RtcIceConfig) {
+    const inner = new mod.PeerConnection(name, config);
+    return new Proxy(inner, {
+      get(target, prop, receiver) {
+        if (prop === 'onLocalDescription') {
+          return (cb: (sdp: string, type: string) => void) =>
+            target.onLocalDescription((sdp, type) => {
+              events.push(type);
+              cb(sdp, type);
+            });
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+  } as unknown as NodeDatachannelModule['PeerConnection'];
+  return { mod: { ...mod, PeerConnection }, events };
+}
+
+function countSdpSends(sig: RtcSignaling, counter: { sdp: number }): RtcSignaling {
+  return {
+    send: (msg) => {
+      if (msg.sdp) counter.sdp += 1;
+      sig.send(msg);
+    },
+    onMessage: (cb) => sig.onMessage(cb),
   };
 }
 
@@ -154,8 +189,38 @@ describe.skipIf(!nativeMod)('rtc loopback (node-datachannel)', () => {
     const reader = inn.readable.getReader();
     await out.write(new Uint8Array([4, 5, 6]));
     expect((await reader.read()).value?.bytes).toEqual(new Uint8Array([4, 5, 6]));
+    const fastUp = () => la.link.stats()?.fastActive === 1 && lb.link.stats()?.fastActive === 1;
+    for (let i = 0; i < 200 && !fastUp(); i++) await Bun.sleep(10);
+    expect(la.link.stats()).toMatchObject({ fastActive: 1, desync: 0 });
+    expect(lb.link.stats()).toMatchObject({ fastActive: 1, desync: 0 });
+    await out.write(new Uint8Array([7]));
+    expect((await reader.read()).value?.bytes).toEqual(new Uint8Array([7]));
     out.end();
     inn.end();
+    la.pc.close();
+    lb.pc.close();
+  });
+
+  test('peer-rt opens after the handshake without a new local description or SDP', async () => {
+    const rec = recordLocalDescriptions(nativeMod as NodeDatachannelModule);
+    const { a, b, left, right } = managers(rec.mod);
+    const [rawA, rawB] = loopbackSignaling();
+    const counter = { sdp: 0 };
+    const [la, lb] = await Promise.all([
+      left.connectToPeer(b.nodeId, countSdpSends(rawA, counter)),
+      right.connectToPeer(a.nodeId, countSdpSends(rawB, counter)),
+    ]);
+    const descBefore = rec.events.length;
+    const sdpBefore = counter.sdp;
+    const fastUp = () => la.link.stats()?.fastActive === 1 && lb.link.stats()?.fastActive === 1;
+    for (let i = 0; i < 200 && !fastUp(); i++) await Bun.sleep(10);
+    expect(fastUp()).toBe(true);
+    await Bun.sleep(500);
+    expect(rec.events.length).toBe(descBefore);
+    expect(counter.sdp).toBe(sdpBefore);
+    for (const pc of [la.pc, lb.pc]) {
+      expect((pc as { signalingState?: () => string }).signalingState?.()).toBe('stable');
+    }
     la.pc.close();
     lb.pc.close();
   });

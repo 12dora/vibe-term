@@ -1,12 +1,21 @@
 import { describe, expect, test } from 'bun:test';
-import { FrameOp, LinkMux, encodeFrame, encodeWindowPayload } from '@vibeterm/shared/link';
+import {
+  FAST_COPY_MAX_BYTES,
+  FrameOp,
+  LinkMux,
+  encodeFastCopy,
+  encodeFrame,
+  encodeWindowPayload,
+} from '@vibeterm/shared/link';
 import { FANOUT_MAX_PENDING_BYTES, fanoutDataChannel } from './channel-fanout';
 import { DC_HIGH_WATER_BYTES } from './data-channel-carrier';
+import { fastPathCoolingFor, resetFastPathDesyncForTest } from './data-channel-fast-path';
 import { DC_FLUSH_RETRY_MS, DataChannelLink } from './data-channel-link';
 import {
   FRAGMENT_HEADER_SIZE,
   FRAGMENT_SEND_PAYLOAD_SIZE,
   MAX_REASSEMBLED_FRAME_BYTES,
+  fragmentFrame,
 } from './fragmenter';
 import { parseLivenessChunk } from './liveness';
 import { bindChannelDiagnostics } from './rtc-peer-helpers';
@@ -68,12 +77,12 @@ describe('DataChannelLink', () => {
     expect(await closed).toBe('channel-closed');
   });
 
-  test('send Promise resolves only after every fragment is accepted', async () => {
+  test('send Promise waits while the channel is above the high-water mark', async () => {
     const [a, b] = pairDataChannels('peer');
     const left = new DataChannelLink(a, { liveness: false });
     const right = new DataChannelLink(b, { liveness: false });
     const got = new Promise<Uint8Array>((resolve) => right.onData(resolve));
-    a.succeedsBeforeBlock = 1;
+    a.buffered = DC_HIGH_WATER_BYTES + 1;
     const payload = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 4).fill(11);
     let resolved = false;
     const sent = left.send(payload).then(() => {
@@ -81,7 +90,8 @@ describe('DataChannelLink', () => {
     });
     await Promise.resolve();
     expect(resolved).toBe(false);
-    expect(a.sent).toHaveLength(1);
+    expect(a.sent).toHaveLength(0);
+    a.buffered = 0;
     a.emitLow();
     await sent;
     expect(resolved).toBe(true);
@@ -91,8 +101,10 @@ describe('DataChannelLink', () => {
   test('closing rejects queued send Promises', async () => {
     const [a] = pairDataChannels('peer');
     const left = new DataChannelLink(a);
-    a.blockSend = true;
-    const pending = left.send(new Uint8Array([1, 2, 3]));
+    a.buffered = DC_HIGH_WATER_BYTES + 1;
+    const pending = left.send(
+      encodeFrame({ streamId: 1, op: FrameOp.DATA, payload: new Uint8Array([1, 2, 3]) })
+    );
     left.close('bye');
     await expect(pending).rejects.toBeInstanceOf(Error);
   });
@@ -100,8 +112,10 @@ describe('DataChannelLink', () => {
   test('underlying channel-closed resolves queued sends without unhandled rejection', async () => {
     const [a] = pairDataChannels('peer');
     const left = new DataChannelLink(a);
-    a.blockSend = true;
-    const pending = left.send(new Uint8Array([1, 2, 3]));
+    a.buffered = DC_HIGH_WATER_BYTES + 1;
+    const pending = left.send(
+      encodeFrame({ streamId: 1, op: FrameOp.DATA, payload: new Uint8Array([1, 2, 3]) })
+    );
     const unhandled = await collectUnhandled(async () => {
       a.close();
       await expect(pending).resolves.toBeUndefined();
@@ -469,13 +483,15 @@ describe('DataChannelLink', () => {
     right.close();
   });
 
-  test('a WINDOW frame is sent between fragments of a blocked DATA frame', async () => {
-    const [a, b] = pairDataChannels('peer');
+  test('a WINDOW frame overtakes the remaining fragments of a DATA frame held at high water', async () => {
+    const [a] = pairDataChannels('peer');
     const left = new DataChannelLink(a, { liveness: false });
-    const right = new DataChannelLink(b, { liveness: false });
-    a.succeedsBeforeBlock = 1;
-
-    const dataSent = left.send(new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 4).fill(9));
+    a.acceptButReturnFalse = true;
+    a.buffered = DC_HIGH_WATER_BYTES - 100;
+    let dataResolved = false;
+    const dataSent = left.send(new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 4).fill(9)).then(() => {
+      dataResolved = true;
+    });
     await Promise.resolve();
     expect(a.sent).toHaveLength(1);
     expect(muxOpFromChunk(a.sent[0] as Uint8Array)).not.toBe(FrameOp.WINDOW);
@@ -485,45 +501,47 @@ describe('DataChannelLink', () => {
       op: FrameOp.WINDOW,
       payload: encodeWindowPayload(64),
     });
-    const windowSent = left.send(windowFrame);
-    await Promise.resolve();
-    expect(a.sent).toHaveLength(1);
-
-    a.emitLow();
-    await windowSent;
+    await left.send(windowFrame);
+    expect(a.sent).toHaveLength(2);
     expect(muxOpFromChunk(a.sent[1] as Uint8Array)).toBe(FrameOp.WINDOW);
+    expect(dataResolved).toBe(false);
+
+    a.buffered = 0;
+    a.emitLow();
     await dataSent;
     expect(a.sent).toHaveLength(3);
-    expect(muxOpFromChunk(a.sent[1] as Uint8Array)).toBe(FrameOp.WINDOW);
     left.close();
-    right.close();
   });
 
-  test('flush retries when send fails below the low-water threshold', async () => {
-    const clock = new FakeClock();
+  test('native send returning false under backlog counts once: no duplicate, fast indices aligned', async () => {
     const [a, b] = pairDataChannels('peer');
-    const left = new DataChannelLink(a, {
-      liveness: false,
-      now: clock.now,
-      setTimeoutFn: clock.setTimeout,
-      clearTimeoutFn: clock.clearTimeout,
-    });
-    const right = new DataChannelLink(b, { liveness: false });
-    const got = new Promise<Uint8Array>((resolve) => right.onData(resolve));
-    a.succeedsBeforeBlock = 0;
-    a.buffered = 100;
-    const payload = new Uint8Array([1, 2, 3]);
-    const sent = left.send(payload);
-    await Promise.resolve();
-    expect(a.sent).toHaveLength(0);
+    const [fa, fb] = pairDataChannels('peer-rt');
+    const opts = { liveness: false, fastPath: true, fastCopyDelayMs: 0 };
+    const left = new DataChannelLink(a, opts);
+    const right = new DataChannelLink(b, opts);
+    left.attachFastChannel(fa);
+    right.attachFastChannel(fb);
+    const got: Uint8Array[] = [];
+    right.onData((frame) => got.push(frame));
+    a.returnFalseWhileQueued = true;
+    a.buffered = 8 * 1024;
+    a.drainOnSend = 4 * 1024;
+    for (let i = 1; i <= 3; i++) {
+      await left.send(
+        encodeFrame({ streamId: 1, op: FrameOp.WINDOW, payload: encodeWindowPayload(i) })
+      );
+    }
+    expect(a.sent).toHaveLength(3);
+    expect(got).toHaveLength(3);
 
-    a.blockSend = false;
-    a.succeedsBeforeBlock = Number.POSITIVE_INFINITY;
-    clock.advance(20);
-    await sent;
-    expect(await got).toEqual(payload);
+    a.dropSend = true;
+    await left.send(new Uint8Array([42]));
+    expect(got.at(-1)).toEqual(new Uint8Array([42]));
+    a.dropSend = false;
+    b.emitMessage(Buffer.from(a.sent.at(-1) as Uint8Array));
+    expect(got).toHaveLength(4);
+    expect(right.stats()).toMatchObject({ deliveredEarly: 1, droppedDup: 1, desync: 0 });
     left.close();
-    right.close();
   });
 
   test('WINDOW still reopens the send window when native send from onMessage is a no-op', async () => {
@@ -629,3 +647,152 @@ async function collectUnhandled(run: () => Promise<void>): Promise<unknown[]> {
   }
   return unhandled;
 }
+
+describe('DataChannelLink fast path (peer-rt)', () => {
+  function fastPair(opts?: { negotiated?: boolean }) {
+    const negotiated = opts?.negotiated ?? true;
+    const [a, b] = pairDataChannels('peer');
+    const [fa, fb] = pairDataChannels('peer-rt');
+    const linkOpts = { liveness: false, fastPath: negotiated, fastCopyDelayMs: 0 };
+    const left = new DataChannelLink(a, linkOpts);
+    const right = new DataChannelLink(b, linkOpts);
+    left.attachFastChannel(fa);
+    right.attachFastChannel(fb);
+    const got: Uint8Array[] = [];
+    right.onData((frame) => got.push(frame));
+    return { a, b, fa, fb, left, right, got };
+  }
+
+  test('old peer: no fast path, peer-rt is refused and the wire is unchanged', async () => {
+    const { a, fa, left, right, got } = fastPair({ negotiated: false });
+    expect(fa.closed).toBe(true);
+    await left.send(new Uint8Array([1, 2, 3]));
+    expect(got).toEqual([new Uint8Array([1, 2, 3])]);
+    expect(a.sent).toEqual([fragmentFrame(1, new Uint8Array([1, 2, 3]))[0] as Uint8Array]);
+    expect(left.stats()).toBeNull();
+    expect(right.stats()).toBeNull();
+    left.close();
+  });
+
+  test('healthy link: reliable wins and the late fast copy is dropped', async () => {
+    const { fa, left, right, got } = fastPair();
+    await left.send(new Uint8Array([4, 5]));
+    expect(got).toEqual([new Uint8Array([4, 5])]);
+    expect(fa.sent.length).toBe(1);
+    expect(left.stats()).toMatchObject({ fastActive: 1, copiesSent: 1 });
+    expect(right.stats()).toMatchObject({ deliveredEarly: 0, fastLate: 1, desync: 0 });
+    left.close();
+  });
+
+  test('lost reliable packet: fast copy is delivered first, reliable duplicate dropped', async () => {
+    const { a, b, left, right, got } = fastPair();
+    a.dropSend = true;
+    await left.send(new Uint8Array([1]));
+    await left.send(new Uint8Array([2]));
+    expect(got).toEqual([new Uint8Array([1]), new Uint8Array([2])]);
+    expect(right.stats()).toMatchObject({ deliveredEarly: 2 });
+    a.dropSend = false;
+    for (const held of a.sent) b.emitMessage(Buffer.from(held));
+    await left.send(new Uint8Array([3]));
+    expect(got).toEqual([new Uint8Array([1]), new Uint8Array([2]), new Uint8Array([3])]);
+    expect(right.stats()).toMatchObject({ deliveredEarly: 2, droppedDup: 2, desync: 0 });
+    left.close();
+  });
+
+  test('fast copy ahead of a lost earlier message waits for the reliable gap', async () => {
+    const { a, b, fa, left, got } = fastPair();
+    a.dropSend = true;
+    fa.dropSend = true;
+    await left.send(new Uint8Array([1]));
+    fa.dropSend = false;
+    await left.send(new Uint8Array([2]));
+    expect(got).toEqual([]);
+    a.dropSend = false;
+    b.emitMessage(Buffer.from(a.sent[0] as Uint8Array));
+    expect(got).toEqual([new Uint8Array([1]), new Uint8Array([2])]);
+    b.emitMessage(Buffer.from(a.sent[1] as Uint8Array));
+    expect(got.length).toBe(2);
+    left.close();
+  });
+
+  test('large frames and oversized single fragments are not copied', async () => {
+    const { fa, left, got } = fastPair();
+    await left.send(new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 4).fill(1));
+    await left.send(new Uint8Array(FAST_COPY_MAX_BYTES).fill(2));
+    expect(fa.sent.length).toBe(0);
+    expect(got.length).toBe(2);
+    expect(left.stats()).toMatchObject({ copiesSent: 0 });
+    left.close();
+  });
+
+  test('peer-rt closing mid-stream falls back to the reliable path', async () => {
+    const { fa, left, right, got } = fastPair();
+    await left.send(new Uint8Array([1]));
+    fa.close();
+    await left.send(new Uint8Array([2]));
+    await left.send(new Uint8Array([3]));
+    expect(got).toEqual([new Uint8Array([1]), new Uint8Array([2]), new Uint8Array([3])]);
+    expect(left.stats()).toMatchObject({ fastActive: 0, copiesSent: 1 });
+    expect(right.stats()).toMatchObject({ fastActive: 0, desync: 0 });
+    let closed = false;
+    left.onClose(() => {
+      closed = true;
+    });
+    expect(closed).toBe(false);
+    left.close();
+  });
+
+  test('mismatched reliable message after an early copy closes the link as desync', async () => {
+    const [a, b] = pairDataChannels('peer');
+    const [fa, fb] = pairDataChannels('peer-rt');
+    const right = new DataChannelLink(b, {
+      liveness: false,
+      fastPath: true,
+      peer: 'desync-peer',
+    });
+    right.attachFastChannel(fb);
+    const reasons: Array<string | undefined> = [];
+    right.onClose((reason) => reasons.push(reason));
+    fa.sendMessageBinary(encodeFastCopy(0, fragmentFrame(1, new Uint8Array([1]))[0] as Uint8Array));
+    a.sendMessageBinary(fragmentFrame(1, new Uint8Array([9]))[0] as Uint8Array);
+    expect(reasons).toEqual(['fast-path-desync']);
+    expect(fastPathCoolingFor('desync-peer')).toBe(true);
+    resetFastPathDesyncForTest();
+  });
+
+  test('a late fast copy does not delay the reply on the reliable channel', () => {
+    const replyAt = (fastPath: boolean): number => {
+      const clock = new FakeClock();
+      const [a, b] = pairDataChannels('peer');
+      const [fa, fb] = pairDataChannels('peer-rt');
+      const right = new DataChannelLink(b, {
+        liveness: false,
+        fastPath,
+        now: clock.now,
+        setTimeoutFn: clock.setTimeout,
+        clearTimeoutFn: clock.clearTimeout,
+      });
+      right.attachFastChannel(fb);
+      const keystroke = fragmentFrame(1, new Uint8Array([1]))[0] as Uint8Array;
+      a.sendMessageBinary(keystroke);
+      void right.send(new Uint8Array([2]));
+      clock.advance(5);
+      if (fastPath) fa.sendMessageBinary(encodeFastCopy(0, keystroke));
+      for (let t = 5; t < 40; t++) {
+        if (b.sent.length > 0) return t;
+        clock.advance(1);
+      }
+      return -1;
+    };
+    const base = replyAt(false);
+    expect(base).toBeGreaterThan(0);
+    expect(replyAt(true)).toBe(base);
+  });
+
+  test('link close also closes peer-rt', () => {
+    const { fa, fb, left } = fastPair();
+    left.close();
+    expect(fa.closed).toBe(true);
+    expect(fb.closed).toBe(true);
+  });
+});

@@ -1,6 +1,8 @@
 import type { DataChannelLike, DtlsFingerprint, PeerConnectionLike, RtcIceConfig } from './native';
 import { copyBytes, toUint8Array } from './native';
 
+export { FakeClock } from './test-clock';
+
 export class FakeDataChannel implements DataChannelLike {
   label: string;
   open = false;
@@ -13,6 +15,12 @@ export class FakeDataChannel implements DataChannelLike {
   failNextSend = false;
   /** Queue the payload but return false (native SCTP may still accept the message). */
   acceptButReturnFalse = false;
+  /**
+   * libdatachannel 积压时的真实行为：消息照常送达，但 send() 返回 false；入队前 native 先排空
+   * `drainOnSend` 字节积压，所以 bufferedAmount 可能不升反降。
+   */
+  returnFalseWhileQueued = false;
+  drainOnSend = 0;
   /** Swallow the payload after a successful send (black-hole / one-way cut). */
   dropSend = false;
   dropSendsFromReceiveCallback = false;
@@ -152,14 +160,21 @@ export class FakeDataChannel implements DataChannelLike {
       this.buffered += copy.byteLength;
       return false;
     }
-    if (this.dropSend) return true;
+    return this.deliverAccepted(copy);
+  }
+
+  private deliverAccepted(copy: Uint8Array): boolean {
+    if (this.returnFalseWhileQueued) {
+      this.buffered = Math.max(0, this.buffered - this.drainOnSend) + copy.byteLength;
+    }
+    if (this.dropSend) return !this.returnFalseWhileQueued;
     const peer = this.peer;
     if (peer?.open && !peer.closed) {
       const payload = Buffer.from(copy);
       if (!peer.messageCb) peer.pendingMessages.push(payload);
       else peer.deliverInbound(peer.messageCb, payload);
     }
-    return true;
+    return !this.returnFalseWhileQueued;
   }
 
   deliverInbound(
@@ -457,42 +472,4 @@ export function pairDataChannels(label = 'sess'): [FakeDataChannel, FakeDataChan
   a.markOpen();
   b.markOpen();
   return [a, b];
-}
-
-export class FakeClock {
-  nowMs = 0;
-  private nextId = 1;
-  private readonly timers = new Map<number, { at: number; fn: () => void }>();
-
-  now = (): number => this.nowMs;
-
-  setTimeout = (fn: () => void, ms: number): number => {
-    const id = this.nextId++;
-    this.timers.set(id, { at: this.nowMs + Math.max(0, ms), fn });
-    return id;
-  };
-
-  clearTimeout = (handle: unknown): void => {
-    if (typeof handle === 'number') this.timers.delete(handle);
-  };
-
-  advance(ms: number): void {
-    const target = this.nowMs + Math.max(0, ms);
-    while (this.timers.size > 0) {
-      let earliestId: number | null = null;
-      let earliestAt = Number.POSITIVE_INFINITY;
-      for (const [id, timer] of this.timers) {
-        if (timer.at < earliestAt) {
-          earliestAt = timer.at;
-          earliestId = id;
-        }
-      }
-      if (earliestId === null || earliestAt > target) break;
-      this.nowMs = earliestAt;
-      const timer = this.timers.get(earliestId);
-      this.timers.delete(earliestId);
-      timer?.fn();
-    }
-    this.nowMs = target;
-  }
 }

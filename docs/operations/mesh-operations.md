@@ -95,6 +95,7 @@
 | `VIBETERM_RTC_PORT_RANGE` | 非中继 `40000-40099`；中继主机 `40050-40099`（`init` / upgrade 写入；未设时 ICE 走临时口） | `begin-end`，限制 WebRTC 的 UDP 端口范围。格式非法或越界启动失败。自定义段原样保留 |
 | `VIBETERM_WS_DIAL_RACE` | `2`（夹紧 1..4） | 公网 WebSocket 开链竞速条数：peer ws-secure / 中继上行同时开 N 条，取最先 `open` 的一条。`1` = 关闭。回环 / RFC1918 / 链路本地恒为 1。import 时读一次，改完需重启。见 [路径优选](../architecture/path-selection.md) |
 | `VIBETERM_DC_REROLL` | 开（任意非 `off`） | `off` 关闭直连慢路径重掷（DC 与 ws-secure），且本端不报 `reroll` 能力位。采样不受影响 |
+| `VIBETERM_DC_FAST_PATH` | 开（任意非 `0` / `off` / `false` / `no`） | `0` 关闭 node↔node DataChannel 快路径：本端不在 DC hello 里报 `peer-rt` 能力位，对端因此不建 `peer-rt`，链路退回单条有序可靠 `peer` 通道。每次拨号读取 |
 | `VIBETERM_UPLINK_PATH_SAMPLING` | 开（任意非 `off`） | `off` 关闭中继上行的周期 TCP 采样与 `path-rerace` 劣化重连 |
 | `VIBETERM_EVENT_LOOP_LAG_WARN_MS` | `250` | event loop 采样滞后超过该值时打告警（10 s 至多一条）。主线程卡在同步 N-API 时采样器看不见，见 [事件循环看门狗](./gateway-loop-watchdog.md) |
 | `VIBETERM_LOOP_WATCHDOG` | production 开；development / test 关 | 进程内事件循环看门狗。显式 `1` / `true` / `yes` 任意环境打开，`0` / `false` 关闭。`init` / `upgrade` 不写入 |

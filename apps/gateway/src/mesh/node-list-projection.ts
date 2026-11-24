@@ -1,6 +1,7 @@
 import type {
   MeshNode,
   MeshNodeDcBreaker,
+  MeshNodeDcFastPath,
   MeshNodeDirectFailure,
   MeshNodeReach,
   MeshNodeTransport,
@@ -30,6 +31,7 @@ export type MeshNodeLinkDetail = {
   relayBreaker?: MeshNodeDcBreaker | null;
   viaRelay?: string | null;
   relayPresence?: string[];
+  dcFastPath?: Readonly<Record<string, number>> | null;
 };
 
 export type MeshNodeDto = MeshNode & {
@@ -149,7 +151,13 @@ function meshLinkFields(
   nodeId: string
 ): Pick<
   MeshNodeDto,
-  'peerAddress' | 'linkSinceAt' | 'endpoints' | 'directFailure' | 'dcBreaker' | 'relayBreaker'
+  | 'peerAddress'
+  | 'linkSinceAt'
+  | 'endpoints'
+  | 'directFailure'
+  | 'dcBreaker'
+  | 'relayBreaker'
+  | 'dcFastPath'
 > {
   if (isSelf) {
     return {
@@ -159,6 +167,7 @@ function meshLinkFields(
       directFailure: null,
       dcBreaker: null,
       relayBreaker: null,
+      dcFastPath: null,
     };
   }
   return {
@@ -168,6 +177,23 @@ function meshLinkFields(
     directFailure: detail?.directFailure ?? null,
     dcBreaker: detail?.dcBreaker ?? null,
     relayBreaker: detail?.relayBreaker ?? relayBreakerDto(nodeId),
+    dcFastPath: dcFastPathDto(detail?.dcFastPath),
+  };
+}
+
+function dcFastPathDto(
+  raw: Readonly<Record<string, number>> | null | undefined
+): MeshNodeDcFastPath | null {
+  if (!raw) return null;
+  const n = (key: keyof MeshNodeDcFastPath) => raw[key] ?? 0;
+  return {
+    fastActive: n('fastActive'),
+    copiesSent: n('copiesSent'),
+    deliveredEarly: n('deliveredEarly'),
+    droppedDup: n('droppedDup'),
+    fastLate: n('fastLate'),
+    bufferOverflows: n('bufferOverflows'),
+    desync: n('desync'),
   };
 }
 

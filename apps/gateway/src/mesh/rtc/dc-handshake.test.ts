@@ -244,6 +244,43 @@ describeRtc('handshakeDataChannel', () => {
     ]);
   }
 
+  async function negotiate(pair: ReturnType<typeof setupPair>, fastA: boolean, fastB: boolean) {
+    return Promise.all([
+      handshakeDataChannel({
+        channel: pair.fanA,
+        pc: pair.pcA,
+        identity: pair.a,
+        userStore: pair.store,
+        localFingerprint: pair.pcA.fingerprint,
+        timeoutMs: 1_000,
+        fastPath: fastA,
+      }),
+      handshakeDataChannel({
+        channel: pair.fanB,
+        pc: pair.pcB,
+        identity: pair.b,
+        userStore: pair.store,
+        localFingerprint: pair.pcB.fingerprint,
+        timeoutMs: 1_000,
+        fastPath: fastB,
+      }),
+    ]);
+  }
+
+  test('fast path is negotiated only when both hellos carry the peer-rt cap', async () => {
+    const both = setupPair();
+    const [a1, b1] = await negotiate(both, true, true);
+    expect([a1.fastPath, b1.fastPath]).toEqual([true, true]);
+    const hello = both.dcA.sent.find((chunk) => ctlType(chunk) === 'hello');
+    expect(JSON.parse(new TextDecoder().decode(hello))).toMatchObject({ caps: ['peer-rt'] });
+
+    const oldPeer = setupPair();
+    const [a2, b2] = await negotiate(oldPeer, true, false);
+    expect([a2.fastPath, b2.fastPath]).toEqual([false, false]);
+    const oldHello = oldPeer.dcB.sent.find((chunk) => ctlType(chunk) === 'hello');
+    expect(JSON.parse(new TextDecoder().decode(oldHello))).not.toHaveProperty('caps');
+  });
+
   test('LinkMux frame sent after A finishes handshake reaches B that attaches its link later', async () => {
     const pair = setupPair();
     await handshakePair(pair);

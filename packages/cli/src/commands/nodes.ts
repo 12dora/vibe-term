@@ -213,7 +213,11 @@ const show: SubHandler = async (ctx, _flags, positionals) => {
     ctx.out.line(`directCapable  ${yn(node.direct_capable)}`);
     ctx.out.line(`endpoints      ${(node.endpoints ?? []).join(', ') || '-'}`);
     printPortsTable(ctx, node.ports ?? []);
-    ctx.out.data({ directFailure: node.directFailure ?? null, dcBreaker: node.dcBreaker ?? null });
+    ctx.out.data({
+      directFailure: node.directFailure ?? null,
+      dcBreaker: node.dcBreaker ?? null,
+      dcFastPath: node.dcFastPath ?? null,
+    });
   });
 };
 

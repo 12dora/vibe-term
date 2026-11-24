@@ -311,6 +311,61 @@ describeRtc('RtcPeerManager', () => {
     inn.end();
   });
 
+  async function waitFor(cond: () => boolean): Promise<void> {
+    for (let i = 0; i < 100 && !cond(); i++) await Bun.sleep(5);
+  }
+
+  test('both sides advertise peer-rt: fast channel follows peer and carries copies', async () => {
+    const { left, right, a, b, fake } = setup();
+    const [sigA, sigB] = loopbackSignaling();
+    const [la, lb] = await Promise.all([
+      left.connectToPeer(b.nodeId, sigA),
+      right.connectToPeer(a.nodeId, sigB),
+    ]);
+    for (const pc of fake.connections) {
+      expect(pc.created.map((dc) => dc.label)).toEqual(['peer', 'peer-rt']);
+    }
+    expect(la.link.stats()).toMatchObject({ fastActive: 1 });
+    expect(lb.link.stats()).toMatchObject({ fastActive: 1 });
+    const muxA = new LinkMux(la.link, { role: la.role });
+    const muxB = new LinkMux(lb.link, { role: lb.role });
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
+      muxB.onStream(resolve)
+    );
+    const out = await muxA.openStream(new TextEncoder().encode('{"type":"ping"}'));
+    const inn = await incoming;
+    const reader = inn.readable.getReader();
+    await out.write(new Uint8Array([7]));
+    expect((await reader.read()).value?.bytes).toEqual(new Uint8Array([7]));
+    await waitFor(() => (lb.link.stats()?.fastLate ?? 0) > 0);
+    expect(la.link.stats()?.copiesSent ?? 0).toBeGreaterThan(0);
+    expect(lb.link.stats()).toMatchObject({ desync: 0, deliveredEarly: 0 });
+    expect(muxA.stats().transport).toMatchObject({ fastActive: 1 });
+    out.end();
+    inn.end();
+  });
+
+  test('VIBETERM_DC_FAST_PATH=0 keeps the single peer channel', async () => {
+    const prev = process.env.VIBETERM_DC_FAST_PATH;
+    process.env.VIBETERM_DC_FAST_PATH = '0';
+    try {
+      const { left, right, a, b, fake } = setup();
+      const [sigA, sigB] = loopbackSignaling();
+      const [la, lb] = await Promise.all([
+        left.connectToPeer(b.nodeId, sigA),
+        right.connectToPeer(a.nodeId, sigB),
+      ]);
+      for (const pc of fake.connections) {
+        expect(pc.created.map((dc) => dc.label)).toEqual(['peer']);
+      }
+      expect(la.link.stats()).toBeNull();
+      expect(lb.link.stats()).toBeNull();
+    } finally {
+      if (prev === undefined) delete process.env.VIBETERM_DC_FAST_PATH;
+      else process.env.VIBETERM_DC_FAST_PATH = prev;
+    }
+  });
+
   test('closing managers after LinkMux end does not unhandle channel-closed', async () => {
     const { left, right, a, b } = setup();
     const [sigA, sigB] = loopbackSignaling();

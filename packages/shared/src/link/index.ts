@@ -82,6 +82,21 @@ export {
   type LinkCtl,
   type LinkSession,
   type ByteTransport,
+  type ByteTransportStats,
   type Frame,
   type FrameHeader,
 } from './types';
+export {
+  FastPathMerge,
+  FastPathSender,
+  FAST_COPY_INDEX_BYTES,
+  FAST_COPY_MAX_BYTES,
+  FAST_MERGE_MAX_AHEAD,
+  FAST_MERGE_MAX_BUFFERED,
+  FAST_MERGE_MAX_BUFFERED_BYTES,
+  decodeFastCopy,
+  encodeFastCopy,
+  readFastCopyIndex,
+  type FastPathMergeOptions,
+  type FastPathMergeStats,
+} from './fast-path-merge';

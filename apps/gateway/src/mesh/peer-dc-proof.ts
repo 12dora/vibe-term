@@ -42,6 +42,7 @@ const POST_ESTABLISH_DC_LOSS = new Set([
   'liveness-timeout',
   'missed-pong',
   'dc-promote-reject',
+  'fast-path-desync',
 ]);
 
 type LiveProof = {

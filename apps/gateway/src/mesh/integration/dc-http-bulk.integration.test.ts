@@ -181,12 +181,13 @@ class RateLimitedDataChannel implements DataChannelLike {
 
   private enqueue(bytes: Uint8Array): boolean {
     if (this.closed || !this.open) return false;
-    if (this.buffered >= this.sendCap) return false;
+    // 与 libdatachannel 一致：超过 sendCap 仍入队，只是返回 false 表示「未立即发出」。
+    const queuedBehind = this.buffered >= this.sendCap;
     const copy = copyBytes(bytes);
     this.queue.push(copy);
     this.buffered += copy.byteLength;
     this.ensurePump();
-    return true;
+    return !queuedBehind;
   }
 
   private ensurePump(): void {

@@ -1,4 +1,4 @@
-import type { LinkSession } from '@vibeterm/shared/link';
+import type { ByteTransportStats, LinkSession } from '@vibeterm/shared/link';
 import { classifyPeerReach } from './address-class';
 import { encodeJsonBytes } from './ctl';
 import { directFailureView } from './peer-direct-attempt';
@@ -106,5 +106,11 @@ export function peerLinkDetailOf(input: {
     dcBreaker: input.dcBreaker,
     viaRelay: viaRelayOfLive(input.live),
     relayPresence: relayPresenceOfIndex(input.relayPresence, input.nodeId),
+    dcFastPath: dcFastPathOfLive(input.live),
   };
+}
+
+export function dcFastPathOfLive(live: LivePeer | undefined): ByteTransportStats | null {
+  if (live?.transport !== 'dc') return null;
+  return live.session.stats?.().transport ?? null;
 }

@@ -1,5 +1,9 @@
 import type { MeshNodeDirectFailure } from '@vibeterm/shared';
-import type { LinkSession, WebSocketTransportInput } from '@vibeterm/shared/link';
+import type {
+  ByteTransportStats,
+  LinkSession,
+  WebSocketTransportInput,
+} from '@vibeterm/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
 import type { WebSocketServer } from '../ws';
@@ -93,6 +97,8 @@ export type PeerLinkDetail = {
   endpoints: string[];
   directFailure: DirectFailureView | null;
   dcBreaker: RtcDialBreakerSnapshot;
+  /** transport=dc 且两端协商了 peer-rt 时的快路径计数。 */
+  dcFastPath?: ByteTransportStats | null;
   /** transport=relay 时经过的中继公网 URL；直连或未知为 null。 */
   viaRelay?: string | null;
   /** 对端当前在线的中继 URL；未注入多中继索引时为 undefined。 */
