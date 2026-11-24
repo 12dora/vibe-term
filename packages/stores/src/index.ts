@@ -31,6 +31,7 @@ export {
 export {
   createUIStore,
   type KeyboardBehaviorMode,
+  type PredictiveEchoMode,
   type SidebarTab,
   type TerminalCopyMode,
   type UIStore,

@@ -116,6 +116,16 @@ function normalizeTerminalCopyMode(value: unknown): TerminalCopyMode {
     : 'button';
 }
 
+export type PredictiveEchoMode = 'auto' | 'on' | 'off';
+
+const PREDICTIVE_ECHO_MODES: readonly PredictiveEchoMode[] = ['auto', 'on', 'off'];
+
+function normalizePredictiveEchoMode(value: unknown): PredictiveEchoMode {
+  return PREDICTIVE_ECHO_MODES.includes(value as PredictiveEchoMode)
+    ? (value as PredictiveEchoMode)
+    : 'auto';
+}
+
 export interface UIState {
   sidebarCollapsed: boolean;
   sidebarTab: SidebarTab;
@@ -140,6 +150,7 @@ export interface UIState {
   themePreset: ThemePreset | null;
   keyboardBehaviorMode: KeyboardBehaviorMode;
   terminalCopyMode: TerminalCopyMode;
+  predictiveEcho: PredictiveEchoMode;
   editorHistory: string[];
   editorDrafts: Record<string, string>;
   // 终端字体（每设备本地持久化）：字号/行高仅作用于终端，字体族经 --font-mono 全应用统一。
@@ -165,6 +176,7 @@ export interface UIState {
   setInputMode: (mode: 'direct' | 'editor') => void;
   setKeyboardBehaviorMode: (mode: KeyboardBehaviorMode) => void;
   setTerminalCopyMode: (mode: TerminalCopyMode) => void;
+  setPredictiveEcho: (mode: PredictiveEchoMode) => void;
   setEditorSendWithEnter: (enabled: boolean) => void;
   setTheme: (theme: 'light' | 'dark') => void;
   setThemePreset: (preset: ThemePreset | null) => void;
@@ -196,6 +208,7 @@ function mergePersistedUIState(persisted: unknown, current: UIState): UIState {
     sidebarNodeExpansion,
     themePreset,
     terminalCopyMode,
+    predictiveEcho,
     ...rest
   } = (persisted ?? {}) as Partial<UIState> & { sidebarSections?: unknown };
   return {
@@ -203,6 +216,7 @@ function mergePersistedUIState(persisted: unknown, current: UIState): UIState {
     ...rest,
     sidebarTab: normalizeSidebarTab(sidebarTab),
     terminalCopyMode: normalizeTerminalCopyMode(terminalCopyMode),
+    predictiveEcho: normalizePredictiveEchoMode(predictiveEcho),
     sidebarDeviceExpanded: normalizeBooleanMap(sidebarDeviceExpanded),
     sidebarDeviceVisibility: normalizeBooleanMap(sidebarDeviceVisibility),
     sidebarFilesVisibility: normalizeBooleanMap(sidebarFilesVisibility),
@@ -230,6 +244,7 @@ type UIPersistedState = Pick<
   | 'themePreset'
   | 'keyboardBehaviorMode'
   | 'terminalCopyMode'
+  | 'predictiveEcho'
   | 'editorHistory'
   | 'editorDrafts'
   | 'terminalFontSize'
@@ -254,6 +269,7 @@ function partializeUIState(state: UIState): UIPersistedState {
     themePreset: state.themePreset,
     keyboardBehaviorMode: state.keyboardBehaviorMode,
     terminalCopyMode: state.terminalCopyMode,
+    predictiveEcho: state.predictiveEcho,
     editorHistory: state.editorHistory,
     editorDrafts: state.editorDrafts,
     terminalFontSize: state.terminalFontSize,
@@ -335,6 +351,7 @@ export function createUIStore(
         themePreset: null,
         keyboardBehaviorMode: 'follow',
         terminalCopyMode: 'button',
+        predictiveEcho: 'auto',
         editorHistory: [],
         editorDrafts: {},
         terminalFontSize: DEFAULT_TERMINAL_FONT_SIZE,
@@ -360,6 +377,7 @@ export function createUIStore(
         setInputMode: (mode) => set({ inputMode: mode }),
         setKeyboardBehaviorMode: (mode) => set({ keyboardBehaviorMode: mode }),
         setTerminalCopyMode: (mode) => set({ terminalCopyMode: mode }),
+        setPredictiveEcho: (mode) => set({ predictiveEcho: normalizePredictiveEchoMode(mode) }),
         setEditorSendWithEnter: (enabled) => set({ editorSendWithEnter: enabled }),
         setTheme: (theme) => set({ theme }),
         setThemePreset: (preset) => set({ themePreset: normalizeThemePreset(preset) }),

@@ -71,3 +71,25 @@ describe('TerminalSettingsPanel copy mode', () => {
     expect(keyboardList).not.toContain('flex-row');
   });
 });
+
+describe('TerminalSettingsPanel predictive echo', () => {
+  function pressedState(html: string, mode: string): string {
+    const tag =
+      html.match(
+        new RegExp(`<button[^>]*data-testid="predictive-echo-option-${mode}"[^>]*>`)
+      )?.[0] ?? '';
+    return tag.match(/aria-pressed="(true|false)"/)?.[1] ?? '';
+  }
+
+  test('渲染预测回显三态，默认选中自动', () => {
+    const html = render(<TerminalSettingsPanel showPreview={false} showShortcuts={false} />);
+    expect(html).toContain('预测回显');
+    expect(html).toContain('网络延迟较高时先在本地显示输入，带下划线的字符等待服务器确认');
+    expect(pressedState(html, 'auto')).toBe('true');
+    expect(pressedState(html, 'on')).toBe('false');
+    expect(pressedState(html, 'off')).toBe('false');
+    expect(html).toContain('自动');
+    expect(html).toContain('开启');
+    expect(html).toContain('关闭');
+  });
+});

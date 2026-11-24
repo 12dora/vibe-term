@@ -1,4 +1,4 @@
-import type { KeyboardBehaviorMode, TerminalCopyMode } from '@vibeterm/stores';
+import type { KeyboardBehaviorMode, PredictiveEchoMode, TerminalCopyMode } from '@vibeterm/stores';
 import { useUIStore } from '@vibeterm/stores/react';
 import { FONT_MANIFEST, getFontEntry } from '@vibeterm/theme';
 import { cn } from '@vibeterm/ui';
@@ -64,6 +64,15 @@ const COPY_MODE_ITEMS = [
   },
 ] as const satisfies ReadonlyArray<{
   value: TerminalCopyMode;
+  labelKey: string;
+}>;
+
+const PREDICTIVE_ECHO_ITEMS = [
+  { value: 'auto', labelKey: 'settings.terminal.predictiveEcho.auto' },
+  { value: 'on', labelKey: 'settings.terminal.predictiveEcho.on' },
+  { value: 'off', labelKey: 'settings.terminal.predictiveEcho.off' },
+] as const satisfies ReadonlyArray<{
+  value: PredictiveEchoMode;
   labelKey: string;
 }>;
 
@@ -211,6 +220,48 @@ function useNumericSetting(
   return { value: draft, onChange, onBlur, onKeyDown };
 }
 
+function TerminalPreferenceRows() {
+  const { t } = useTranslation();
+  const keyboardMode = useUIStore((state) => state.keyboardBehaviorMode);
+  const setKeyboardMode = useUIStore((state) => state.setKeyboardBehaviorMode);
+  const copyMode = useUIStore((state) => state.terminalCopyMode);
+  const setCopyMode = useUIStore((state) => state.setTerminalCopyMode);
+  const predictiveEcho = useUIStore((state) => state.predictiveEcho);
+  const setPredictiveEcho = useUIStore((state) => state.setPredictiveEcho);
+
+  return (
+    <>
+      <PreferenceOptionList
+        label={t('settings.terminal.copyMode.label')}
+        hint={t('settings.terminal.copyMode.hint')}
+        items={COPY_MODE_ITEMS}
+        value={copyMode}
+        onChange={setCopyMode}
+        testIdPrefix="copy-mode-option"
+        layout="row"
+      />
+
+      <PreferenceOptionList
+        label={t('settings.terminal.predictiveEcho.label')}
+        hint={t('settings.terminal.predictiveEcho.hint')}
+        items={PREDICTIVE_ECHO_ITEMS}
+        value={predictiveEcho}
+        onChange={setPredictiveEcho}
+        testIdPrefix="predictive-echo-option"
+      />
+
+      <PreferenceOptionList
+        label={t('terminal.keyboardBehavior.title')}
+        hint={t('terminal.keyboardBehavior.description')}
+        items={KEYBOARD_MODE_ITEMS}
+        value={keyboardMode}
+        onChange={setKeyboardMode}
+        testIdPrefix="keyboard-behavior-option"
+      />
+    </>
+  );
+}
+
 /**
  * 终端设置面板（设置页 Tab 与终端页右上角 Sheet 复用同一组件）。
  * 字体/键盘行为即改即生效；字号/行高在失焦、回车或停手后生效（见 `useNumericSetting`）。
@@ -232,10 +283,6 @@ export function TerminalSettingsPanel({
   const setTerminalLineHeight = useUIStore((state) => state.setTerminalLineHeight);
   const terminalFontId = useUIStore((state) => state.terminalFontId);
   const setTerminalFontId = useUIStore((state) => state.setTerminalFontId);
-  const keyboardMode = useUIStore((state) => state.keyboardBehaviorMode);
-  const setKeyboardMode = useUIStore((state) => state.setKeyboardBehaviorMode);
-  const copyMode = useUIStore((state) => state.terminalCopyMode);
-  const setCopyMode = useUIStore((state) => state.setTerminalCopyMode);
 
   const fontSizeField = useNumericSetting(
     terminalFontSize,
@@ -325,24 +372,7 @@ export function TerminalSettingsPanel({
         </Select>
       </div>
 
-      <PreferenceOptionList
-        label={t('settings.terminal.copyMode.label')}
-        hint={t('settings.terminal.copyMode.hint')}
-        items={COPY_MODE_ITEMS}
-        value={copyMode}
-        onChange={setCopyMode}
-        testIdPrefix="copy-mode-option"
-        layout="row"
-      />
-
-      <PreferenceOptionList
-        label={t('terminal.keyboardBehavior.title')}
-        hint={t('terminal.keyboardBehavior.description')}
-        items={KEYBOARD_MODE_ITEMS}
-        value={keyboardMode}
-        onChange={setKeyboardMode}
-        testIdPrefix="keyboard-behavior-option"
-      />
+      <TerminalPreferenceRows />
 
       <p className="text-muted-foreground text-xs">{t('settings.terminal.savedInBrowser')}</p>
 

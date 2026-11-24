@@ -538,6 +538,13 @@ export const I18N_RESOURCES = {
           "button": "Copy via button",
           "hint": "Auto copies to the clipboard when the selection ends"
         },
+        "predictiveEcho": {
+          "label": "Predictive echo",
+          "auto": "Auto",
+          "on": "On",
+          "off": "Off",
+          "hint": "Show typing immediately on high-latency connections; underlined text awaits server confirmation"
+        },
         "preview": "Preview",
         "savedInBrowser": "These settings are saved in this browser only.",
         "loading": "Loading terminal settings…",
@@ -4750,6 +4757,13 @@ export const I18N_RESOURCES = {
           "button": "点击按钮后复制",
           "hint": "自动复制在选区完成时写入剪贴板"
         },
+        "predictiveEcho": {
+          "label": "预测回显",
+          "auto": "自动",
+          "on": "开启",
+          "off": "关闭",
+          "hint": "网络延迟较高时先在本地显示输入，带下划线的字符等待服务器确认"
+        },
         "preview": "预览",
         "savedInBrowser": "这些设置仅保存在当前浏览器中。",
         "loading": "正在加载终端设置……",
@@ -8941,6 +8955,13 @@ export const I18N_RESOURCES = {
           "auto": "選択時に自動コピー",
           "button": "ボタンを押してコピー",
           "hint": "選択が終わると自動でクリップボードに書き込みます"
+        },
+        "predictiveEcho": {
+          "label": "予測エコー",
+          "auto": "自動",
+          "on": "オン",
+          "off": "オフ",
+          "hint": "遅延が大きい接続では入力を先に表示し、下線付きの文字はサーバーの確認待ちです"
         },
         "preview": "プレビュー",
         "savedInBrowser": "これらの設定はこのブラウザにのみ保存されます。",

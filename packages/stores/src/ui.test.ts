@@ -569,3 +569,51 @@ describe('terminal copy mode', () => {
     expect(createUIStore({ storagePrefix: prefix }).getState().terminalCopyMode).toBe('button');
   });
 });
+
+describe('predictive echo', () => {
+  beforeEach(() => {
+    storage.clear();
+  });
+
+  test('defaults to auto', () => {
+    expect(createStore().getState().predictiveEcho).toBe('auto');
+  });
+
+  test('persists across store instances', () => {
+    const prefix = `ui-predictive-echo-${Date.now()}-`;
+    const store = createUIStore({ storagePrefix: prefix });
+    store.getState().setPredictiveEcho('off');
+    expect(store.getState().predictiveEcho).toBe('off');
+
+    const persisted = JSON.parse(storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
+      state?: { predictiveEcho?: string };
+    };
+    expect(persisted.state?.predictiveEcho).toBe('off');
+    expect(createUIStore({ storagePrefix: prefix }).getState().predictiveEcho).toBe('off');
+  });
+
+  test('falls back to auto when the persisted value is unknown', () => {
+    const prefix = `ui-predictive-echo-bad-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}vibeterm-ui`,
+      JSON.stringify({ state: { predictiveEcho: 'always' }, version: 0 })
+    );
+    expect(createUIStore({ storagePrefix: prefix }).getState().predictiveEcho).toBe('auto');
+  });
+
+  test('falls back to auto when the field is missing from an older snapshot', () => {
+    const prefix = `ui-predictive-echo-old-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}vibeterm-ui`,
+      JSON.stringify({ state: { terminalCopyMode: 'auto' }, version: 0 })
+    );
+    expect(createUIStore({ storagePrefix: prefix }).getState().predictiveEcho).toBe('auto');
+  });
+
+  test('setter rejects an unknown mode', () => {
+    const store = createStore();
+    store.getState().setPredictiveEcho('on');
+    store.getState().setPredictiveEcho('bogus' as never);
+    expect(store.getState().predictiveEcho).toBe('auto');
+  });
+});

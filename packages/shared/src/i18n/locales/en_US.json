@@ -526,6 +526,13 @@
           "button": "Copy via button",
           "hint": "Auto copies to the clipboard when the selection ends"
         },
+        "predictiveEcho": {
+          "label": "Predictive echo",
+          "auto": "Auto",
+          "on": "On",
+          "off": "Off",
+          "hint": "Show typing immediately on high-latency connections; underlined text awaits server confirmation"
+        },
         "preview": "Preview",
         "savedInBrowser": "These settings are saved in this browser only.",
         "loading": "Loading terminal settings…",
