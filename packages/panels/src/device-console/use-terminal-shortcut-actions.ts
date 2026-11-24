@@ -9,7 +9,7 @@ import {
   resolveAgentStore,
 } from '@vibeterm/stores';
 import { useRuntime } from '@vibeterm/stores/react';
-import type { TerminalRef } from '@vibeterm/terminal-ui';
+import { type TerminalRef, notePaneInput } from '@vibeterm/terminal-ui';
 import { type RefObject, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -57,9 +57,8 @@ export function useTerminalShortcutActions({
         return;
       }
 
-      // Send directly to the terminal's input handler
-      const store = runtime.stores.tmux.getState();
-      store.sendInput(deviceId, resolvedPaneId, payload, false);
+      runtime.stores.tmux.getState().sendInput(deviceId, resolvedPaneId, payload, false);
+      notePaneInput(runtime, deviceId, resolvedPaneId, payload);
     },
     [canInteractWithPane, deviceId, resolvedPaneId, runtime]
   );
@@ -86,6 +85,7 @@ export function useTerminalShortcutActions({
           .then((text) => {
             if (text) {
               runtime.stores.tmux.getState().paste(deviceId, resolvedPaneId, text);
+              notePaneInput(runtime, deviceId, resolvedPaneId, text, true);
             }
           })
           .catch(() => toast.error(t('terminal.pasteFailed')));

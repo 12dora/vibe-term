@@ -2,6 +2,7 @@ import { useRuntime, useUIStore } from '@vibeterm/stores/react';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { pasteWithoutPrediction } from '../../prediction/use-predictive-echo';
 import { refocusTerminalInput } from '../../utils/terminal-input-focus';
 import { nextAutoCopyText, planCopySelection } from '../selection-copy';
 
@@ -97,7 +98,7 @@ export function useTerminalClipboard({ instance }: UseTerminalClipboardOptions):
       .readClipboardText()
       .then((text) => {
         if (text) {
-          instance.paste(text);
+          pasteWithoutPrediction(instance, text);
         }
         instance.clearSelection?.();
         refocusTerminalInput(instance);

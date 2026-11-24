@@ -43,6 +43,7 @@
 | [ws-state-machines.md](./architecture/ws-state-machines.md) | 两端状态机：连接、设备、canonical 首屏 / 订阅 / resize / bell / feed，附屏障历史对应 |
 | [site-theme-broadcast.md](./architecture/site-theme-broadcast.md) | `KIND_SITE_THEME_UPDATE` 站点主题跨端广播 |
 | [ghostty-terminal.md](./architecture/ghostty-terminal.md) | Ghostty wasm 终端底座：分层、初始化、输入 / 输出 / 渲染链路、xterm 兼容面 |
+| [predictive-echo.md](./architecture/predictive-echo.md) | 终端预测回显：启用条件、预测与对账规则、叠层绘制 |
 | [terminal-viewport-policy.md](./architecture/terminal-viewport-policy.md) | 终端视口策略：最小可见客户端拥有 PTY 尺寸 |
 | [terminal-osc-notifications.md](./architecture/terminal-osc-notifications.md) | 终端 OSC 通知序列与 Claude Code 渠道、`TERM=xterm-ghostty` 注入 |
 | [tui-theme-notify.md](./architecture/tui-theme-notify.md) | 经 DEC mode 2031 向 pane 内 TUI 注入主题变更通知 |

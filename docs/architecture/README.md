@@ -30,6 +30,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [ghostty-terminal.md](./ghostty-terminal.md) | Ghostty wasm 终端底座 |
+| [predictive-echo.md](./predictive-echo.md) | 终端预测回显：启用条件、预测与对账规则、叠层绘制 |
 | [terminal-viewport-policy.md](./terminal-viewport-policy.md) | 多客户端 PTY 尺寸仲裁 |
 | [terminal-osc-notifications.md](./terminal-osc-notifications.md) | OSC 通知与 Claude Code 渠道 |
 | [tui-theme-notify.md](./tui-theme-notify.md) | mode 2031 主题热切换 |

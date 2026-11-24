@@ -54,6 +54,7 @@ export {
 } from './components/theme';
 export { useMobileTouch } from './components/useMobileTouch';
 export { useTerminalResize } from './components/useTerminalResize';
+export { notePaneInput } from './prediction/use-predictive-echo';
 export * from './components/normalization';
 export * from './components/splitLayoutGeometry';
 

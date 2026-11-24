@@ -22,6 +22,10 @@ import {
   getBorshClient,
 } from '@vibeterm/ws-client';
 import {
+  type DirectDiagnosticsSource,
+  resolveDirectDiagnostics,
+} from '@vibeterm/ws-client/direct/types';
+import {
   type PaneSink,
   cleanupDevicePaneState,
   dispatchPaneHistoryPage,
@@ -187,6 +191,8 @@ export interface RuntimeCore {
   resolveNodeName?: (nodeId: string) => string | null;
   /** 见 `AppRuntimeOptions.releaseRequestBackoff`：重试按钮按下时调一次。 */
   releaseRequestBackoff?: () => void;
+  /** 浏览器 ↔ 本 node 的直连诊断源；连接上未挂（self、直连不可用）时为恒 primary 的桩。 */
+  directDiagnostics?: () => DirectDiagnosticsSource;
 }
 
 async function browserReadClipboard(): Promise<string> {
@@ -331,6 +337,7 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
     terminalFileLinks: options.terminalFileLinks,
     resolveNodeName: options.resolveNodeName,
     releaseRequestBackoff: options.releaseRequestBackoff,
+    directDiagnostics: () => resolveDirectDiagnostics(conn),
   };
 }
 

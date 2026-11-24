@@ -111,7 +111,7 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 6. 渲染一帧的过程：
    - `render-state.ts` 从 wasm 读回本帧的行 / cell / 调色板 / 光标，并在读取过程中顺带算出**行级 dirty**
      （内核本身恒报 `full`，见 [热路径性能](../development/performance-hot-paths.md) 第 6 节）；
-   - `CanvasRenderer`（`canvas-renderer*.ts`）只重绘变化的行，另有独立的选区层与光标层；
+   - `CanvasRenderer`（`canvas-renderer*.ts`）只重绘变化的行，另有独立的选区层与光标层，以及按需创建的预测回显层（见 [预测回显](./predictive-echo.md)）；
    - `TerminalBuffer`（`terminal-buffer.ts`）用同一份行文本维护 xterm 兼容视图（`buffer.active`），
      scrollbar 数据同步 viewport / baseY / length。
 
@@ -188,7 +188,7 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 - `packages/ghostty-terminal/src/selection-viewport-rect.ts`
   - `unionSelectionViewportRect`：选区单元格矩形并成 client 包围盒，裁到画布可见区。
 - `packages/ghostty-terminal/src/{render-state,canvas-renderer,terminal-render-coordinator}.ts`
-  - 渲染状态读回与行级 dirty 判定、canvas 绘制（含选区层 / 光标层）、帧调度。
+  - 渲染状态读回与行级 dirty 判定、canvas 绘制（含选区层 / 光标层 / 预测层）、帧调度。
 - `packages/ghostty-terminal/src/headless.ts`
   - 服务端 headless 模拟器（gateway 的 `run_command` / 读屏用，见
     [终端 Agent](./terminal-agent.md) §5）。
@@ -202,7 +202,7 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 ## 当前边界
 
 - 当前只覆盖 VibeTerm 真实使用到的能力，不追求完整 xterm API 等价。
-- 渲染是 canvas：按行 dirty 重绘，选区与光标各自成层；不做 DOM 逐 cell。
+- 渲染是 canvas：按行 dirty 重绘，选区、光标与预测回显各自成层；不做 DOM 逐 cell。
 - 同一个 wasm 内核还被 gateway 以 headless 形式复用（服务端读屏与 `run_command`）。
 
 ## 结论

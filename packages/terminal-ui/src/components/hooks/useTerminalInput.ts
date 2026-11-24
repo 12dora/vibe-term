@@ -1,6 +1,6 @@
-import { useTmuxStore } from '@vibeterm/stores/react';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { useCallback, useEffect } from 'react';
+import { usePredictiveSendInput } from '../../prediction/use-predictive-echo';
 import {
   registerCursorRectGetter,
   unregisterCursorRectGetter,
@@ -36,7 +36,7 @@ export function useTerminalInput({
   autoFocus,
   focused,
 }: UseTerminalInputOptions): void {
-  const sendInput = useTmuxStore((state) => state.sendInput);
+  const sendInput = usePredictiveSendInput(instance, inputMode, deviceId, paneId);
   const currentDeviceIdRef = useLatestRef(deviceId);
   const currentPaneIdRef = useLatestRef(paneId);
   const canWriteRef = useLatestRef(deviceConnected && !isSelectionInvalid);
