@@ -7,6 +7,7 @@ import {
   disposeRenderStateResources,
 } from './render-state';
 import type { SelectionMode } from './selection-model';
+import { SynchronizedOutputFallback } from './synchronized-output-fallback';
 import { TerminalBuffer } from './terminal-buffer';
 import { DEFAULT_COLS, DEFAULT_ROWS, GHOSTTY_MODE_ANY_MOUSE } from './terminal-constants';
 import { TerminalDomSurface } from './terminal-dom';
@@ -30,6 +31,7 @@ import {
   type TerminalLinkHit,
   bindMouseEvents,
 } from './terminal-pointer';
+import { TerminalPrediction } from './terminal-prediction';
 import { type RenderSnapshot, TerminalRenderCoordinator } from './terminal-render-coordinator';
 import { TerminalSelection, selectionModeFromClickDetail } from './terminal-selection';
 import { writeSelectionTextProbe } from './terminal-selection-probe';
@@ -46,11 +48,10 @@ import type {
   GhosttyTerminalSize,
   GhosttyViewportGesture,
   TerminalDisposable,
+  TerminalPredictionHost,
 } from './types';
 
 const TERMINAL_ENGINE = 'ghostty-official';
-// 同步输出（DECSET 2026）挂起渲染的兜底时限：应用悬挂或关闭帧迟迟不到时最迟此间隔后强制渲染一次，与主流终端一致。
-const SYNCHRONIZED_OUTPUT_FALLBACK_MS = 150;
 
 // 终端控制器：持有 WASM handle 生命周期，串起 DOM 外壳、输入编码、渲染编排与选择状态机，对外暴露 xterm 兼容 API。
 export class GhosttyTerminalController implements CompatibleTerminalLike {
@@ -58,6 +59,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   readonly options: GhosttyTerminalInitOptions;
   // xterm 兼容：cell 尺寸与 DOM 外壳共用同一对象，测量结果就地写入。
   readonly _core: { _renderService: { dimensions: { css: { cell: GhosttyCellDimensions } } } };
+  readonly prediction: TerminalPredictionHost;
 
   element: HTMLElement | null = null;
   textarea: HTMLElement | null = null;
@@ -71,6 +73,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   private readonly input: TerminalInputBridge;
   private readonly renderCoordinator: TerminalRenderCoordinator;
   private readonly selection: TerminalSelection;
+  private readonly predictionRuntime: TerminalPrediction;
   private readonly inputState = createTerminalInputState();
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly selectionListeners = new Set<(text: string | null) => void>();
@@ -80,7 +83,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   private readonly domEventDisposers: Array<() => void> = [];
   private fileLinkContext: FileLinkContext | null = null;
   private lastNotifiedSelectionText: string | null = null;
-  private syncOutputFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly syncOutputFallback = new SynchronizedOutputFallback(() =>
+    this.renderCoordinator.schedule()
+  );
   private renderSuspended = false;
   private disposed = false;
   private disableStdin: boolean;
@@ -141,6 +146,8 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
         this.renderCoordinator.scheduleSelectionRepaint();
       },
     });
+    this.predictionRuntime = new TerminalPrediction(bindings, this.input, this.renderCoordinator);
+    this.prediction = this.predictionRuntime.host;
   }
 
   static async create(options: GhosttyTerminalInitOptions): Promise<GhosttyTerminalController> {
@@ -324,15 +331,12 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     // write 到达，rAF 到点就画会把中间态刷上屏（no-flicker TUI 表现为逐行扫描）。
     // ESU 到达的那次 write 会走正常渲染调度；只留低频兜底防应用悬挂。
     if (this.input.isSynchronizedOutputActive()) {
-      if (!this.renderSuspended && this.syncOutputFallbackTimer === null) {
-        this.syncOutputFallbackTimer = setTimeout(() => {
-          this.syncOutputFallbackTimer = null;
-          this.renderCoordinator.schedule();
-        }, SYNCHRONIZED_OUTPUT_FALLBACK_MS);
+      if (!this.renderSuspended) {
+        this.syncOutputFallback.arm();
       }
       return;
     }
-    this.cancelSynchronizedOutputFallback();
+    this.syncOutputFallback.cancel();
     this.renderCoordinator.schedule();
   }
 
@@ -343,7 +347,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
 
     this.renderSuspended = suspended;
     if (suspended) {
-      this.cancelSynchronizedOutputFallback();
+      this.syncOutputFallback.cancel();
     }
     this.renderCoordinator.setRenderSuspended(suspended);
   }
@@ -362,6 +366,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     }
 
     this.renderCoordinator.invalidateLines();
+    this.predictionRuntime.invalidate();
     this.clearSelectionState(false);
     this.bindings.resetTerminal(this.handles.terminal);
     this.input.resetOutputObserver();
@@ -407,6 +412,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.cols = nextCols;
     this.rows = nextRows;
     this.renderCoordinator.invalidateLines();
+    this.predictionRuntime.invalidate();
     this.clearSelectionState(false);
     this.renderCoordinator.schedule();
   }
@@ -683,13 +689,14 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.clearDomEventListeners();
     this.dom.cancelScrollbarFade();
     this.renderCoordinator.cancelLinkOverlay();
-    this.cancelSynchronizedOutputFallback();
+    this.syncOutputFallback.cancel();
 
     for (const addon of this.addons) {
       addon.dispose();
     }
     this.addons.clear();
 
+    this.predictionRuntime.dispose();
     this.renderCoordinator.dispose();
     this.dom.dispose();
     this.element = null;
@@ -722,15 +729,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     );
     this.updateSelectionTextProbe(snapshot.selectionText);
     this.dom.updateScrollbar(scrollbar);
-  }
-
-  private cancelSynchronizedOutputFallback(): void {
-    if (this.syncOutputFallbackTimer === null) {
-      return;
-    }
-
-    clearTimeout(this.syncOutputFallbackTimer);
-    this.syncOutputFallbackTimer = null;
+    this.predictionRuntime.noteRender(snapshot);
   }
 
   private bindDomEvents(): void {

@@ -122,7 +122,7 @@ function createHarness(): Harness {
     fontFamily: 'monospace',
     fontSize: 13,
   });
-  // 构造顺序：main / link / selection / cursor
+  // 构造顺序：main / link / selection / cursor（prediction 懒创建）
   const cursorCanvas = created[3];
   const coordinator = new TerminalRenderCoordinator(bindings, terminal, renderState, {
     cellDimensions: () => CELL,

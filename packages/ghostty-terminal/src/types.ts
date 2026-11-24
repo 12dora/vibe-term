@@ -176,6 +176,51 @@ export interface TerminalDisposable {
   dispose: () => void;
 }
 
+/** 预测宿主读到的一个格子（视口坐标）；wide = 占两列，spacer 列为 { text: '', wide: false }。 */
+export interface PredictionCell {
+  text: string;
+  wide: boolean;
+}
+
+export interface PredictionOverlayCell {
+  row: number;
+  col: number;
+  text: string;
+  wide: boolean;
+  underline: boolean;
+}
+
+export interface PredictionOverlay {
+  cells: readonly PredictionOverlayCell[];
+  cursor: { row: number; col: number } | null;
+}
+
+export interface PredictionFrame {
+  cols: number;
+  rows: number;
+  /** 真实光标（视口坐标）。 */
+  cursor: { row: number; col: number; visible: boolean; passwordInput: boolean };
+  altScreen: boolean;
+  mouseReporting: boolean;
+  synchronizedOutput: boolean;
+  viewportAtBottom: boolean;
+  /** 视口第 0 行的绝对行号（= buffer.active.viewportY），行滚出顶部时增长。 */
+  viewportTop: number;
+  /** reset / resize / 整屏替换时递增：此前记录的绝对坐标全部失效。 */
+  generation: number;
+  cellAt(row: number, col: number): PredictionCell | null;
+}
+
+export interface TerminalPredictionHost {
+  /** 只画不写内核；null 清除。 */
+  setOverlay(overlay: PredictionOverlay | null): void;
+  /** 每次渲染完成（含 resize / reset 之后的那一帧）后回调，返回取消订阅函数。 */
+  onFrame(callback: (frame: PredictionFrame) => void): () => void;
+  /** 最近一帧；首次渲染前为 null。 */
+  frame(): PredictionFrame | null;
+  textWidth(text: string): 1 | 2;
+}
+
 export interface CompatibleBufferLine {
   translateToString: (trimRight: boolean) => string;
 }
@@ -269,4 +314,6 @@ export interface CompatibleTerminalLike {
     dispose: () => void;
   }) => void;
   getRendererKind?: () => string;
+  /** 本地预测回显宿主：只画 overlay，不触碰模拟器网格。 */
+  readonly prediction?: TerminalPredictionHost;
 }

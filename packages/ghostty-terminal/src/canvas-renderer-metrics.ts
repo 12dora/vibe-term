@@ -105,3 +105,28 @@ export function copyCanvasCssBox(from: CanvasCssBox, to: CanvasCssBox): void {
 export function colorToCss(color: GhosttyColorRgb): string {
   return `rgb(${color.r} ${color.g} ${color.b})`;
 }
+
+export type GlyphBox = {
+  glyphBoxHeight: number;
+  textTopGap: number;
+  textBaselineY: number;
+};
+
+// baseline 用 alphabetic：盒高 ≤ cell 时 [topGap, topGap+ascent+descent] ⊆ [0, cellH]，
+// 升降部都不溢出，且用本引擎自报度量，跨平台自洽。
+export function resolveGlyphBox(
+  metrics: Pick<TextMetrics, 'fontBoundingBoxAscent' | 'fontBoundingBoxDescent'>,
+  deviceFontSize: number,
+  deviceCellHeight: number
+): GlyphBox {
+  let ascent = metrics.fontBoundingBoxAscent;
+  let descent = metrics.fontBoundingBoxDescent;
+  if (!(Number.isFinite(ascent) && Number.isFinite(descent) && ascent > 0)) {
+    // 极少数环境无 fontBoundingBox：按典型 0.8/0.2 em 兜底，仍优于贴顶。
+    ascent = deviceFontSize * 0.8;
+    descent = deviceFontSize * 0.2;
+  }
+  const glyphBoxHeight = ascent + descent;
+  const textTopGap = Math.round((deviceCellHeight - glyphBoxHeight) / 2);
+  return { glyphBoxHeight, textTopGap, textBaselineY: Math.round(textTopGap + ascent) };
+}

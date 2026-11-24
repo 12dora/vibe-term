@@ -137,7 +137,7 @@ function setup(): {
     fontSize: FONT_SIZE,
   });
 
-  // 构造顺序：main / link / selection / cursor
+  // 构造顺序：main / link / selection / cursor（prediction 懒创建）
   return {
     renderer,
     mainCanvas: created[0],

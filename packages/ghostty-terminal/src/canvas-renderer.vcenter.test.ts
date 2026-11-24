@@ -165,7 +165,7 @@ function setup(dpr: number, cellHeight: number) {
     fontSize: FONT_SIZE,
   });
   const cellDimensions: GhosttyCellDimensions = { width: 8, height: cellHeight };
-  // created[0] = mainCanvas（构造顺序 main/selection/cursor）
+  // created[0] = mainCanvas（构造顺序 main/link/selection/cursor）
   return { renderer, mainCtx: created[0].ctx, cellDimensions };
 }
 

@@ -8,21 +8,29 @@ import {
   isSpacerCell,
 } from './canvas-cell-style';
 import {
+  type LayerSurface,
+  createLayerSurface,
+  gridLayerSize,
+  sizeLayerSurfaces,
+} from './canvas-layer-surface';
+import { type LinkUnderlineSegment, drawLinkUnderlineSegments } from './canvas-link-underlines';
+import {
   expandNeighborRows,
   resolveEffectiveDirty,
   shouldDrawAllRows,
   wantsScrollBlit,
 } from './canvas-renderer-draw-plan';
 import {
-  applyCanvasCssPixelSize,
   canvasSurfaceUnchanged,
   copyCanvasCssBox,
   measureMaxTextRun,
+  resolveGlyphBox,
   sameSelectionRects,
   toDeviceCell,
 } from './canvas-renderer-metrics';
-import { ScratchSurfacePool, ensureCanvasContext } from './canvas-scratch-pool';
+import { ScratchSurfacePool } from './canvas-scratch-pool';
 import { CursorLayer } from './cursor-layer';
+import { PredictionLayer, type PredictionPalette } from './prediction-layer';
 import type {
   GhosttyCellDimensions,
   GhosttyRenderCell,
@@ -30,6 +38,7 @@ import type {
   GhosttyRenderSnapshotMeta,
   GhosttySelectionRect,
   GhosttyTheme,
+  PredictionOverlay,
 } from './types';
 
 type CanvasRendererOptions = {
@@ -37,7 +46,7 @@ type CanvasRendererOptions = {
   theme: GhosttyTheme;
   fontFamily: string;
   fontSize: number;
-  /** 四张 canvas 的 CSS 尺寸变化后回调（cols×cellW / rows×cellH），供平移内容表面同步。 */
+  /** 五张 canvas 的 CSS 尺寸变化后回调（cols×cellW / rows×cellH），供平移内容表面同步。 */
   onSurfaceSize?: (width: number, height: number) => void;
 };
 
@@ -65,24 +74,15 @@ type CanvasRendererDebugState = {
   lastDrawnRows: number[];
 };
 
-type LinkUnderlineSegment = {
-  /** 视口内行号（0 起） */
-  row: number;
-  startCol: number;
-  endCol: number;
-};
-
 export class CanvasRenderer {
   readonly kind = 'canvas';
 
   private mainCanvas: HTMLCanvasElement;
-  private readonly linkCanvas: HTMLCanvasElement;
-  private readonly selectionCanvas: HTMLCanvasElement;
-  private readonly cursorCanvas: HTMLCanvasElement;
   private mainContext: CanvasRenderingContext2D;
-  private readonly linkContext: CanvasRenderingContext2D;
-  private readonly selectionContext: CanvasRenderingContext2D;
-  private readonly cursorContext: CanvasRenderingContext2D;
+  private readonly linkSurface: LayerSurface;
+  private readonly selectionSurface: LayerSurface;
+  // 主画布之外的层；DOM 顺序 link、prediction、selection、cursor，prediction 在首个非空 overlay 时才创建。
+  private readonly auxSurfaces: LayerSurface[];
   private theme: GhosttyTheme;
   private readonly fontSize: number;
   private cellDimensions: GhosttyCellDimensions = { width: 9, height: 17 };
@@ -113,6 +113,8 @@ export class CanvasRenderer {
   private drawnSelectionRects: GhosttySelectionRect[] = [];
   private drawnSelectionColor = '';
   private readonly cursorLayer: CursorLayer;
+  private readonly predictionLayer = new PredictionLayer();
+  private readonly screenElement: HTMLElement;
   private readonly onSurfaceSize: ((width: number, height: number) => void) | null;
   // 每个渲染器独占的 blit 中转画布池（见 canvas-scratch-pool.ts）。
   private readonly scratchPool = new ScratchSurfacePool();
@@ -126,31 +128,18 @@ export class CanvasRenderer {
     options.screenElement.style.position = 'relative';
     options.screenElement.style.overflow = 'hidden';
 
-    this.mainCanvas = document.createElement('canvas');
-    this.linkCanvas = document.createElement('canvas');
-    this.selectionCanvas = document.createElement('canvas');
-    this.cursorCanvas = document.createElement('canvas');
-
-    for (const [canvas, layer] of [
-      [this.mainCanvas, 'main'],
-      [this.linkCanvas, 'link'],
-      [this.selectionCanvas, 'selection'],
-      [this.cursorCanvas, 'cursor'],
-    ] as const) {
-      canvas.dataset.layer = layer;
-      canvas.style.position = 'absolute';
-      canvas.style.inset = '0';
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
-      canvas.style.pointerEvents = 'none';
-      options.screenElement.appendChild(canvas);
-    }
-
-    this.mainContext = ensureCanvasContext(this.mainCanvas);
-    this.linkContext = ensureCanvasContext(this.linkCanvas);
-    this.selectionContext = ensureCanvasContext(this.selectionCanvas);
-    this.cursorContext = ensureCanvasContext(this.cursorCanvas);
-    this.cursorLayer = new CursorLayer(this.cursorCanvas, this.cursorContext);
+    const { screenElement } = options;
+    const main = createLayerSurface(screenElement, 'main');
+    const link = createLayerSurface(screenElement, 'link');
+    const selection = createLayerSurface(screenElement, 'selection');
+    const cursor = createLayerSurface(screenElement, 'cursor');
+    this.mainCanvas = main.canvas;
+    this.mainContext = main.context;
+    this.linkSurface = link;
+    this.selectionSurface = selection;
+    this.screenElement = screenElement;
+    this.auxSurfaces = [link, selection, cursor];
+    this.cursorLayer = new CursorLayer(cursor.canvas, cursor.context);
   }
 
   setTheme(theme: GhosttyTheme): void {
@@ -169,6 +158,9 @@ export class CanvasRenderer {
       frame.selectionColor ?? this.theme.selectionBackground,
       wiped
     );
+    if (this.predictionLayer.hasOverlay) {
+      this.predictionLayer.sync(this.predictionPalette(frame.meta.colors), wiped);
+    }
 
     // canvas 位图被 resize 清空 / 外部强制全画 → 必须忽略 dirty='clean' 早退，
     // 否则屏幕空白（issue #45 bug 3）。
@@ -222,19 +214,20 @@ export class CanvasRenderer {
   }
 
   dispose(): void {
-    // 停放的中转画布此刻是本实例交换出来的旧主画布，随本实例一起释放；下面四张里的
+    // 停放的中转画布此刻是本实例交换出来的旧主画布，随本实例一起释放；下面各层里的
     // mainCanvas 则可能是当初分配的那张 scratch（ping-pong 后二者身份互换）。
     this.scratchPool.release();
     this.mainCanvas.remove();
-    this.linkCanvas.remove();
-    this.selectionCanvas.remove();
-    this.cursorCanvas.remove();
+    for (const { canvas } of this.auxSurfaces) {
+      canvas.remove();
+    }
     this.cellStyle.dispose();
     this.assignedMainFillStyle = null;
     this.assignedMainFont = null;
     this.drawnSelectionRects = [];
     this.lastFrame = null;
     this.cursorLayer.dispose();
+    this.predictionLayer.dispose();
   }
 
   // 返回 true 表示触发了 canvas.width/height 赋值（HTML5 标准会 wipe 已绘位图），
@@ -263,6 +256,8 @@ export class CanvasRenderer {
       return false;
     }
 
+    // 网格变了：overlay 的 viewport 坐标整体失效，位图随下面的 canvas.width 赋值一起清空。
+    const gridChanged = this.cols !== 0 && (nextCols !== this.cols || nextRows !== this.rows);
     this.cols = nextCols;
     this.rows = nextRows;
     this.dpr = dpr;
@@ -271,9 +266,7 @@ export class CanvasRenderer {
     this.deviceFontSize = this.fontSize * dpr;
     this.cursorLayer.setMetrics(deviceCellWidth, deviceCellHeight, dpr);
     this.cellStyle.resetFonts(this.deviceFontSize);
-    // 量真实字体度量（含升/降部的字形盒），把字形盒整体在 cell 内垂直居中。
-    // baseline 用 alphabetic：盒高 ≤ cell 时 [topGap, topGap+ascent+descent] ⊆ [0, cellH]，
-    // 升降部都不溢出，且用本引擎自报度量，跨平台自洽。
+    // 量真实字体度量（含升/降部的字形盒），把字形盒整体在 cell 内垂直居中（见 resolveGlyphBox）。
     this.mainContext.font = this.cellStyle.regularFont();
     const metrics = this.mainContext.measureText('Mg|qyÅ');
     this.maxTextRun = measureMaxTextRun(
@@ -281,89 +274,95 @@ export class CanvasRenderer {
       nextCols,
       deviceCellWidth
     );
-    let ascent = metrics.fontBoundingBoxAscent;
-    let descent = metrics.fontBoundingBoxDescent;
-    if (!(Number.isFinite(ascent) && Number.isFinite(descent) && ascent > 0)) {
-      // 极少数环境无 fontBoundingBox：按典型 0.8/0.2 em 兜底，仍优于贴顶。
-      ascent = this.deviceFontSize * 0.8;
-      descent = this.deviceFontSize * 0.2;
-    }
-    this.glyphBoxHeight = ascent + descent;
-    this.textTopGap = Math.round((deviceCellHeight - this.glyphBoxHeight) / 2);
-    this.textBaselineY = Math.round(this.textTopGap + ascent);
+    const glyphBox = resolveGlyphBox(metrics, this.deviceFontSize, deviceCellHeight);
+    this.glyphBoxHeight = glyphBox.glyphBoxHeight;
+    this.textTopGap = glyphBox.textTopGap;
+    this.textBaselineY = glyphBox.textBaselineY;
 
-    const width = nextCols * deviceCellWidth;
-    const height = nextRows * deviceCellHeight;
-
-    const cssWidth = width / dpr;
-    const cssHeight = height / dpr;
-    for (const canvas of [
-      this.mainCanvas,
-      this.linkCanvas,
-      this.selectionCanvas,
-      this.cursorCanvas,
-    ]) {
-      canvas.width = width;
-      canvas.height = height;
-      applyCanvasCssPixelSize(canvas.style, cssWidth, cssHeight);
-    }
-    this.onSurfaceSize?.(cssWidth, cssHeight);
-
-    for (const context of [
-      this.mainContext,
-      this.linkContext,
-      this.selectionContext,
-      this.cursorContext,
-    ]) {
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      // alphabetic：按真实 baseline 定位，配合 textBaselineY 精确居中字形盒。
-      context.textBaseline = 'alphabetic';
-      context.imageSmoothingEnabled = false;
-    }
+    const size = gridLayerSize(nextCols, nextRows, deviceCellWidth, deviceCellHeight, dpr);
+    const main = { canvas: this.mainCanvas, context: this.mainContext };
+    sizeLayerSurfaces([main, ...this.auxSurfaces], size);
+    this.onSurfaceSize?.(size.cssWidth, size.cssHeight);
     this.assignedMainFillStyle = null;
     this.assignedMainFont = null;
+    this.syncPredictionMetrics(gridChanged);
 
     return true;
+  }
+
+  private syncPredictionMetrics(gridChanged: boolean): void {
+    this.predictionLayer.setMetrics({
+      cols: this.cols,
+      rows: this.rows,
+      deviceCellWidth: this.deviceCellWidth,
+      deviceCellHeight: this.deviceCellHeight,
+      textTopGap: this.textTopGap,
+      textBaselineY: this.textBaselineY,
+      glyphBoxHeight: this.glyphBoxHeight,
+      dpr: this.dpr,
+      font: this.cellStyle.regularFont(),
+    });
+    if (gridChanged) {
+      this.predictionLayer.discard();
+      this.cursorLayer.discardOverride();
+    }
+  }
+
+  // 预测回显 overlay：只画在独立的 prediction 层，光标层同步改到 overlay.cursor 落笔；
+  // null 清除并让光标回到真实位置。内容未变时整体跳过。
+  setPredictionOverlay(overlay: PredictionOverlay | null): void {
+    if (overlay) {
+      this.ensurePredictionSurface();
+    }
+    const palette = this.lastFrame ? this.predictionPalette(this.lastFrame.meta.colors) : null;
+    this.predictionLayer.setOverlay(overlay, palette);
+    const cursor = overlay?.cursor ?? null;
+    const override = cursor && this.predictionLayer.containsCell(cursor) ? cursor : null;
+    this.noteVacatedRow(this.cursorLayer.setOverride(override));
+  }
+
+  private ensurePredictionSurface(): void {
+    if (this.predictionLayer.attached) {
+      return;
+    }
+    const surface = createLayerSurface(
+      this.screenElement,
+      'prediction',
+      this.selectionSurface.canvas
+    );
+    this.auxSurfaces.push(surface);
+    this.predictionLayer.attach(surface);
+    if (this.cols > 0) {
+      const { cols, rows, deviceCellWidth, deviceCellHeight, dpr } = this;
+      const size = gridLayerSize(cols, rows, deviceCellWidth, deviceCellHeight, dpr);
+      sizeLayerSurfaces([surface], size);
+    }
+  }
+
+  private predictionPalette(colors: GhosttyRenderSnapshotMeta['colors']): PredictionPalette {
+    return {
+      background: this.cellStyle.toCss(colors.background),
+      foreground: this.cellStyle.toCss(colors.foreground),
+    };
   }
 
   // 链接虚线下划线层：独立 canvas，与主画布的按行局部重绘互不干扰。
   // 每次全量重画（段数少、开销可忽略），由 terminal 侧节流调用。
   drawLinkUnderlines(segments: LinkUnderlineSegment[]): void {
-    const context = this.linkContext;
-    context.clearRect(0, 0, this.linkCanvas.width, this.linkCanvas.height);
-    if (segments.length === 0) {
-      return;
-    }
-
-    const thickness = Math.max(1, Math.round(this.dpr));
-    const dash = Math.max(2, Math.round(2 * this.dpr));
-    // 奇数线宽时偏移 0.5 物理像素，避免 1px 线被抗锯齿糊成 2px。
-    const crisp = thickness % 2 === 1 ? 0.5 : 0;
-
-    context.strokeStyle = this.theme.foreground;
-    context.globalAlpha = 0.55;
-    context.lineWidth = thickness;
-    context.setLineDash([dash, dash]);
-    context.beginPath();
-    for (const segment of segments) {
-      const cellTop = segment.row * this.deviceCellHeight;
-      const y =
-        Math.min(
-          Math.round(cellTop + this.textTopGap + this.glyphBoxHeight - thickness),
-          cellTop + this.deviceCellHeight - thickness
-        ) + crisp;
-      const x0 = segment.startCol * this.deviceCellWidth;
-      const x1 = (segment.endCol + 1) * this.deviceCellWidth;
-      context.moveTo(x0, y);
-      context.lineTo(x1, y);
-    }
-    context.stroke();
-    context.setLineDash([]);
-    context.globalAlpha = 1;
+    const { canvas, context } = this.linkSurface;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    drawLinkUnderlineSegments(context, segments, this.theme.foreground, {
+      dpr: this.dpr,
+      deviceCellWidth: this.deviceCellWidth,
+      deviceCellHeight: this.deviceCellHeight,
+      textTopGap: this.textTopGap,
+      glyphBoxHeight: this.glyphBoxHeight,
+    });
   }
 
   clearLinkUnderlines(): void {
-    this.linkContext.clearRect(0, 0, this.linkCanvas.width, this.linkCanvas.height);
+    const { canvas, context } = this.linkSurface;
+    context.clearRect(0, 0, canvas.width, canvas.height);
   }
 
   // 只重画选区层：拖拽期间的唯一变化就是选区矩形，主画布/光标层一个像素都不用碰。
@@ -410,15 +409,16 @@ export class CanvasRenderer {
 
     this.drawnSelectionRects = rects.map((rect) => ({ ...rect }));
     this.drawnSelectionColor = color;
-    this.selectionContext.clearRect(0, 0, this.selectionCanvas.width, this.selectionCanvas.height);
+    const { canvas, context } = this.selectionSurface;
+    context.clearRect(0, 0, canvas.width, canvas.height);
 
     if (rects.length === 0) {
       return;
     }
 
-    this.selectionContext.fillStyle = color;
+    context.fillStyle = color;
     for (const rect of rects) {
-      this.selectionContext.fillRect(
+      context.fillRect(
         rect.x * this.deviceCellWidth,
         rect.row * this.deviceCellHeight,
         rect.width * this.deviceCellWidth,

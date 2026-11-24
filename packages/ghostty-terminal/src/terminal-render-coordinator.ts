@@ -201,6 +201,10 @@ export class TerminalRenderCoordinator {
     this.cancelCursorSettle();
   }
 
+  get predictionTarget(): Pick<CanvasRenderer, 'setPredictionOverlay'> | null {
+    return this.renderer;
+  }
+
   setTheme(theme: GhosttyTheme): void {
     this.renderer?.setTheme(theme);
     this.loop.schedule();

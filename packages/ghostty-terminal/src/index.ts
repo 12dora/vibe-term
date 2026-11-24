@@ -26,5 +26,10 @@ export type {
   GhosttyTerminalInitOptions,
   GhosttyTerminalSize,
   GhosttyTheme,
+  PredictionCell,
+  PredictionFrame,
+  PredictionOverlay,
+  PredictionOverlayCell,
   TerminalDisposable,
+  TerminalPredictionHost,
 } from './types';

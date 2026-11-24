@@ -21,6 +21,11 @@ type PendingCursor = {
   cssColor: string;
 };
 
+type CursorOverride = {
+  row: number;
+  col: number;
+};
+
 const BLINK_INTERVAL_MS = 1000;
 const BLINK_CLASS = 'vibeterm-cursor-blink';
 const BLINK_STYLE_ID = 'vibeterm-cursor-blink-style';
@@ -52,11 +57,17 @@ function ensureBlinkStyle(doc: Document | null | undefined): void {
 // %output 分片），渲染帧因此可能落在重绘中途，此刻的光标位置只是笔尖所在（刚写完的
 // 字符后面那一格），不是应用这一帧的最终落点。未落定的帧只把状态挂起（update 返回
 // 时屏幕保持原样），由渲染协调器在输出静默的下一帧调 commit() 落笔。
+//
+// 预测回显的光标覆盖（override）只替换落笔位置，样式 / 闪烁 / 颜色仍取真实光标：
+// real 记录「已获准落笔」的真实光标（落定帧或 commit 之后），清除覆盖时回到它，
+// 绝不会把挂起中的中途状态提前画出来。
 export class CursorLayer {
   private last: CursorCell | null = null;
   private lastRect: DeviceRect | null = null;
   private lastColor = '';
   private pending: PendingCursor | null = null;
+  private real: PendingCursor | null = null;
+  private override: CursorOverride | null = null;
   private blinking = false;
   private cellWidth = 9;
   private cellHeight = 17;
@@ -88,7 +99,8 @@ export class CursorLayer {
     }
 
     this.pending = null;
-    return this.draw(cursor, cssColor, wiped);
+    this.real = { cursor, cssColor };
+    return this.paint(wiped);
   }
 
   commit(): number | null {
@@ -98,14 +110,47 @@ export class CursorLayer {
     }
 
     this.pending = null;
-    return this.draw(pending.cursor, pending.cssColor, false);
+    this.real = pending;
+    return this.paint(false);
+  }
+
+  // 预测光标覆盖：立即落笔（它是本地预测位置，不受真实光标「是否落定」影响）。
+  // 真实光标尚未出现过时只记下，等首帧落笔。
+  setOverride(position: CursorOverride | null): number | null {
+    this.override = position ? { row: position.row, col: position.col } : null;
+    return this.paint(false);
+  }
+
+  // 位图随即被整体清空并整层重画（resize 换网格）时用：只丢状态，不先画一遍旧位置。
+  discardOverride(): void {
+    this.override = null;
   }
 
   dispose(): void {
     this.last = null;
     this.lastRect = null;
     this.pending = null;
+    this.real = null;
+    this.override = null;
     this.stopBlink();
+  }
+
+  private paint(wiped: boolean): number | null {
+    const real = this.real;
+    if (!real) {
+      return null;
+    }
+
+    const override = this.override;
+    if (!override) {
+      return this.draw(real.cursor, real.cssColor, wiped);
+    }
+
+    return this.draw(
+      { ...real.cursor, x: override.col, y: override.row, visible: true, wideTail: false },
+      real.cssColor,
+      wiped
+    );
   }
 
   private draw(cursor: CursorSnapshot, cssColor: string, wiped: boolean): number | null {
