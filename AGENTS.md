@@ -26,7 +26,11 @@
 
 ## 执行原则（重要）
 
-- 日常单测用 `bun run test:changed`（相对 HEAD 的改动；空工作区立刻退出 0）；发布 / CI 仍 `bun run test:unit`。不要跑 `bun run --filter '*' test`。
+- 单测入口（`scripts/ci/unit-tests.ts`）：
+  - 日常：`bun run test:changed`（相对 HEAD 的改动；按 workspace 依赖图选「改动包 + 传递依赖它的包」，gateway 只选改动的 `src` 一级目录及导入它的目录；空工作区立刻退出 0）。`--list` 只打印选中的目标与原因。
+  - 修复后：`bun run test:failed` 只重跑上次失败的目标（记录在 `node_modules/.cache/vibeterm-unit/last.json`）。
+  - 发布 / CI：`bun run test:unit`（全量）。本机 PATH 上有 `testq` 且未给 `--jobs` 时自动持有一个授权并按授权数并行，否则串行（CI）；也可显式 `--jobs N`。并行第一轮失败的目标会串行重跑一次，以重跑结果为准。
+  - 不要跑 `bun run --filter '*' test`。
 
 ## **始终参考代码和文档，禁止猜测**
 

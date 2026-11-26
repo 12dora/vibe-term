@@ -1,182 +1,72 @@
-// 各 workspace 的单元测试（不含 apps/fe 的 Playwright e2e：其 `test` 脚本就是 e2e，单测用 `bun test src/`）。
-// 逐包顺序跑，避免 gateway 全量并行时 mesh 集成用例的端口/负载 flake。
+// 各 workspace 的单元测试入口（`bun run test:unit` / `test:changed` / `test:failed`）。
+//   --changed  相对 HEAD 的改动 → 改动包及其传递依赖者的目标
+//   --failed   只重跑上次失败的目标（node_modules/.cache/vibeterm-unit/last.json）
+//   --list     只打印选中的目标与原因
+//   --jobs N   并行度；缺省时若 PATH 上有 testq 则持有一个授权并以授权数并行，否则串行（CI）
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { affectedFiles, loadGatewaySources } from './unit-gateway-imports';
+import {
+  type RunRecord,
+  failedUnits,
+  mergeRecord,
+  orderByDuration,
+  readRecord,
+  runUnits,
+  writeRecord,
+} from './unit-run';
+import {
+  FULL,
+  type SelectContext,
+  type Selected,
+  formatSelection,
+  isFullTrigger,
+  selectTargets,
+  targetLabel,
+} from './unit-select';
+import { ROOT, TARGETS, type TestTarget, expand, expandParallel } from './unit-targets';
+import { loadWorkspace } from './unit-workspace';
 
-export type TestTarget = { dir: string; args: string[]; retry?: boolean };
-export const FULL = 'FULL' as const;
+export * from './unit-gateway-imports';
+export * from './unit-paths';
+export * from './unit-run';
+export * from './unit-select';
+export * from './unit-targets';
+export * from './unit-workspace';
 
-const ROOT = join(import.meta.dir, '..', '..');
-const GATEWAY = 'apps/gateway';
-const SHARED_DIR = 'packages/shared';
-const SHARED_DEP = '@vibeterm/shared';
-const FULL_FILES = new Set([
-  'bun.lock',
-  'package.json',
-  'biome.json',
-  'tsconfig.json',
-  'scripts/ci/unit-tests.ts',
-  'scripts/test/preload.ts',
-]);
+export type Options = { changed: boolean; failed: boolean; list: boolean; jobs?: number };
 
-export const TARGETS: TestTarget[] = [
-  { dir: SHARED_DIR, args: ['test'] },
-  { dir: 'packages/ws-client', args: ['test'] },
-  { dir: 'packages/ghostty-terminal', args: ['test'] },
-  { dir: 'packages/terminal-ui', args: ['test'] },
-  { dir: 'packages/stores', args: ['test'] },
-  { dir: 'packages/panels', args: ['test'] },
-  { dir: 'packages/ui', args: ['test'] },
-  { dir: 'packages/theme', args: ['test'] },
-  { dir: 'packages/api-client', args: ['test'] },
-  { dir: 'packages/notifications', args: ['test'] },
-  { dir: 'packages/transfer', args: ['test'] },
-  { dir: 'packages/cli', args: ['test'] },
-  { dir: 'packages/app', args: ['test', 'src'] },
-  { dir: 'apps/fe', args: ['test', 'src/'] },
-  { dir: '.', args: ['test', 'scripts/complexity'] },
-  { dir: '.', args: ['test', 'scripts/release'] },
-  { dir: '.', args: ['test', 'scripts/ci/sensitive-content.test.ts'] },
-];
-// gateway 全量在一个进程里跑时，跨文件共享的 sqlite/端口/RTC 状态会互相打扰（closed database、
-// DC 握手超时），本地实测 4 条 flake 隔离复跑全过。CI 里按 src 一级目录分进程跑，失败的目录单独重跑一次。
-function hasTests(dir: string): boolean {
-  return readdirSync(dir, { recursive: true, encoding: 'utf8' }).some((f) =>
-    /\.test\.tsx?$/.test(f)
-  );
-}
+const TESTQ_ARGS = ['--want', '12', '--min', '2', '--mem-per', '600', '--label', 'vibe-term unit'];
 
-for (const entry of readdirSync(join(ROOT, GATEWAY, 'src'))) {
-  const rel = join('src', entry);
-  const isDir = statSync(join(ROOT, GATEWAY, rel)).isDirectory();
-  if (isDir ? !hasTests(join(ROOT, GATEWAY, rel)) : !/\.test\.ts$/.test(entry)) continue;
-  TARGETS.push({ dir: GATEWAY, args: ['test', rel], retry: true });
-}
-
-// bun 的 mock.module 是进程级且不可撤销：含它的测试文件必须各自独立进程跑，其余文件合跑一次。
-function listTestFiles(dir: string): string[] {
-  return readdirSync(dir, { recursive: true, encoding: 'utf8' })
-    .filter((f) => /\.test\.tsx?$/.test(f) && !f.includes('node_modules'))
-    .map((f) => f.replace(/\\/g, '/'));
-}
-
-function usesModuleMock(path: string): boolean {
-  return readFileSync(path, 'utf8').includes('mock.module(');
-}
-
-function expand(target: TestTarget): TestTarget[] {
-  const [cmd, scope = ''] = target.args;
-  if (cmd !== 'test') return [target];
-  const base = join(ROOT, target.dir, scope);
-  if (!existsSync(base) || !statSync(base).isDirectory()) return [target];
-  const files = listTestFiles(base).map((f) => join(scope, f));
-  const isolated = files.filter((f) => usesModuleMock(join(ROOT, target.dir, f)));
-  if (isolated.length === 0) return [target];
-  const shared = files.filter((f) => !isolated.includes(f));
-  const out: TestTarget[] = [];
-  if (shared.length > 0) out.push({ ...target, args: ['test', ...shared] });
-  for (const f of isolated) out.push({ ...target, args: ['test', f] });
-  return out;
-}
-
-function testFilesOf(target: { dir: string; args: string[] }): string[] {
-  const [cmd, ...scopes] = target.args;
-  if (cmd !== 'test') return [];
-  const out: string[] = [];
-  for (const scope of scopes.length > 0 ? scopes : ['.']) {
-    const abs = join(ROOT, target.dir, scope);
-    if (!existsSync(abs)) continue;
-    if (statSync(abs).isDirectory()) {
-      out.push(
-        ...listTestFiles(abs).map((f) => (scope === '.' ? f : join(scope, f).replace(/\\/g, '/')))
-      );
-    } else if (/\.test\.tsx?$/.test(scope)) {
-      out.push(scope.replace(/\\/g, '/'));
-    }
+export function parseArgs(argv: readonly string[]): Options {
+  const opts: Options = { changed: false, failed: false, list: false };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--changed') opts.changed = true;
+    else if (arg === '--failed') opts.failed = true;
+    else if (arg === '--list') opts.list = true;
+    else if (arg === '--jobs' || arg.startsWith('--jobs=')) {
+      const raw = arg === '--jobs' ? argv[++i] : arg.slice('--jobs='.length);
+      const jobs = Number(raw);
+      if (!Number.isInteger(jobs) || jobs < 1) throw new Error(`--jobs 需要正整数，收到 ${raw}`);
+      opts.jobs = jobs;
+    } else throw new Error(`未知参数 ${arg}`);
   }
-  return out;
+  if (opts.changed && opts.failed) throw new Error('--changed 与 --failed 不能同时使用');
+  return opts;
 }
 
-function posix(p: string): string {
-  return p.replace(/\\/g, '/');
+export function resolveJobs(opts: Options, env: Record<string, string | undefined>): number {
+  const granted = Number(env.TESTQ_WORKERS);
+  if (opts.jobs !== undefined) return opts.jobs;
+  return Number.isInteger(granted) && granted >= 1 ? granted : 1;
 }
 
-function isPathUnder(file: string, dir: string): boolean {
-  return file === dir || file.startsWith(`${dir}/`);
-}
-
-function stripTestSuffix(p: string): string {
-  return p.replace(/\.test(\.tsx?)$/, '$1');
-}
-
-function isFullTrigger(file: string): boolean {
-  return FULL_FILES.has(file) || isPathUnder(file, SHARED_DIR);
-}
-
-function isGatewayGlobal(file: string): boolean {
-  return (
-    file === `${GATEWAY}/package.json` ||
-    file.startsWith(`${GATEWAY}/drizzle`) ||
-    file === 'env/test.env'
-  );
-}
-
-function matchesTarget(target: TestTarget, file: string): boolean {
-  if (target.dir === GATEWAY) {
-    const rel = posix(target.args[1] ?? '');
-    if (!rel || !isPathUnder(file, GATEWAY)) return false;
-    const rest = file.slice(GATEWAY.length + 1);
-    if (rest === rel || rest.startsWith(`${rel}/`)) return true;
-    return stripTestSuffix(rest) === stripTestSuffix(rel);
-  }
-  if (target.dir === '.') return isPathUnder(file, 'scripts/complexity');
-  return isPathUnder(file, target.dir);
-}
-
-export function packageDependsOnShared(pkg: {
-  dependencies?: Record<string, string>;
-}): boolean {
-  return Boolean(pkg.dependencies?.[SHARED_DEP]);
-}
-
-export function selectTargets(
-  targets: readonly TestTarget[],
-  changedFiles: readonly string[],
-  sharedConsumers: ReadonlySet<string>
-): typeof FULL | TestTarget[] {
-  const files = changedFiles.map(posix).filter(Boolean);
-  if (files.length === 0) return [];
-  if (files.some(isFullTrigger)) return FULL;
-  const gatewayAll = files.some(isGatewayGlobal);
-  const chosen = new Set<TestTarget>();
-  for (const target of targets) {
-    if (target.dir === GATEWAY && gatewayAll) {
-      chosen.add(target);
-      continue;
-    }
-    if (files.some((f) => matchesTarget(target, f))) chosen.add(target);
-  }
-  if ([...chosen].some((t) => sharedConsumers.has(t.dir))) {
-    const shared = targets.find((t) => t.dir === SHARED_DIR);
-    if (shared) chosen.add(shared);
-  }
-  return targets.filter((t) => chosen.has(t));
-}
-
-export function loadSharedConsumers(): Set<string> {
-  const dirs = new Set(TARGETS.map((t) => t.dir));
-  const out = new Set<string>();
-  for (const dir of dirs) {
-    if (dir === '.' || dir === SHARED_DIR) continue;
-    const pkgPath = join(ROOT, dir, 'package.json');
-    if (!existsSync(pkgPath)) continue;
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as {
-      dependencies?: Record<string, string>;
-    };
-    if (packageDependsOnShared(pkg)) out.add(dir);
-  }
-  return out;
+export function needsTestqGrant(
+  opts: Options,
+  env: Record<string, string | undefined>,
+  hasTestq: boolean
+): boolean {
+  return opts.jobs === undefined && !env.TESTQ_WORKERS && hasTestq;
 }
 
 function gitNameOnly(args: string[]): string[] {
@@ -199,63 +89,74 @@ function collectChangedFiles(): string[] {
   ];
 }
 
-function runSuite(targets: TestTarget[]): boolean {
-  let failed = false;
-  for (const target of targets.flatMap(expand)) {
-    console.log(`\n== ${target.dir}: bun ${target.args.join(' ')}`);
-    const run = () =>
-      spawnSync('bun', target.args, { cwd: join(ROOT, target.dir), stdio: 'inherit' });
-    let result = run();
-    if (result.status !== 0 && target.retry) {
-      const files = testFilesOf(target);
-      if (files.length > 1) {
-        console.warn(
-          `.. ${target.dir} ${target.args.join(' ')} failed, retrying each test file once`
-        );
-        let retryFailed = false;
-        for (const f of files) {
-          console.log(`.. retry ${target.dir}: bun test ${f}`);
-          const retry = spawnSync('bun', ['test', f], {
-            cwd: join(ROOT, target.dir),
-            stdio: 'inherit',
-          });
-          if (retry.status !== 0) {
-            retryFailed = true;
-            console.error(`!! ${target.dir} bun test ${f} failed (exit ${retry.status})`);
-          }
-        }
-        if (!retryFailed) result = { ...result, status: 0 };
-      } else {
-        console.warn(
-          `.. ${target.dir} ${target.args.join(' ')} failed, retrying once in isolation`
-        );
-        result = run();
-      }
-    }
-    if (result.status !== 0) {
-      failed = true;
-      console.error(`!! ${target.dir} ${target.args.join(' ')} failed (exit ${result.status})`);
-    }
-  }
-  return failed;
+function selectionContext(): SelectContext {
+  return {
+    workspace: loadWorkspace(ROOT),
+    gatewayAffected: (changed) => affectedFiles(loadGatewaySources(ROOT), changed),
+  };
 }
 
-function main(): void {
-  let selected: TestTarget[] = TARGETS;
-  if (process.argv.includes('--changed')) {
-    const files = collectChangedFiles();
-    if (files.length === 0) {
-      console.log('nothing to test');
-      process.exit(0);
-    }
-    const picked = selectTargets(TARGETS, files, loadSharedConsumers());
-    if (picked === FULL) selected = TARGETS;
-    else if (picked.length === 0) {
-      console.log('nothing to test');
-      process.exit(0);
-    } else selected = picked;
-  }
-  process.exit(runSuite(selected) ? 1 : 0);
+function everything(reason: string): Selected[] {
+  return TARGETS.map((target) => ({ target, reasons: [reason] }));
 }
 
-if (import.meta.main) main();
+type Plan = { items: Selected[]; note?: string; units?: TestTarget[] };
+
+function plan(opts: Options): Plan {
+  if (opts.failed) {
+    const record = readRecord();
+    if (!record) throw new Error('没有上次运行记录，先运行 bun run test:unit 或 test:changed');
+    const units = failedUnits(record);
+    return { items: units.map((target) => ({ target, reasons: ['上次运行失败'] })), units };
+  }
+  if (!opts.changed) return { items: everything('全量') };
+  const files = collectChangedFiles();
+  const picked = selectTargets(TARGETS, files, selectionContext());
+  if (picked !== FULL) return { items: picked };
+  const triggers = files.filter(isFullTrigger).join('、');
+  return { items: everything('全量'), note: `全局文件改动，全量运行：${triggers}` };
+}
+
+function reexecUnderTestq(): never {
+  const cmd = [process.execPath, process.argv[1], ...process.argv.slice(2)];
+  const result = spawnSync('testq', ['run', ...TESTQ_ARGS, '--', ...cmd], { stdio: 'inherit' });
+  process.exit(result.status ?? 1);
+}
+
+function report(results: RunRecord['results']): boolean {
+  const failed = results.filter((r) => r.exitCode !== 0);
+  const seconds = Math.round(results.reduce((sum, r) => sum + r.durationMs, 0) / 1000);
+  console.log(`\n完成：${results.length} 个进程，失败 ${failed.length}（累计耗时 ${seconds}s）`);
+  for (const r of failed) console.error(`!! ${targetLabel(r)}（exit ${r.exitCode}）`);
+  if (failed.length > 0) console.error('只重跑失败项：bun run test:failed');
+  return failed.length > 0;
+}
+
+async function main(): Promise<void> {
+  const opts = parseArgs(process.argv.slice(2));
+  const { items, note, units } = plan(opts);
+  if (items.length === 0) {
+    console.log(opts.failed ? '上次运行没有失败目标' : '无需测试');
+    return;
+  }
+  if (note) console.log(note);
+  if (opts.list) {
+    console.log(formatSelection(items));
+    return;
+  }
+  if (needsTestqGrant(opts, process.env, Boolean(Bun.which('testq')))) reexecUnderTestq();
+  const jobs = resolveJobs(opts, process.env);
+  const all = units ?? items.map((i) => i.target).flatMap(jobs > 1 ? expandParallel : expand);
+  const prev = readRecord();
+  const results = await runUnits(jobs > 1 ? orderByDuration(all, prev) : all, jobs);
+  const record: RunRecord = { at: new Date().toISOString(), jobs, results };
+  writeRecord(opts.failed ? mergeRecord(prev, record) : record);
+  process.exit(report(results) ? 1 : 0);
+}
+
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error(`!! ${err instanceof Error ? err.message : err}`);
+    process.exit(2);
+  });
+}
