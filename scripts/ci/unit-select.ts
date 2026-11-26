@@ -1,4 +1,4 @@
-// --changed 选择：改动文件 → 所属 workspace 包 → 该包及其（传递）依赖者的测试目标。
+// --changed 选择：改动文件 → 所属依赖图节点（workspace 包或仓库根测试目录）→ 该节点及其（传递）依赖者的测试目标。
 import { isPathUnder, posix, stripTestSuffix } from './unit-paths';
 import { GATEWAY, type TestTarget } from './unit-targets';
 import { type Workspace, dependentChains, ownerOf } from './unit-workspace';
@@ -18,6 +18,7 @@ const FULL_FILES = new Set([
   'package.json',
   'biome.json',
   'tsconfig.json',
+  'bunfig.toml',
   'scripts/test/preload.ts',
 ]);
 // 运行器自身（unit-*.ts，不含其测试文件）：改动后无法信任增量选择。
@@ -37,13 +38,20 @@ function isGatewayGlobal(file: string): boolean {
   );
 }
 
-// gateway 与仓库根目标由 args[1] 限定范围（目录或测试文件，测试文件同时匹配其被测源文件）；
-// 其余包目标按整个包目录匹配。
-function matchesScopedTarget(target: TestTarget, file: string): boolean {
-  const scope = posix(target.args[1] ?? '').replace(/\/$/, '');
-  const base = target.dir === '.' ? '' : target.dir;
-  if (!scope || (base && !isPathUnder(file, base))) return false;
-  const rel = base ? file.slice(base.length + 1) : file;
+function scopeOf(target: TestTarget): string {
+  return posix(target.args[1] ?? '').replace(/\/$/, '');
+}
+
+// 目标在依赖图中的节点：workspace 包目录；仓库根目标（dir '.'）用其限定的目录（如 scripts/release）。
+export function targetNode(target: TestTarget): string {
+  return target.dir === '.' ? scopeOf(target) : target.dir;
+}
+
+// gateway 目录组由 args[1] 限定范围（src 下的目录或顶层测试文件，测试文件同时匹配其被测源文件）。
+function matchesGatewayScope(target: TestTarget, file: string): boolean {
+  const scope = scopeOf(target);
+  if (!scope || !isPathUnder(file, GATEWAY)) return false;
+  const rel = file.slice(GATEWAY.length + 1);
   return isPathUnder(rel, scope) || stripTestSuffix(rel) === stripTestSuffix(scope);
 }
 
@@ -97,7 +105,7 @@ function gatewayReasons(plan: GatewayPlan | undefined, target: TestTarget): stri
   if ('all' in plan) return plan.all;
   const byOrigin = new Map<string, string>();
   for (const [file, origin] of plan.affected) {
-    if (matchesScopedTarget(target, file) && !byOrigin.has(origin)) byOrigin.set(origin, file);
+    if (matchesGatewayScope(target, file) && !byOrigin.has(origin)) byOrigin.set(origin, file);
   }
   return [...byOrigin].map(([origin, file]) => (origin === file ? file : `${origin} → ${file}`));
 }
@@ -114,10 +122,11 @@ export function selectTargets(
   const gateway = planGateway(files, ctx, viaDeps);
   const out: Selected[] = [];
   for (const target of targets) {
-    let reasons: string[];
-    if (target.dir === GATEWAY) reasons = gatewayReasons(gateway, target);
-    else if (target.dir === '.') reasons = files.filter((f) => matchesScopedTarget(target, f));
-    else reasons = [...(own.get(target.dir) ?? []), ...(viaDeps.get(target.dir) ?? [])];
+    const node = targetNode(target);
+    const reasons =
+      target.dir === GATEWAY
+        ? gatewayReasons(gateway, target)
+        : [...(own.get(node) ?? []), ...(viaDeps.get(node) ?? [])];
     if (reasons.length > 0) out.push({ target, reasons });
   }
   return out;

@@ -1,22 +1,16 @@
 // gateway 的 src 一级目录各自独立成测试进程：某目录的文件被其他目录导入时，
 // 改动要连带那些目录。这里对 apps/gateway/src 做廉价的反向相对导入扫描（正则，不解析 AST）。
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, posix } from 'node:path';
+import { posix } from 'node:path';
+import { loadSources, relativeImports } from './unit-imports';
 
 const GATEWAY_SRC = 'apps/gateway/src';
-const IMPORT_RE =
-  /(?:\bfrom|\bimport|\brequire|\bmock\.module)\s*\(?\s*['"](\.{1,2}(?:\/[^'"]*)?)['"]/g;
-
-export function relativeImports(content: string): string[] {
-  return [...content.matchAll(IMPORT_RE)].map((m) => m[1]);
-}
 
 function resolveImport(
   importer: string,
   spec: string,
   known: ReadonlySet<string>
 ): string | undefined {
-  const base = posix.normalize(posix.join(posix.dirname(importer), spec));
+  const base = posix.normalize(posix.join(posix.dirname(importer), spec)).replace(/\/$/, '');
   const stem = base.replace(/\.[mc]?jsx?$/, '');
   return [
     base,
@@ -69,12 +63,5 @@ export function affectedFiles(
 }
 
 export function loadGatewaySources(root: string): Map<string, string> {
-  const sources = new Map<string, string>();
-  const entries = readdirSync(join(root, GATEWAY_SRC), { recursive: true, encoding: 'utf8' });
-  for (const entry of entries) {
-    const rel = entry.replace(/\\/g, '/');
-    if (!/\.tsx?$/.test(rel) || rel.includes('node_modules')) continue;
-    sources.set(`${GATEWAY_SRC}/${rel}`, readFileSync(join(root, GATEWAY_SRC, rel), 'utf8'));
-  }
-  return sources;
+  return loadSources(root, GATEWAY_SRC);
 }

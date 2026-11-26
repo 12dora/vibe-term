@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   FULL,
+  PENDING,
   ROOT,
   type RunRecord,
   type SelectContext,
@@ -25,6 +26,7 @@ import {
   readRecord,
   relativeImports,
   resolveJobs,
+  runUnits,
   selectTargets,
   writeRecord,
 } from './unit-tests';
@@ -37,6 +39,7 @@ const transfer: TestTarget = { dir: 'packages/transfer', args: ['test'] };
 const app: TestTarget = { dir: 'packages/app', args: ['test', 'src'] };
 const fe: TestTarget = { dir: 'apps/fe', args: ['test', 'src/'] };
 const complexity: TestTarget = { dir: '.', args: ['test', 'scripts/complexity'] };
+const release: TestTarget = { dir: '.', args: ['test', 'scripts/release'] };
 const ciScripts: TestTarget = { dir: '.', args: ['test', 'scripts/ci'] };
 const mesh: TestTarget = { dir: 'apps/gateway', args: ['test', 'src/mesh'], retry: true };
 const gwFiles: TestTarget = { dir: 'apps/gateway', args: ['test', 'src/files'], retry: true };
@@ -56,6 +59,7 @@ const targets: TestTarget[] = [
   app,
   fe,
   complexity,
+  release,
   ciScripts,
   mesh,
   gwFiles,
@@ -63,7 +67,7 @@ const targets: TestTarget[] = [
 ];
 
 const dep = (...names: string[]) => Object.fromEntries(names.map((n) => [n, 'workspace:*']));
-const workspace = buildWorkspace([
+const entries = [
   { dir: 'apps/fe', pkg: { name: '@vibeterm/fe', dependencies: dep('@vibeterm/panels') } },
   {
     dir: 'apps/gateway',
@@ -85,7 +89,16 @@ const workspace = buildWorkspace([
   },
   { dir: 'packages/transfer', pkg: { name: '@vibeterm/transfer' } },
   { dir: 'packages/ui', pkg: { name: '@vibeterm/ui' } },
+  { dir: 'scripts/complexity', pkg: {} },
+  { dir: 'scripts/release', pkg: {} },
+  { dir: 'scripts/ci', pkg: {} },
+];
+// 没有 package.json 声明、只靠相对导入产生的依赖：app 源码与 scripts/release 的测试都直接读 shared 源码。
+const importSources = new Map([
+  ['packages/app/src/roles.ts', "import { r } from '../../shared/src/roles';"],
+  ['scripts/release/sign.test.ts', "import { k } from '../../packages/shared/src/key';"],
 ]);
+const workspace = buildWorkspace(entries, importSources);
 
 const identity = (changed: readonly string[]) => new Map(changed.map((f) => [f, f]));
 const ctx: SelectContext = { workspace, gatewayAffected: identity };
@@ -101,7 +114,9 @@ describe('workspace graph', () => {
       'apps/gateway',
       'packages/panels',
       'packages/stores',
+      'packages/app',
     ]);
+    expect(workspace.testDependents.get('packages/shared')).toEqual(['scripts/release']);
     expect(workspace.dependents.get('packages/ui')).toEqual(['packages/panels']);
     expect(workspace.dependents.get('packages/app')).toEqual([]);
   });
@@ -121,6 +136,35 @@ describe('workspace graph', () => {
     expect([...dependentChains(cyclic, 'a').keys()]).toEqual(['b']);
   });
 
+  it('adds an edge for a relative import into another node, once and never to itself', () => {
+    const got = buildWorkspace(
+      [
+        { dir: 'a', pkg: { name: 'a' } },
+        { dir: 'b', pkg: { name: 'b' } },
+      ],
+      new Map([
+        ['b/x.ts', "import '../a/one';\nimport '../a/two';\nimport './y';\nimport '../../out';"],
+        ['b/y.ts', ''],
+        ['c/z.ts', "import '../a/one';"],
+      ])
+    );
+    expect(got.dependents.get('a')).toEqual(['b']);
+    expect(got.dependents.get('b')).toEqual([]);
+  });
+
+  it('stops at packages that only reach a dependency through their own tests', () => {
+    const got = buildWorkspace(
+      [
+        { dir: 'lib', pkg: { name: 'lib' } },
+        { dir: 'client', pkg: { name: 'client' } },
+        { dir: 'ui', pkg: { name: 'ui', dependencies: dep('client') } },
+      ],
+      new Map([['client/x.test.ts', "import '../lib/a';"]])
+    );
+    expect([...dependentChains(got, 'lib').keys()]).toEqual(['client']);
+    expect([...dependentChains(got, 'client').keys()]).toEqual(['ui']);
+  });
+
   it('maps a file to the package with the longest matching directory', () => {
     const nested = buildWorkspace([
       { dir: 'packages/a', pkg: { name: 'a' } },
@@ -131,13 +175,18 @@ describe('workspace graph', () => {
     expect(ownerOf(nested, 'docs/x.md')).toBeUndefined();
   });
 
-  it('is derived from the real workspace package.json files', () => {
-    const real = loadWorkspace(ROOT);
+  it('is derived from the real package.json files and cross-package relative imports', () => {
+    const real = loadWorkspace(ROOT, ['scripts/release']);
     const shared = dependentChains(real, 'packages/shared');
     expect(shared.has('apps/gateway')).toBe(true);
     expect(shared.has('packages/panels')).toBe(true);
     expect(shared.has('packages/ui')).toBe(false);
-    expect(shared.has('packages/app')).toBe(false);
+    expect(shared.has('packages/app')).toBe(true);
+    expect(shared.has('scripts/release')).toBe(true);
+    const gateway = dependentChains(real, 'apps/gateway');
+    expect(gateway.has('packages/app')).toBe(true);
+    expect(gateway.has('packages/ws-client')).toBe(true);
+    expect(gateway.has('packages/stores')).toBe(false);
     const stores = dependentChains(real, 'packages/stores');
     expect(stores.has('packages/panels')).toBe(true);
     expect(stores.has('apps/fe')).toBe(true);
@@ -173,7 +222,23 @@ describe('selectTargets', () => {
   });
 
   it('selects shared plus its dependents instead of FULL, skipping unrelated packages', () => {
-    expect(pick(['packages/shared/src/x.ts'])).toEqual([shared, stores, panels, fe, ...allGateway]);
+    expect(pick(['packages/shared/src/x.ts'])).toEqual([
+      shared,
+      stores,
+      panels,
+      app,
+      fe,
+      release,
+      ...allGateway,
+    ]);
+  });
+
+  it('selects a root script target through a relative import of a package, with the chain', () => {
+    const got = selectTargets(targets, ['packages/shared/src/key.ts'], ctx);
+    const target = (got as Selected[]).find((s) => s.target === release);
+    expect(target?.reasons).toEqual([
+      'packages/shared/src/key.ts → packages/shared → scripts/release',
+    ]);
   });
 
   it('does not add shared when only a dependent changes', () => {
@@ -190,6 +255,7 @@ describe('selectTargets', () => {
       'package.json',
       'biome.json',
       'tsconfig.json',
+      'bunfig.toml',
       'scripts/test/preload.ts',
       'scripts/ci/unit-tests.ts',
       'scripts/ci/unit-select.ts',
@@ -290,10 +356,22 @@ describe('gateway import scan', () => {
       "const d = await import('./d');",
       "const e = require('./e');",
       "mock.module('../f', () => ({}));",
+      "spawn([process.execPath, resolve(import.meta.dir, 'entry.ts')]);",
+      "const dir = join(import.meta.dir, '../../drizzle');",
       "import ext from 'bun:sqlite';",
       "import s from '@vibeterm/shared';",
     ].join('\n');
-    expect(relativeImports(src)).toEqual(['./a', '../b', './c', './side', './d', './e', '../f']);
+    expect(relativeImports(src)).toEqual([
+      './a',
+      '../b',
+      './c',
+      './side',
+      './d',
+      './e',
+      '../f',
+      './entry.ts',
+      '../../drizzle',
+    ]);
   });
 
   const files = (entries: Record<string, string>) => new Map(Object.entries(entries));
@@ -328,6 +406,24 @@ describe('gateway import scan', () => {
       `${base}/lib/index.ts`,
       `${base}/lib/util.ts`,
     ]);
+  });
+
+  it('resolves a sibling file referenced by path instead of import', () => {
+    const sources = files({
+      [`${base}/managed-entry.version.test.ts`]:
+        "spawn([process.execPath, resolve(import.meta.dir, 'managed-entry.ts')]);",
+      [`${base}/managed-entry.ts`]: '',
+    });
+    const got = affectedFiles(sources, [`${base}/managed-entry.ts`]);
+    expect(got.has(`${base}/managed-entry.version.test.ts`)).toBe(true);
+  });
+
+  it('resolves a directory import written with a trailing slash', () => {
+    const sources = files({
+      [`${base}/lib/index.ts`]: '',
+      [`${base}/api/route.ts`]: "import { u } from '../lib/';",
+    });
+    expect(affectedFiles(sources, [`${base}/lib/index.ts`]).has(`${base}/api/route.ts`)).toBe(true);
   });
 
   it('still resolves imports of a deleted file', () => {
@@ -417,6 +513,17 @@ describe('run record', () => {
     }
   });
 
+  it('treats unfinished units as failed and as unknown duration', () => {
+    const unfinished = { dir: 'a', args: ['test'] };
+    const known = { dir: 'b', args: ['test'] };
+    const prev = record([
+      { ...known, exitCode: 0, durationMs: 5 },
+      { ...unfinished, exitCode: PENDING, durationMs: 0 },
+    ]);
+    expect(failedUnits(prev)).toEqual([unfinished]);
+    expect(orderByDuration([known, unfinished], prev)).toEqual([unfinished, known]);
+  });
+
   it('schedules the longest previous durations first, unknown units before known', () => {
     const slow = { dir: 'a', args: ['test'] };
     const fast = { dir: 'b', args: ['test'] };
@@ -427,6 +534,46 @@ describe('run record', () => {
     ]);
     expect(orderByDuration([fast, slow, fresh], prev)).toEqual([fresh, slow, fast]);
   });
+});
+
+describe('runUnits', () => {
+  // 每次运行往标记文件追加一个字符后失败；tag 区分两个不同的目标。
+  const failingUnit = (mark: string, tag = ''): TestTarget => ({
+    dir: 'scripts/ci',
+    args: [
+      '-e',
+      `require('node:fs').appendFileSync(${JSON.stringify(mark)}, 'x'); process.exit(1); //${tag}`,
+    ],
+  });
+  const withMark = async (run: (mark: string) => Promise<void>) => {
+    const dir = mkdtempSync(join(tmpdir(), 'unit-run-'));
+    try {
+      await run(join(dir, 'runs'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it('saves every unit as pending first, then settles it, and runs a lone unit serially', () =>
+    withMark(async (mark) => {
+      const unit = failingUnit(mark);
+      const saved: number[][] = [];
+      const results = await runUnits([unit], 4, (r) => saved.push(r.map((x) => x.exitCode)));
+      expect(saved).toEqual([[PENDING], [1]]);
+      expect(results.map((r) => r.exitCode)).toEqual([1]);
+      expect(readFileSync(mark, 'utf8')).toBe('x');
+      expect(failedUnits({ at: 'now', jobs: 4, results })).toEqual([unit]);
+    }));
+
+  it('reruns a failed unit serially after the parallel round', () =>
+    withMark(async (mark) => {
+      const units = [failingUnit(mark, 'a'), failingUnit(mark, 'b')];
+      const saved: number[][] = [];
+      await runUnits(units, 2, (r) => saved.push(r.map((x) => x.exitCode)));
+      expect(readFileSync(mark, 'utf8')).toBe('xxxx');
+      expect(saved[0]).toEqual([PENDING, PENDING]);
+      expect(saved.at(-1)).toEqual([1, 1]);
+    }));
 });
 
 describe('formatSelection', () => {

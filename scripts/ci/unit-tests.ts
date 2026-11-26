@@ -1,5 +1,5 @@
 // 各 workspace 的单元测试入口（`bun run test:unit` / `test:changed` / `test:failed`）。
-//   --changed  相对 HEAD 的改动 → 改动包及其传递依赖者的目标
+//   --changed  相对 HEAD 的改动 → 改动包及其传递依赖者（含跨包相对导入）的目标
 //   --failed   只重跑上次失败的目标（node_modules/.cache/vibeterm-unit/last.json）
 //   --list     只打印选中的目标与原因
 //   --jobs N   并行度；缺省时若 PATH 上有 testq 则持有一个授权并以授权数并行，否则串行（CI）
@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { affectedFiles, loadGatewaySources } from './unit-gateway-imports';
 import {
   type RunRecord,
+  type Save,
   failedUnits,
   mergeRecord,
   orderByDuration,
@@ -22,11 +23,13 @@ import {
   isFullTrigger,
   selectTargets,
   targetLabel,
+  targetNode,
 } from './unit-select';
 import { ROOT, TARGETS, type TestTarget, expand, expandParallel } from './unit-targets';
 import { loadWorkspace } from './unit-workspace';
 
 export * from './unit-gateway-imports';
+export * from './unit-imports';
 export * from './unit-paths';
 export * from './unit-run';
 export * from './unit-select';
@@ -35,7 +38,7 @@ export * from './unit-workspace';
 
 export type Options = { changed: boolean; failed: boolean; list: boolean; jobs?: number };
 
-const TESTQ_ARGS = ['--want', '12', '--mem-per', '600', '--label', 'vibe-term unit'];
+const TESTQ_MAX_WORKERS = 12;
 
 export function parseArgs(argv: readonly string[]): Options {
   const opts: Options = { changed: false, failed: false, list: false };
@@ -91,7 +94,7 @@ function collectChangedFiles(): string[] {
 
 function selectionContext(): SelectContext {
   return {
-    workspace: loadWorkspace(ROOT),
+    workspace: loadWorkspace(ROOT, TARGETS.filter((t) => t.dir === '.').map(targetNode)),
     gatewayAffected: (changed) => affectedFiles(loadGatewaySources(ROOT), changed),
   };
 }
@@ -117,9 +120,10 @@ function plan(opts: Options): Plan {
   return { items: everything('全量'), note: `全局文件改动，全量运行：${triggers}` };
 }
 
-function reexecUnderTestq(): never {
+function reexecUnderTestq(want: number): never {
   const cmd = [process.execPath, process.argv[1], ...process.argv.slice(2)];
-  const result = spawnSync('testq', ['run', ...TESTQ_ARGS, '--', ...cmd], { stdio: 'inherit' });
+  const args = ['run', '--want', String(want), '--mem-per', '600', '--label', 'vibe-term unit'];
+  const result = spawnSync('testq', [...args, '--', ...cmd], { stdio: 'inherit' });
   process.exit(result.status ?? 1);
 }
 
@@ -144,13 +148,20 @@ async function main(): Promise<void> {
     console.log(formatSelection(items));
     return;
   }
-  if (needsTestqGrant(opts, process.env, Boolean(Bun.which('testq')))) reexecUnderTestq();
+  const parallelUnits = units ?? items.flatMap((i) => expandParallel(i.target));
+  const useTestq = parallelUnits.length > 1 && Boolean(Bun.which('testq'));
+  if (needsTestqGrant(opts, process.env, useTestq)) {
+    reexecUnderTestq(Math.min(TESTQ_MAX_WORKERS, parallelUnits.length));
+  }
   const jobs = resolveJobs(opts, process.env);
-  const all = units ?? items.map((i) => i.target).flatMap(jobs > 1 ? expandParallel : expand);
+  const all = units ?? (jobs > 1 ? parallelUnits : items.flatMap((i) => expand(i.target)));
   const prev = readRecord();
-  const results = await runUnits(jobs > 1 ? orderByDuration(all, prev) : all, jobs);
-  const record: RunRecord = { at: new Date().toISOString(), jobs, results };
-  writeRecord(opts.failed ? mergeRecord(prev, record) : record);
+  const startedAt = new Date().toISOString();
+  const save: Save = (partial) => {
+    const record: RunRecord = { at: startedAt, jobs, results: [...partial] };
+    writeRecord(opts.failed ? mergeRecord(prev, record) : record);
+  };
+  const results = await runUnits(jobs > 1 ? orderByDuration(all, prev) : all, jobs, save);
   process.exit(report(results) ? 1 : 0);
 }
 

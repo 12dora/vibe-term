@@ -38,7 +38,7 @@ function hasTests(dir: string): boolean {
 for (const entry of readdirSync(join(ROOT, GATEWAY, 'src'))) {
   const rel = join('src', entry);
   const isDir = statSync(join(ROOT, GATEWAY, rel)).isDirectory();
-  if (isDir ? !hasTests(join(ROOT, GATEWAY, rel)) : !/\.test\.ts$/.test(entry)) continue;
+  if (isDir ? !hasTests(join(ROOT, GATEWAY, rel)) : !/\.test\.tsx?$/.test(entry)) continue;
   TARGETS.push({ dir: GATEWAY, args: ['test', rel], retry: true });
 }
 
