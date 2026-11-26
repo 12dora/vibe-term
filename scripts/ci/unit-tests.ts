@@ -35,7 +35,7 @@ export * from './unit-workspace';
 
 export type Options = { changed: boolean; failed: boolean; list: boolean; jobs?: number };
 
-const TESTQ_ARGS = ['--want', '12', '--min', '2', '--mem-per', '600', '--label', 'vibe-term unit'];
+const TESTQ_ARGS = ['--want', '12', '--mem-per', '600', '--label', 'vibe-term unit'];
 
 export function parseArgs(argv: readonly string[]): Options {
   const opts: Options = { changed: false, failed: false, list: false };
