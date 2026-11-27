@@ -299,6 +299,7 @@ describe('mesh WS / exec streams', () => {
       pop: 'v1.q',
       popQuery: 'cid=c1',
       popForwarding: true,
+      idleClose: true,
     });
   });
 

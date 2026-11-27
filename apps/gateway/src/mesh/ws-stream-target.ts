@@ -95,7 +95,10 @@ export async function acceptWsStream(
   const carrier = new LinkStreamCarrier(stream, {
     logContext: { kind: 'mesh_link_stream', nodeId: opts.peerNodeId, ...(cid ? { cid } : {}) },
   });
-  const attached = opts.wsServer.attachStreamSession(carrier, { shareScope: share?.scope });
+  const attached = opts.wsServer.attachStreamSession(carrier, {
+    shareScope: share?.scope,
+    idleCloseSupported: open.idleClose === true,
+  });
   const teardown = wsStreamTeardown(stream, attached, {
     peerNodeId: opts.peerNodeId,
     cid,
@@ -237,6 +240,7 @@ export async function openWsStream(
     ...(share ? { share } : {}),
     ...(pop ? { pop: pop.proof, popQuery: pop.query } : {}),
     popForwarding: true,
+    idleClose: true,
   };
   const stream = await link.openStream(encodeJsonBytes(payload));
   return {

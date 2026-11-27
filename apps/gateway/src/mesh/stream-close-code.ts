@@ -6,12 +6,21 @@ const TERMINAL_RESET_PREFIX = 'vibeterm-close:';
 const LEGACY_TERMINAL_RESET_PREFIX = 'tmex-close:';
 
 /**
- * 终止性关闭码：节点端主动关闭该连接且重连也不会成功，Hub 收到后直接断浏览器，
- * 不再走 failover（否则要等重连超时才断，且丢掉原始关闭码）。
+ * 网关回收「证明过心跳却长时间无入站」的会话时用的关闭码。浏览器按普通断线重连；
+ * 它必须是终止码，否则 Hub 会 failover 并用缓存的视口声明在节点上复活这条僵尸会话。
+ */
+export const WS_CLOSE_IDLE_TIMEOUT = 4408;
+export const WS_CLOSE_IDLE_TIMEOUT_REASON = 'idle-timeout';
+
+/**
+ * 终止性关闭码：节点端主动关闭该连接，Hub 收到后直接把关闭码透给浏览器，
+ * 不再走 failover / 续流（否则要等重连超时才断，且丢掉原始关闭码）。
+ * 4401 / 4410 浏览器不再重连；4408 由浏览器自行新建连接。
  */
 export const TERMINAL_STREAM_CLOSE_CODES: ReadonlySet<number> = new Set([
   WS_CLOSE_LOGIN_REQUIRED,
   SHARE_WS_CLOSE_ENDED,
+  WS_CLOSE_IDLE_TIMEOUT,
 ]);
 
 export function isTerminalStreamCloseCode(code: number): boolean {

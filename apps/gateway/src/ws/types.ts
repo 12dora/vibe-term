@@ -34,6 +34,7 @@ export interface WebSocketServerDeps {
   loadDeviceTreeOrder: (deviceId: string) => DeviceTreeOrderRecord;
   saveWindowOrder: (deviceId: string, windowIds: string[]) => void;
   savePaneOrder: (deviceId: string, windowId: string, paneIds: string[]) => void;
+  now: () => number;
 }
 
 export const defaultDeps: WebSocketServerDeps = {
@@ -44,6 +45,7 @@ export const defaultDeps: WebSocketServerDeps = {
   loadDeviceTreeOrder: getDeviceTreeOrder,
   saveWindowOrder: setWindowOrder,
   savePaneOrder: setPaneOrder,
+  now: () => Date.now(),
 };
 
 export interface WebSocketServerOptions {

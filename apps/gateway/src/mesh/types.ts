@@ -128,6 +128,8 @@ export type WsStreamOpenPayload = {
   pop?: string;
   popQuery?: string;
   popForwarding?: boolean;
+  /** 入口能力：认得节点回收空闲会话的终止关闭码 4408，会把它透给浏览器而不是 failover 重放。 */
+  idleClose?: boolean;
 };
 
 export type TcpStreamOpenPayload = {

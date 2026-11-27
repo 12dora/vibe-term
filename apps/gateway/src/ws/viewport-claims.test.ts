@@ -368,8 +368,11 @@ describe('viewport claims', () => {
 
     expect(lastPolicy(resumed)).toMatchObject({ owner: true, cols: 80, rows: 24 });
     expect(lastPolicy(large)).toEqual(followerPolicy as never);
-    // 视口声明已经把窗口拉回 80x24，同尺寸的 resend 不再重复下发。
-    expect(recorder.resizePaneCalls).toEqual([['%0', 80, 24]]);
+    // 视口声明已经把窗口拉回 80x24；resend 不去重，仍强制再下发一次（同尺寸是空操作），但不广播策略。
+    expect(recorder.resizePaneCalls).toEqual([
+      ['%0', 80, 24],
+      ['%0', 80, 24],
+    ]);
   });
 
   test('sized follower TMUX_SELECT does not resize; owner select applies', () => {

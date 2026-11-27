@@ -9,6 +9,7 @@ import type { CanonicalFeedSession } from './canonical-feed-session';
 import { ERROR_CANONICAL_V11_REQUIRED, clientTooOldMessage } from './canonical-gate';
 import type { GatewaySession } from './gateway-session';
 import { helloS2CCapabilities } from './hello-connection-id';
+import { HEARTBEAT_CLIENT_IMPLS } from './viewport-liveness';
 
 export interface HelloNegotiateHost {
   sendError(
@@ -73,6 +74,7 @@ export async function negotiateHello(
   const serverMaxFrameBytes = wsBorsh.DEFAULT_MAX_FRAME_BYTES;
   ws.borshState.negotiated = true;
   ws.borshState.clientImpl = hello.clientImpl.slice(0, 64);
+  if (HEARTBEAT_CLIENT_IMPLS.has(ws.borshState.clientImpl)) ws.heartbeatExpected = true;
   ws.borshState.clientVersion = clientVersion;
   ws.borshState.maxFrameBytes = Math.min(hello.maxFrameBytes, serverMaxFrameBytes);
   if (!ws.shareScope) agentWsHub.registerClient(ws);

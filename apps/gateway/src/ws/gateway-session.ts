@@ -29,14 +29,29 @@ export class GatewaySession {
   readonly viewportClaims = new Map<string, ViewportClaim>();
   /** canonical v1.1 尺寸 epoch：`deviceId\0paneId` → 已接受的最大 sizeEpoch，用于丢弃过期尺寸。 */
   readonly paneSizeEpochs = new Map<string, bigint>();
+  /** 最近一次收到本会话任意入站帧的时刻（ms），任何 carrier 都算。 */
+  lastInboundAt: number;
+  /** 已知会定时发 PING（自家客户端的 HELLO，或实际发过 PING）：只有这类会话才能按入站静默判定失联。 */
+  heartbeatExpected = false;
+  /** 失联巡检已为本次静默重算过视口；收到入站帧即复位。 */
+  staleSwept = false;
+  /** 失联后先到的是分片：等整条消息重组并处理完再按最新声明重算一次视口。 */
+  reviveRecomputePending = false;
+  /**
+   * 空闲回收能否用 4408 关掉本会话：直连浏览器 WS 恒可以；mesh 流仅当入口在 OPEN 上声明了
+   * `idleClose`（旧入口会把 4408 当链路抖动 failover，重放缓存的 HELLO 与视口声明复活会话）。
+   */
+  idleClosable = false;
 
   constructor(options: {
     id?: string;
     primary: Carrier;
     borshState?: BorshSessionState;
     state?: SessionState;
+    now?: number;
   }) {
     this.id = options.id ?? crypto.randomUUID();
+    this.lastInboundAt = options.now ?? Date.now();
     this.primary = options.primary;
     this.activeCarrier = options.primary;
     this.borshState = options.borshState ?? createBorshSessionState();

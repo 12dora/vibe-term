@@ -67,6 +67,7 @@ function createHost() {
   const connections = new Map();
   const host = {
     connections,
+    deps: { now: () => Date.now() },
     sendError() {},
     sendEnvelope() {},
     refreshSnapshotPolling(deviceId: string) {

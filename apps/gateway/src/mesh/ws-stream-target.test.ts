@@ -4,9 +4,15 @@ import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import type { NodeSessionStore, NodeSessionVerifyReason } from '../auth/node-session-store';
 import type { WebSocketServer } from '../ws';
 import type { GatewaySession } from '../ws/gateway-session';
+import { openAdaptedWsStream } from './adapted-ws-stream';
 import { WS_CLOSE_LOGIN_REQUIRED, WS_SESSION_VERIFY_MS } from './mesh-deps';
 import { CID_MAX_LENGTH } from './mesh-session-registry';
-import { decodeTerminalStreamClose } from './stream-close-code';
+import {
+  WS_CLOSE_IDLE_TIMEOUT,
+  WS_CLOSE_IDLE_TIMEOUT_REASON,
+  decodeTerminalStreamClose,
+  isTerminalStreamClose,
+} from './stream-close-code';
 import {
   type GatewaySessionClose,
   WS_CLOSE_STREAM_TEARDOWN,
@@ -305,5 +311,87 @@ describe('真实 WebSocketServer + teardownBinding 形状的注册表', () => {
     await opened.send(HELLO);
     const closed = await opened.stream.closed;
     expect(decodeTerminalStreamClose(closed.message)?.code).toBe(WS_CLOSE_LOGIN_REQUIRED);
+  });
+});
+
+describe('空闲回收 4408 按入口能力协商', () => {
+  const PING = wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_PING,
+    wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, { nonce: 1, timeMs: 1n }),
+    2
+  );
+
+  async function nodeServer() {
+    const { WebSocketServer } = await import('../ws');
+    const { SESSION_IDLE_TIMEOUT_MS } = await import('../ws/viewport-liveness');
+    const clock = { now: 1_000 };
+    const server = new WebSocketServer({ deps: { now: () => clock.now } });
+    const { store } = countingStore(() => null);
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      void acceptWsStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: store,
+        wsServer: server,
+        onGatewaySession: () => true,
+        onGatewaySessionClose: (session, close) => {
+          if (!session.closed) server.closeSession(session, close?.code ?? 1006, 'teardown');
+        },
+      });
+    });
+    const reapLater = () => {
+      clock.now += SESSION_IDLE_TIMEOUT_MS + 1;
+      server.viewportLiveness.sweep();
+    };
+    return { server, link: a, reapLater };
+  }
+
+  function onlySession(server: WebSocketServer): GatewaySession {
+    const [session] = [...server.connectedClients];
+    if (!session) throw new Error('no gateway session');
+    return session;
+  }
+
+  test('新入口声明 idleClose：节点回收心跳会话，入口拿到的是终止码 4408（不 failover）', async () => {
+    const { server, link, reapLater } = await nodeServer();
+    const adapted = await openAdaptedWsStream(link, 'sid-1', 'tab-1');
+    const closed = new Promise<{ code?: number; reason?: string }>((resolve) =>
+      adapted.onClose(resolve)
+    );
+    await adapted.send(HELLO);
+    await adapted.send(PING);
+    await Bun.sleep(20);
+    const session = onlySession(server);
+    expect(session.idleClosable).toBe(true);
+    expect(session.heartbeatExpected).toBe(true);
+
+    reapLater();
+
+    expect(session.closed).toBe(true);
+    const info = await closed;
+    expect(info).toEqual({ code: WS_CLOSE_IDLE_TIMEOUT, reason: WS_CLOSE_IDLE_TIMEOUT_REASON });
+    expect(isTerminalStreamClose(info)).toBe(true);
+    server.closeAll();
+  });
+
+  test('旧入口未声明 idleClose：只做失联剔除，不发 4408 回收', async () => {
+    const { server, link, reapLater } = await nodeServer();
+    const stream = await link.openStream(
+      new TextEncoder().encode(
+        JSON.stringify({ type: 'ws', auth: 'sid-1', cid: 'tab-1', popForwarding: true })
+      )
+    );
+    await stream.write(HELLO);
+    await stream.write(PING);
+    await Bun.sleep(20);
+    const session = onlySession(server);
+    expect(session.idleClosable).toBe(false);
+    expect(session.heartbeatExpected).toBe(true);
+
+    reapLater();
+
+    expect(session.closed).toBe(false);
+    stream.reset('test-done');
+    server.closeAll();
   });
 });

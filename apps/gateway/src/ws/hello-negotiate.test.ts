@@ -131,3 +131,40 @@ describe('HELLO negotiate screenIntent', () => {
     expect(hello.capabilities).not.toContain(GATEWAY_CAPABILITY_HELLO_SCREEN_INTENT_V1);
   });
 });
+
+describe('HELLO negotiate 心跳预期', () => {
+  async function negotiate(clientImpl: string) {
+    const ws = createBorshTestWs();
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+      clientImpl,
+      clientVersion: '2.3.0',
+      maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+      supportsCompression: false,
+      supportsDiffSnapshot: false,
+    });
+    await negotiateHello(
+      {
+        sendError() {},
+        sendEnvelope() {},
+        closeSession() {},
+        getOrCreateCanonicalSession() {
+          return { applyHelloScreenIntent: async () => {} } as never;
+        },
+      },
+      ws,
+      1,
+      payload
+    );
+    return ws;
+  }
+
+  test('自家客户端 HELLO 即可判心跳（含 failover 重放的 HELLO）', async () => {
+    for (const impl of ['vibeterm-fe', 'tmex-fe', 'vibeterm-cli']) {
+      expect((await negotiate(impl)).heartbeatExpected).toBe(true);
+    }
+  });
+
+  test('未知客户端须实际发过 PING 才可判心跳', async () => {
+    expect((await negotiate('vibex-companion')).heartbeatExpected).toBe(false);
+  });
+});

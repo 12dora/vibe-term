@@ -5,6 +5,7 @@ import type { GatewaySession } from './gateway-session';
 import type { TmuxCommandHost } from './tmux-command-handlers';
 import { assertTmuxPaneId } from './tmux-pane-id';
 import type { DeviceConnectionEntry } from './types';
+import { isSessionStale } from './viewport-liveness';
 import {
   type ViewportWinner,
   applyWinnerGeometry,
@@ -51,6 +52,7 @@ function collectPolicyClaimants(
   extra?: GatewaySession
 ): Set<GatewaySession> {
   const claimants = new Set<GatewaySession>(entry.clients);
+  for (const session of entry.canonicalClients ?? []) claimants.add(session);
   if (extra) claimants.add(extra);
   return claimants;
 }
@@ -167,8 +169,8 @@ export function dropPaneSizeEpochs(session: GatewaySession, deviceId?: string): 
 
 /**
  * canonical v1.1 尺寸命令。
- * `change` = 浏览器视口声明（信任当前快照几何去重）；
- * `resend` = 暖切换 / 重连后的尺寸补发（不信任快照几何，强制重新下发）。
+ * `change` = 浏览器视口声明（按快照几何 / lastAppliedViewport 去重）；
+ * `resend` = 暖切换 / 重连后的尺寸补发（不做任何去重，强制把 winner 几何重新下发到 tmux）。
  */
 export function handleCanonicalResize(
   host: TmuxCommandHost,
@@ -187,7 +189,7 @@ export function handleCanonicalResize(
       rows: intent.rows,
       visible: true,
     },
-    { applyUnknown: true, distrustLive: resend }
+    { applyUnknown: true, forceGeometry: resend }
   );
 }
 
@@ -216,7 +218,7 @@ export function recordViewportClaim(
     rows: number;
     visible: boolean;
   },
-  options: { applyUnknown: boolean; skipResize?: boolean; distrustLive?: boolean }
+  options: { applyUnknown: boolean; skipResize?: boolean; forceGeometry?: boolean }
 ): ViewportWinner | null {
   const entry = host.connections.get(data.deviceId);
   if (!entry) return null;
@@ -237,14 +239,13 @@ export function recordViewportClaim(
     cols: data.cols,
     rows: data.rows,
     visible: data.visible,
-    at: Date.now(),
     sentPolicy: previous?.sentPolicy,
   });
   return applyViewportPolicy(host, data.deviceId, window.id, {
     extraSession: session,
     notifyFirst,
     skipResize: options.skipResize,
-    distrustLive: options.distrustLive,
+    forceGeometry: options.forceGeometry,
   });
 }
 
@@ -253,8 +254,9 @@ type ViewportPolicyOptions = {
   notifyFirst?: GatewaySession;
   seen?: Set<string>;
   skipResize?: boolean;
-  // 尺寸补发（geometryReason=resend）时不信任快照几何：该窗口可能自上次快照后已在 tmux 侧漂移。
-  distrustLive?: boolean;
+  // 尺寸补发（geometryReason=resend）：快照与 lastAppliedViewport 都可能与 tmux 实际几何不符，
+  // 跳过去重直接下发 winner 几何。
+  forceGeometry?: boolean;
 };
 
 export function applyViewportPolicy(
@@ -324,17 +326,17 @@ function applyResolvedViewportPolicy(
   claimants: Set<GatewaySession>,
   options: ViewportPolicyOptions
 ): ViewportWinner | null {
-  const winner = resolveWinner(collectWindowClaims(claimants, key));
+  const now = host.deps.now();
+  const arbitrating = [...claimants].filter((session) => !isSessionStale(session, now));
+  const winner = resolveWinner(collectWindowClaims(arbitrating, key));
   const windowAlive = entry.lastSnapshot?.session?.windows.some((window) => window.id === windowId);
   if (!windowAlive) return winner;
   const lastApplied = entry.lastAppliedViewport?.get(windowId);
   const previousWinnerId = entry.lastViewportWinnerId?.get(windowId) ?? null;
   const nextWinnerId = winner?.sessionId ?? null;
-  const geometry = applyWinnerGeometry(
-    winner,
-    lastApplied,
-    options.distrustLive ? undefined : liveWindowGeometry(entry, windowId)
-  );
+  const geometry = applyWinnerGeometry(winner, lastApplied, liveWindowGeometry(entry, windowId), {
+    force: options.forceGeometry === true,
+  });
   if (geometry) {
     if (!options.skipResize) {
       applyTermResizeToEntry(entry, geometry.paneId, geometry.cols, geometry.rows, {
@@ -356,7 +358,7 @@ function applyResolvedViewportPolicy(
   notifyClaimants(
     claimants,
     key,
-    previousWinnerId !== nextWinnerId || geometry != null,
+    previousWinnerId !== nextWinnerId || geometry?.changed === true,
     options.notifyFirst,
     (session) => ({
       owner: winner?.sessionId === session.id,

@@ -235,4 +235,41 @@ describe('DeviceConnectionRegistry 断开清理', () => {
     registry.clearIdleReleaseTimer(entry);
     registry.closeAll();
   });
+
+  test('重连失败时 clients 与仅 canonical 挂载的会话都清掉声明与尺寸 epoch', () => {
+    const deviceId = 'device-reconnect-failed';
+    const entry = fakeEntry();
+    const dropped: Array<[string, string, string | undefined]> = [];
+    const host = {
+      canonicalSessions: new Map(),
+      releaseConnectionEntry() {},
+      broadcastDeviceEvent() {},
+      dropViewportClaims(session: { id: string }, id?: string) {
+        dropped.push(['claims', session.id, id]);
+      },
+      dropPaneSizeEpochs(session: { id: string }, id?: string) {
+        dropped.push(['epochs', session.id, id]);
+      },
+      sendEnvelope() {},
+    } as unknown as DeviceConnectionRegistryHost;
+    const registry = new DeviceConnectionRegistry(host);
+    const both = createGatewaySession({ id: 'sess-both' });
+    const canonicalOnly = createGatewaySession({ id: 'sess-canonical' });
+    entry.clients.add(both);
+    entry.canonicalClients = new Set([both, canonicalOnly]);
+    registry.connections.set(deviceId, entry);
+
+    registry.finalizeReconnectFailure(deviceId, entry, { deviceId, type: 'disconnected' });
+
+    expect(dropped).toEqual([
+      ['claims', 'sess-both', deviceId],
+      ['epochs', 'sess-both', deviceId],
+      ['claims', 'sess-canonical', deviceId],
+      ['epochs', 'sess-canonical', deviceId],
+    ]);
+    expect(entry.clients.size).toBe(0);
+    expect(entry.canonicalClients?.size).toBe(0);
+    expect(registry.connections.has(deviceId)).toBe(false);
+    registry.closeAll();
+  });
 });

@@ -358,7 +358,7 @@ export class DeviceConnectionRegistry {
     for (const client of entry.canonicalClients ?? []) {
       this.host.canonicalSessions.get(client)?.detachDevice(deviceId);
     }
-    for (const client of entry.clients) {
+    for (const client of new Set([...entry.clients, ...(entry.canonicalClients ?? [])])) {
       this.host.dropViewportClaims?.(client, deviceId, { recompute: false });
       this.host.dropPaneSizeEpochs?.(client, deviceId);
     }

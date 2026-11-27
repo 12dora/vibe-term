@@ -1,7 +1,7 @@
 import { parseWindowLayoutSize } from './frame-utils';
 import type { DeviceConnectionEntry } from './types';
 // 视口仲裁：一个 tmux 窗口只有一份 PTY 几何。可见客户端中列数最小者持有整窗尺寸，
-// 避免窄屏溢出；更大的客户端跟随该尺寸。不可见声明不参与。
+// 避免窄屏溢出；更大的客户端跟随该尺寸。不可见声明不参与，失联会话由调用方在收集前剔除。
 // 并列取更小行数，再平取更小 sessionId。
 
 /** 上一次真正发给该会话的策略：再来任何声明时若与之不同就重发，丢一条也能靠下一次声明补回。 */
@@ -17,7 +17,6 @@ export interface ViewportClaim {
   cols: number;
   rows: number;
   visible: boolean;
-  at: number;
   sentPolicy?: ViewportSentPolicy;
 }
 
@@ -147,21 +146,25 @@ function sameViewportSize(
 export function applyWinnerGeometry(
   winner: ViewportWinner | null,
   lastApplied: { cols: number; rows: number } | undefined,
-  live?: { cols: number; rows: number }
-): { paneId: string; cols: number; rows: number; force: boolean } | null {
+  live?: { cols: number; rows: number },
+  options: { force?: boolean } = {}
+): { paneId: string; cols: number; rows: number; force: boolean; changed: boolean } | null {
   if (!winner) return null;
   const { cols, rows } = winner.claim;
   // 已经是目标尺寸就不必再下发；live 未知时退回本设备上次 apply 的记录。
   // 注意不能只看 lastApplied：切换到本设备从未 apply 过的窗口时它恒为空，
   // 而该窗口的 live 尺寸可能与视口不符，此时必须强制下发（见 single-pane-window-switch-resize）。
+  // force（resend）不去重：快照与 lastApplied 都是乐观记录，可能与 tmux 实际几何不符。
+  // changed=false 表示只是同尺寸纠偏（tmux 同尺寸 resize-window 是空操作），不必广播策略。
   const settled =
     live != null ? sameViewportSize(live, cols, rows) : sameViewportSize(lastApplied, cols, rows);
-  if (settled) return null;
+  if (settled && !options.force) return null;
   return {
     paneId: winner.claim.paneId,
     cols,
     rows,
     force: true,
+    changed: !settled,
   };
 }
 

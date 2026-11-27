@@ -24,7 +24,6 @@ function claim(
       cols: partial.cols,
       rows: partial.rows,
       visible: partial.visible ?? true,
-      at: partial.at ?? 1,
     },
   };
 }
@@ -124,9 +123,9 @@ describe('resolveWinner', () => {
 describe('takeViewportClaimKeys', () => {
   test('deletes matching keys and returns affected windows', () => {
     const claims = new Map<string, ViewportClaim>([
-      [viewportClaimKey('dev-a', '@1'), { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 }],
-      [viewportClaimKey('dev-a', '@2'), { paneId: '%1', cols: 80, rows: 24, visible: true, at: 1 }],
-      [viewportClaimKey('dev-b', '@1'), { paneId: '%2', cols: 80, rows: 24, visible: true, at: 1 }],
+      [viewportClaimKey('dev-a', '@1'), { paneId: '%0', cols: 80, rows: 24, visible: true }],
+      [viewportClaimKey('dev-a', '@2'), { paneId: '%1', cols: 80, rows: 24, visible: true }],
+      [viewportClaimKey('dev-b', '@1'), { paneId: '%2', cols: 80, rows: 24, visible: true }],
     ]);
 
     const affected = takeViewportClaimKeys(claims, 'dev-a');
@@ -139,7 +138,7 @@ describe('takeViewportClaimKeys', () => {
 
   test('without deviceId drops every claim', () => {
     const claims = new Map<string, ViewportClaim>([
-      [viewportClaimKey('dev-a', '@1'), { paneId: '%0', cols: 8, rows: 8, visible: true, at: 1 }],
+      [viewportClaimKey('dev-a', '@1'), { paneId: '%0', cols: 8, rows: 8, visible: true }],
     ]);
     expect(takeViewportClaimKeys(claims)).toHaveLength(1);
     expect(claims.size).toBe(0);
@@ -161,7 +160,6 @@ describe('collectWindowClaims', () => {
       cols: 80,
       rows: 24,
       visible: true,
-      at: 1,
     };
     const records = collectWindowClaims(
       [sessionClaims('a', [[key, visible]]), sessionClaims('b')],
@@ -175,7 +173,7 @@ describe('applyWinnerGeometry', () => {
   test('returns null when there is no winner or last-applied geometry is unchanged', () => {
     const winner = {
       sessionId: 'a',
-      claim: { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 },
+      claim: { paneId: '%0', cols: 80, rows: 24, visible: true },
     };
     expect(applyWinnerGeometry(null, { cols: 80, rows: 24 })).toBeNull();
     expect(applyWinnerGeometry(winner, { cols: 80, rows: 24 })).toBeNull();
@@ -185,13 +183,14 @@ describe('applyWinnerGeometry', () => {
   test('applies when this window has never been resized, but skips when the snapshot already matches', () => {
     const winner = {
       sessionId: 'a',
-      claim: { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 },
+      claim: { paneId: '%0', cols: 80, rows: 24, visible: true },
     };
     expect(applyWinnerGeometry(winner, undefined)).toEqual({
       paneId: '%0',
       cols: 80,
       rows: 24,
       force: true,
+      changed: true,
     });
     expect(applyWinnerGeometry(winner, undefined, { cols: 80, rows: 24 })).toBeNull();
   });
@@ -199,34 +198,52 @@ describe('applyWinnerGeometry', () => {
   test('forces a resize when last-applied matches but live tmux geometry has drifted', () => {
     const winner = {
       sessionId: 'a',
-      claim: { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 },
+      claim: { paneId: '%0', cols: 80, rows: 24, visible: true },
     };
     expect(applyWinnerGeometry(winner, { cols: 80, rows: 24 }, { cols: 60, rows: 18 })).toEqual({
       paneId: '%0',
       cols: 80,
       rows: 24,
       force: true,
+      changed: true,
     });
   });
 
   test('forces a resize when the claimed size changes', () => {
     const winner = {
       sessionId: 'a',
-      claim: { paneId: '%0', cols: 120, rows: 40, visible: true, at: 1 },
+      claim: { paneId: '%0', cols: 120, rows: 40, visible: true },
     };
     expect(applyWinnerGeometry(winner, { cols: 80, rows: 24 })).toEqual({
       paneId: '%0',
       cols: 120,
       rows: 40,
       force: true,
+      changed: true,
     });
+  });
+
+  test('force (resend) applies even when live and last-applied both match the winner', () => {
+    const winner = {
+      sessionId: 'a',
+      claim: { paneId: '%0', cols: 80, rows: 24, visible: true },
+    };
+    const settled = { cols: 80, rows: 24 };
+    expect(applyWinnerGeometry(winner, settled, settled, { force: true })).toEqual({
+      paneId: '%0',
+      cols: 80,
+      rows: 24,
+      force: true,
+      changed: false,
+    });
+    expect(applyWinnerGeometry(null, settled, settled, { force: true })).toBeNull();
   });
 });
 
 describe('reconcileViewportClaims', () => {
   test('re-keys claims whose pane moved to another window and reports the new window', () => {
     const key = viewportClaimKey('dev-a', '@1');
-    const claim: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 };
+    const claim: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true };
     const session = sessionClaims('a', [[key, claim]]);
 
     const moved = reconcileViewportClaims([session], key, '@1', (paneId) =>
@@ -241,7 +258,7 @@ describe('reconcileViewportClaims', () => {
   test('drops claims whose pane no longer exists', () => {
     const key = viewportClaimKey('dev-a', '@1');
     const session = sessionClaims('a', [
-      [key, { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 }],
+      [key, { paneId: '%0', cols: 80, rows: 24, visible: true }],
     ]);
 
     expect(reconcileViewportClaims([session], key, '@1', () => null)).toEqual([]);
@@ -250,7 +267,7 @@ describe('reconcileViewportClaims', () => {
 
   test('keeps claims whose pane still belongs to the window', () => {
     const key = viewportClaimKey('dev-a', '@1');
-    const visible: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 };
+    const visible: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true };
     const session = sessionClaims('a', [[key, visible]]);
 
     expect(reconcileViewportClaims([session], key, '@1', () => '@1')).toEqual([]);
@@ -260,9 +277,9 @@ describe('reconcileViewportClaims', () => {
 
 describe('rebindAllViewportClaims', () => {
   test('re-keys moved panes, drops missing panes, and reports source and destination windows', () => {
-    const moved: ViewportClaim = { paneId: '%0', cols: 160, rows: 48, visible: true, at: 1 };
-    const gone: ViewportClaim = { paneId: '%9', cols: 80, rows: 24, visible: true, at: 1 };
-    const stay: ViewportClaim = { paneId: '%2', cols: 80, rows: 24, visible: true, at: 1 };
+    const moved: ViewportClaim = { paneId: '%0', cols: 160, rows: 48, visible: true };
+    const gone: ViewportClaim = { paneId: '%9', cols: 80, rows: 24, visible: true };
+    const stay: ViewportClaim = { paneId: '%2', cols: 80, rows: 24, visible: true };
     const session = sessionClaims('a', [
       [viewportClaimKey('dev-a', '@1'), moved],
       [viewportClaimKey('dev-a', '@3'), gone],
@@ -288,7 +305,7 @@ describe('rebindAllViewportClaims', () => {
 describe('notifyClaimants', () => {
   test('sends to every claimant on broadcast, otherwise only notifyFirst', () => {
     const key = viewportClaimKey('dev-a', '@1');
-    const claim: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 };
+    const claim: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true };
     const first = sessionClaims('a', [[key, { ...claim }]]);
     const second = sessionClaims('b', [[key, { ...claim }]]);
     const sent: string[] = [];
@@ -312,7 +329,7 @@ describe('notifyClaimants', () => {
 
   test('resends whenever the policy differs from what the session last received', () => {
     const key = viewportClaimKey('dev-a', '@1');
-    const claim: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 };
+    const claim: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true };
     const follower = sessionClaims('b', [[key, claim]]);
     const sent: string[] = [];
     const send = (session: { id: string }) => {

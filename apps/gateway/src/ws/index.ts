@@ -47,6 +47,7 @@ import { TerminalOutputMetrics } from './terminal-output-metrics';
 import { ThemeSettingsBroadcaster, type ThemeSettingsHost } from './theme-settings-broadcaster';
 import { WebSocketServerTmuxFacade } from './tmux-command-facade';
 import type { TmuxCommandHost } from './tmux-command-handlers';
+import { applyViewportPolicy } from './tmux-geometry-handlers';
 import {
   type DeviceConnectionEntry,
   type GatewaySocketData,
@@ -54,6 +55,7 @@ import {
   type WebSocketServerOptions,
   defaultDeps,
 } from './types';
+import { ViewportLiveness } from './viewport-liveness';
 import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 import { WindowMemoryBroadcast, bindWindowMemoryBroadcast } from './window-memory-broadcast';
 
@@ -85,6 +87,7 @@ export class WebSocketServer
   private readonly deviceLatency: DeviceLatencyBroadcast;
   private readonly windowMemory: WindowMemoryBroadcast;
   private readonly borshHandlers: BorshKindHandlerMap;
+  readonly viewportLiveness: ViewportLiveness;
   private inboundCarrier: Carrier | null = null;
 
   get connections() {
@@ -139,6 +142,13 @@ export class WebSocketServer
     bindWindowMemoryBroadcast(this.windowMemory);
     this.borshHandlers = createBorshKindHandlers(this);
     this.shareIndex.bind(this);
+    this.viewportLiveness = new ViewportLiveness({
+      connectedClients: this.connectedClients,
+      deps: this.deps,
+      applyViewportPolicy: (deviceId, windowId, seen) =>
+        applyViewportPolicy(this, deviceId, windowId, { seen }),
+      closeSession: (session, code, reason) => this.closeSession(session, code, reason),
+    });
   }
 
   closeShareSessions(shareId: string, code?: number, reason?: string): number {
@@ -178,6 +188,7 @@ export class WebSocketServer
     }
     const carrier = new BunSocketCarrier(ws);
     const session = new GatewaySession({ primary: carrier });
+    session.idleClosable = true;
     carrier.logContext.sessionId = session.id;
     ws.data = { ...ws.data, session, carrier };
     return session;
@@ -210,12 +221,14 @@ export class WebSocketServer
       gatewayWebSocketSendGuard.forget(carrier);
     };
     sessionStateStore.create(session);
+    session.lastInboundAt = this.deps.now();
     this.connectedClients.add(session);
+    this.viewportLiveness.start();
   }
 
   attachStreamSession(
     carrier: Carrier,
-    options: { shareScope?: ShareScope } = {}
+    options: { shareScope?: ShareScope; idleCloseSupported?: boolean } = {}
   ): {
     session: GatewaySession;
     onMessage: (bytes: Uint8Array) => void;
@@ -226,6 +239,7 @@ export class WebSocketServer
     const session = new GatewaySession({ primary: carrier });
     const ctx = carrier.logContext ?? { kind: 'physical_browser_ws' as const };
     carrier.logContext = { ...ctx, sessionId: session.id };
+    session.idleClosable = ctx.kind !== 'mesh_link_stream' || options.idleCloseSupported === true;
     this.handleOpen(session, options);
     carrier.onDrain(() => {
       this.handleDrain(session, carrier);
@@ -322,20 +336,17 @@ export class WebSocketServer
     if (session.closed) {
       return;
     }
+    const revived = this.viewportLiveness.stampInbound(session, envelope.kind);
 
     if (envelope.kind === wsBorsh.KIND_CHUNK) {
+      this.viewportLiveness.holdRevival(session, revived);
       try {
         const chunk = wsBorsh.decodeChunk(envelope.payload);
         const reassembled = session.borshState.chunkReassembler.addChunk(chunk);
         if (!reassembled) {
           return;
         }
-        void this.handleBorshMessage(
-          session,
-          reassembled.kind,
-          reassembled.seq,
-          reassembled.payload
-        );
+        this.dispatchInbound(session, reassembled, this.viewportLiveness.takeRevival(session));
         return;
       } catch (err) {
         const e = err instanceof wsBorsh.WsBorshError ? err : null;
@@ -346,11 +357,23 @@ export class WebSocketServer
           e?.message ?? 'Invalid chunk',
           e?.retryable ?? false
         );
+        const revival = this.viewportLiveness.takeRevival(session);
+        this.viewportLiveness.afterHandled(session, undefined, revival);
         return;
       }
     }
 
-    void this.handleBorshMessage(session, envelope.kind, envelope.seq, envelope.payload);
+    // 失联后若只到过未重组完的分片（流随后中止 / 超时），复活重算由这条完整消息接手
+    this.dispatchInbound(session, envelope, this.viewportLiveness.takeRevival(session) || revived);
+  }
+
+  private dispatchInbound(
+    session: GatewaySession,
+    message: { kind: number; seq: number; payload: Uint8Array },
+    revived: boolean
+  ): void {
+    const handled = this.handleBorshMessage(session, message.kind, message.seq, message.payload);
+    this.viewportLiveness.afterHandled(session, handled, revived);
   }
 
   handleDrain(ws: ServerWebSocket<GatewaySocketData> | GatewaySession, carrier?: Carrier): void {
@@ -498,6 +521,7 @@ export class WebSocketServer
       code,
       reason
     );
+    if (this.connectedClients.size === 0) this.viewportLiveness.stop();
   }
 
   updateDefaultWorkingDir(deviceId: string, dir: string | undefined): void {
@@ -514,6 +538,7 @@ export class WebSocketServer
   }
 
   closeAll(): void {
+    this.viewportLiveness.stop();
     for (const session of this.canonicalSessions.values()) session.close();
     this.canonicalSessions.clear();
     this.shareIndex.dispose();

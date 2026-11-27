@@ -21,7 +21,7 @@ function waitStreamCloseInfo(stream: Pick<LinkStream, 'closed'>): Promise<Stream
 
 /**
  * 普通收尾（head-timeout / link-closed / retired / peer-rst / aborted）原样透传，
- * 只有编码过的终止 RST 才是 4401 / 4410。切勿把链路抖动改写成 NODE_LOGIN_REQUIRED。
+ * 只有编码过的终止 RST 才是 4401 / 4408 / 4410。切勿把链路抖动改写成 NODE_LOGIN_REQUIRED。
  */
 function adaptedCloseFromStream(info: StreamCloseInfo): CloseInfo {
   if (info.reason === 'rst') {
