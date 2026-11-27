@@ -1,27 +1,21 @@
-# 2.20.0
+# 2.20.1
 
-_2026-11-25_
+_2026-11-27_
 
 ## English
 
-### Features
-
-- **Predictive echo**: on high-latency connections the terminal shows what you type immediately, mosh-style, and reconciles it with the server's echo; characters still awaiting confirmation are underlined. It stays off in full-screen apps, password prompts and while scrolled back, and backs off automatically after repeated mispredictions. Settings → Terminal → Predictive echo: Auto (default, on when the link RTT is 50 ms or more) / On / Off.
-- **Faster recovery from packet loss between nodes**: node-to-node WebRTC links now send a redundant copy of small messages (keystrokes, small terminal output, control frames) on an extra unordered channel, so a single lost packet no longer stalls the terminal for a retransmission timeout. Both nodes must run 2.20.0; older nodes keep the previous behaviour. Disable with `VIBETERM_DC_FAST_PATH=0`. Counters are shown in `vibeterm nodes show <node>` (`dcFastPath`).
-
 ### Bug Fixes
 
-- **No duplicate messages under backlog**: a DataChannel send that the native layer queued is no longer retried, which could deliver the same message twice when the channel was congested.
+- **Desktop no longer stuck at phone size**: after viewing a terminal on a phone, locking the phone or leaving the browser could keep the desktop at the phone's narrow size, sometimes even after a reload, and occasionally garbled. The server now drops a client that has gone silent: within about 45 seconds the remaining devices get their full size back, and a session silent for 3 minutes is closed. A phone that wakes up reconnects and reclaims its size as usual. For terminals reached through another node, both nodes should run 2.20.1.
+- **Reload restores the correct size**: reloading or reconnecting always re-applies the terminal size, even when the server believed it was already set.
+- **Faster hand-off when a page goes to the background**: mobile browsers that close or freeze the page without a visibility change now release the terminal size immediately and claim it again when the page comes back. Size changes made while the page is in the background are applied once it is active again.
 
 ---
 
 ## 中文
 
-### 新功能
-
-- **预测回显**：高延迟连接下，输入会像 mosh 一样先在本地显示，再与服务器回显对账；尚未确认的字符带下划线。全屏程序、密码输入、回看历史时不启用，连续预测失误会自动暂停。「设置 → 终端 → 预测回显」：自动（默认，链路 RTT 不低于 50 ms 时开启）/ 开启 / 关闭。
-- **节点间丢包恢复更快**：节点之间的 WebRTC 链路会把按键、小段终端输出、控制帧等小消息在一条无序通道上额外发送一份，单个丢包不再让终端卡住一个重传超时。两端都需为 2.20.0，旧版本节点保持原有行为。可用 `VIBETERM_DC_FAST_PATH=0` 关闭；计数见 `vibeterm nodes show <node>` 的 `dcFastPath`。
-
 ### 问题修复
 
-- **拥塞时不再重复发送**：底层已排队的 DataChannel 消息不再被重试，避免通道拥塞时同一条消息送达两次。
+- **电脑端不再卡在手机尺寸**：用手机看过终端后锁屏或离开浏览器，电脑端可能一直保持手机的窄尺寸，刷新也不一定恢复，偶尔还会显示错乱。现在服务器会剔除已无响应的客户端：约 45 秒内其余设备恢复完整尺寸，无响应满 3 分钟的会话会被关闭。手机唤醒后照常重连并重新取得尺寸。经其他节点访问的终端，两端节点都需升级到 2.20.1。
+- **刷新后恢复正确尺寸**：刷新或重连时总会重新下发终端尺寸，即使服务器认为尺寸已经一致。
+- **页面切到后台时更快交还尺寸**：移动端浏览器关闭或冻结页面而未触发可见性变化时，现在也会立即交还终端尺寸，页面回到前台后重新声明；后台期间的尺寸变化在页面恢复后补发。
