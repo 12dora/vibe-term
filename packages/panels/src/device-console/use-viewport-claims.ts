@@ -6,6 +6,7 @@
 
 import { useRuntime } from '@vibeterm/stores/react';
 import { type RefObject, useEffect, useRef } from 'react';
+import { type PageActivityTracker, createPageActivityTracker } from './page-activity';
 
 /** 容器就绪前的重试节奏：终端实例是异步 boot 的，首帧往往量不到 */
 const MEASURE_RETRY_MS = 120;
@@ -82,23 +83,96 @@ export type ViewportClaimAction =
   | { kind: 'retry' }
   | { kind: 'skip' };
 
-/** 一次声明尝试的判定：页面不可见就撤回，量不到尺寸就重试 */
+/** 一次声明尝试的判定：页面不活跃（隐藏 / pagehide / freeze）就撤回，量不到尺寸就重试 */
 export function resolveViewportClaim({
-  documentVisible,
+  pageActive,
   measured,
   lastSize,
 }: {
-  documentVisible: boolean;
+  pageActive: boolean;
   measured: ViewportClaimSize | null;
   lastSize: ViewportClaimSize | null;
 }): ViewportClaimAction {
-  if (!documentVisible) {
+  if (!pageActive) {
     const size = lastSize ?? measured;
     if (!size) return { kind: 'skip' };
     return { kind: 'claim', cols: size.cols, rows: size.rows, visible: false };
   }
   if (!measured) return { kind: 'retry' };
   return { kind: 'claim', cols: measured.cols, rows: measured.rows, visible: true };
+}
+
+export interface ViewportClaimBinding {
+  restart(): void;
+  dispose(): void;
+}
+
+/** 把页面活跃度变化接到声明发送：不活跃即撤回，pageshow/resume 回来必须原样重发 */
+export function bindViewportClaims({
+  sender,
+  tracker,
+  deviceId,
+  paneId,
+  measure,
+}: {
+  sender: ViewportClaimSender;
+  tracker: PageActivityTracker;
+  deviceId: string;
+  paneId: string;
+  measure: () => ViewportClaimSize | null;
+}): ViewportClaimBinding {
+  // 每次重新成为可见面（或重连）都要重新声明：网关侧的旧声明可能已随会话消失
+  sender.forget(deviceId, paneId);
+
+  let attempts = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const cancelRetry = (): void => {
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    timer = undefined;
+  };
+
+  const push = (): void => {
+    cancelRetry();
+    const action = resolveViewportClaim({
+      pageActive: tracker.isActive(),
+      measured: measure(),
+      lastSize: sender.lastSize(deviceId, paneId),
+    });
+    if (action.kind === 'skip') return;
+    if (action.kind === 'retry') {
+      if (attempts >= MEASURE_MAX_ATTEMPTS) return;
+      attempts += 1;
+      timer = setTimeout(push, MEASURE_RETRY_MS);
+      return;
+    }
+    attempts = 0;
+    sender.claim(deviceId, paneId, { cols: action.cols, rows: action.rows }, action.visible);
+  };
+
+  const restart = (): void => {
+    attempts = 0;
+    push();
+  };
+
+  restart();
+
+  const unsubscribe = tracker.subscribe((event, active) => {
+    if (active && (event === 'pageshow' || event === 'resume')) {
+      sender.forget(deviceId, paneId);
+    }
+    restart();
+  });
+
+  return {
+    restart,
+    dispose() {
+      cancelRetry();
+      unsubscribe();
+      sender.release(deviceId, paneId);
+    },
+  };
 }
 
 export interface ViewportClaimsOptions {
@@ -137,55 +211,29 @@ export function useViewportClaims({
     if (!sender || !enabled || !deviceId || !paneId) return;
     if (typeof window === 'undefined') return;
 
-    const doc = typeof document === 'undefined' ? null : document;
-    // 每次重新成为可见面（或重连）都要重新声明：网关侧的旧声明可能已随会话消失
-    sender.forget(deviceId, paneId);
-
-    let attempts = 0;
-    let timer: number | undefined;
-
-    const cancelRetry = (): void => {
-      if (timer === undefined) return;
-      window.clearTimeout(timer);
-      timer = undefined;
-    };
-
-    const push = (): void => {
-      cancelRetry();
-      const action = resolveViewportClaim({
-        documentVisible: doc === null || doc.visibilityState !== 'hidden',
-        measured: measureRef.current(),
-        lastSize: sender.lastSize(deviceId, paneId),
-      });
-      if (action.kind === 'skip') return;
-      if (action.kind === 'retry') {
-        if (attempts >= MEASURE_MAX_ATTEMPTS) return;
-        attempts += 1;
-        timer = window.setTimeout(push, MEASURE_RETRY_MS);
-        return;
-      }
-      attempts = 0;
-      sender.claim(deviceId, paneId, { cols: action.cols, rows: action.rows }, action.visible);
-    };
-
-    const restart = (): void => {
-      attempts = 0;
-      push();
-    };
-
-    restart();
+    const tracker = createPageActivityTracker(
+      typeof document === 'undefined' ? null : document,
+      window
+    );
+    const binding = bindViewportClaims({
+      sender,
+      tracker,
+      deviceId,
+      paneId,
+      measure: () => measureRef.current(),
+    });
 
     const container = containerRef.current;
     const observer =
-      typeof ResizeObserver === 'undefined' || !container ? null : new ResizeObserver(restart);
+      typeof ResizeObserver === 'undefined' || !container
+        ? null
+        : new ResizeObserver(binding.restart);
     observer?.observe(container as Element);
-    doc?.addEventListener('visibilitychange', restart);
 
     return () => {
-      cancelRetry();
       observer?.disconnect();
-      doc?.removeEventListener('visibilitychange', restart);
-      sender.release(deviceId, paneId);
+      binding.dispose();
+      tracker.dispose();
     };
   }, [containerRef, deviceId, enabled, paneId]);
 }

@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { createPageActivityTracker } from './page-activity';
 import {
   type ViewportClaim,
+  bindViewportClaims,
   createViewportClaimSender,
   resolveViewportClaim,
 } from './use-viewport-claims';
@@ -90,7 +92,7 @@ describe('resolveViewportClaim', () => {
   test('claims the measured geometry while the document is visible', () => {
     expect(
       resolveViewportClaim({
-        documentVisible: true,
+        pageActive: true,
         measured: { cols: 100, rows: 30 },
         lastSize: null,
       })
@@ -98,15 +100,15 @@ describe('resolveViewportClaim', () => {
   });
 
   test('retries while the surface cannot be measured yet', () => {
-    expect(resolveViewportClaim({ documentVisible: true, measured: null, lastSize: null })).toEqual(
-      { kind: 'retry' }
-    );
+    expect(resolveViewportClaim({ pageActive: true, measured: null, lastSize: null })).toEqual({
+      kind: 'retry',
+    });
   });
 
   test('withdraws with the last known geometry when the document is hidden', () => {
     expect(
       resolveViewportClaim({
-        documentVisible: false,
+        pageActive: false,
         measured: null,
         lastSize: { cols: 100, rows: 30 },
       })
@@ -114,8 +116,126 @@ describe('resolveViewportClaim', () => {
   });
 
   test('a hidden document with nothing measured yet claims nothing', () => {
-    expect(
-      resolveViewportClaim({ documentVisible: false, measured: null, lastSize: null })
-    ).toEqual({ kind: 'skip' });
+    expect(resolveViewportClaim({ pageActive: false, measured: null, lastSize: null })).toEqual({
+      kind: 'skip',
+    });
+  });
+});
+
+class FakeTarget {
+  visibilityState: string | undefined = 'visible';
+  private readonly handlers = new Map<string, Set<() => void>>();
+
+  addEventListener(type: string, listener: () => void): void {
+    const set = this.handlers.get(type) ?? new Set();
+    set.add(listener);
+    this.handlers.set(type, set);
+  }
+
+  removeEventListener(type: string, listener: () => void): void {
+    this.handlers.get(type)?.delete(listener);
+  }
+
+  emit(type: string): void {
+    for (const handler of [...(this.handlers.get(type) ?? [])]) handler();
+  }
+
+  listenerCount(): number {
+    let count = 0;
+    for (const set of this.handlers.values()) count += set.size;
+    return count;
+  }
+}
+
+function boundHarness() {
+  const doc = new FakeTarget();
+  const win = new FakeTarget();
+  const { sender, sent } = harness();
+  const tracker = createPageActivityTracker(doc, win);
+  const binding = bindViewportClaims({
+    sender,
+    tracker,
+    deviceId: 'dev-a',
+    paneId: '%1',
+    measure: () => ({ cols: 100, rows: 30 }),
+  });
+  return { doc, win, sent, tracker, binding };
+}
+
+describe('bindViewportClaims lifecycle', () => {
+  test('claims visible on bind', () => {
+    const { sent } = boundHarness();
+
+    expect(sent.map((entry) => entry.claim)).toEqual([{ cols: 100, rows: 30, visible: true }]);
+  });
+
+  test('pagehide withdraws the claim exactly once', () => {
+    const { win, sent } = boundHarness();
+
+    win.emit('pagehide');
+    win.emit('pagehide');
+
+    expect(sent.map((entry) => entry.claim.visible)).toEqual([true, false]);
+    expect(sent[1]?.claim).toEqual({ cols: 100, rows: 30, visible: false });
+  });
+
+  test('pageshow re-sends the visible claim even when nothing changed', () => {
+    const { win, sent } = boundHarness();
+
+    win.emit('pageshow');
+
+    expect(sent.map((entry) => entry.claim.visible)).toEqual([true, true]);
+  });
+
+  test('pageshow after pagehide restores the claim', () => {
+    const { win, sent } = boundHarness();
+
+    win.emit('pagehide');
+    win.emit('pageshow');
+
+    expect(sent.map((entry) => entry.claim.visible)).toEqual([true, false, true]);
+  });
+
+  test('freeze withdraws, resume re-declares', () => {
+    const { doc, sent } = boundHarness();
+
+    doc.emit('freeze');
+    doc.emit('resume');
+
+    expect(sent.map((entry) => entry.claim.visible)).toEqual([true, false, true]);
+  });
+
+  test('resume while the document is still hidden does not light the claim', () => {
+    const { doc, sent } = boundHarness();
+
+    doc.emit('freeze');
+    doc.visibilityState = 'hidden';
+    doc.emit('resume');
+
+    expect(sent.map((entry) => entry.claim.visible)).toEqual([true, false]);
+  });
+
+  test('visibilitychange keeps working', () => {
+    const { doc, sent } = boundHarness();
+
+    doc.visibilityState = 'hidden';
+    doc.emit('visibilitychange');
+    doc.visibilityState = 'visible';
+    doc.emit('visibilitychange');
+
+    expect(sent.map((entry) => entry.claim.visible)).toEqual([true, false, true]);
+  });
+
+  test('dispose releases the claim and removes every listener', () => {
+    const { doc, win, sent, tracker, binding } = boundHarness();
+
+    binding.dispose();
+    tracker.dispose();
+    win.emit('pageshow');
+    doc.emit('resume');
+
+    expect(sent.map((entry) => entry.claim.visible)).toEqual([true, false]);
+    expect(doc.listenerCount()).toBe(0);
+    expect(win.listenerCount()).toBe(0);
   });
 });

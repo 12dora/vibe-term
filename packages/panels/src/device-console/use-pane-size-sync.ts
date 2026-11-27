@@ -6,6 +6,8 @@ import type { TmuxPane } from '@vibeterm/shared';
 import { useRuntime } from '@vibeterm/stores/react';
 import type { TerminalRef } from '@vibeterm/terminal-ui';
 import { type RefObject, useCallback, useEffect, useState } from 'react';
+import type { SizeReportKind } from './page-activity';
+import { usePageGatedSizeReports } from './use-page-gated-size-reports';
 import type { PaneSelectionRefs } from './use-pane-selection-state';
 import { useRemotePaneSize } from './use-remote-pane-size';
 
@@ -51,35 +53,34 @@ export function usePaneSizeSync({
     terminalRef.current?.runPostSelectResize();
   }, [deviceConnected, stackedLayoutTarget, terminalRef]);
 
-  // 直接读 store，避免回调依赖不稳定
-  const handleResize = useCallback(
-    (cols: number, rows: number) => {
-      if (!deviceId || !resolvedPaneId) return;
-      const stackedWindowId = stackedLayoutTargetRef.current;
-      if (stackedWindowId) {
-        runtime.stores.tmux.getState().applyStackedLayout(deviceId, stackedWindowId, cols, rows);
-        return;
-      }
-      if (isMobileRef.current && !hasWindowSnapshotRef.current) return;
-      runtime.stores.tmux.getState().resizePane(deviceId, resolvedPaneId, cols, rows);
-      setLocalReportRevision((revision) => revision + 1);
-    },
-    [deviceId, hasWindowSnapshotRef, isMobileRef, resolvedPaneId, runtime, stackedLayoutTargetRef]
+  const dispatchReport = (kind: SizeReportKind, cols: number, rows: number): void => {
+    if (!deviceId || !resolvedPaneId) return;
+    const stackedWindowId = stackedLayoutTargetRef.current;
+    if (stackedWindowId) {
+      runtime.stores.tmux.getState().applyStackedLayout(deviceId, stackedWindowId, cols, rows);
+      return;
+    }
+    if (isMobileRef.current && !hasWindowSnapshotRef.current) return;
+    const tmux = runtime.stores.tmux.getState();
+    if (kind === 'sync') {
+      tmux.syncPaneSize(deviceId, resolvedPaneId, cols, rows);
+    } else {
+      tmux.resizePane(deviceId, resolvedPaneId, cols, rows);
+    }
+    setLocalReportRevision((revision) => revision + 1);
+  };
+  const gate = usePageGatedSizeReports(
+    dispatchReport,
+    `${deviceId ?? ''}\0${resolvedPaneId ?? ''}\0${deviceConnected}\0${isSplitView}`
   );
 
+  const handleResize = useCallback(
+    (cols: number, rows: number) => gate.submit('resize', cols, rows),
+    [gate]
+  );
   const handleSync = useCallback(
-    (cols: number, rows: number) => {
-      if (!deviceId || !resolvedPaneId) return;
-      const stackedWindowId = stackedLayoutTargetRef.current;
-      if (stackedWindowId) {
-        runtime.stores.tmux.getState().applyStackedLayout(deviceId, stackedWindowId, cols, rows);
-        return;
-      }
-      if (isMobileRef.current && !hasWindowSnapshotRef.current) return;
-      runtime.stores.tmux.getState().syncPaneSize(deviceId, resolvedPaneId, cols, rows);
-      setLocalReportRevision((revision) => revision + 1);
-    },
-    [deviceId, hasWindowSnapshotRef, isMobileRef, resolvedPaneId, runtime, stackedLayoutTargetRef]
+    (cols: number, rows: number) => gate.submit('sync', cols, rows),
+    [gate]
   );
 
   const handleResizeSettled = useCallback(() => {
