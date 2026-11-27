@@ -185,7 +185,7 @@ CA 指纹从中继本机 `GET /api/tls` 的 `caFingerprint` 读取（64 位小�
 
 | 选项 | 落库值 | 行为 |
 |---|---|---|
-| 智能 | `auto`（默认） | 测直连与中继 RTT，连续样本过滞环后切换。终端 / 指令 / 端口映射跟低延迟路径；本轮每对端一条 live，文件传输与交互共用 |
+| 智能 | `auto`（默认） | 测直连与中继 RTT，连续样本过滞环后切换。终端 / 指令 / 端口映射跟低延迟路径；每对端一条 live，文件传输与交互共用 |
 | 直连 | `direct` | 尽量直连（dc > ws-secure > relay）；直连不可用才走中继。不因中继更快而降级 |
 | 中继 | `relay` | 所有连接经中继；拒收并忽略入站直连（对端熔断自行退避） |
 
@@ -441,7 +441,7 @@ vibeterm mesh keylog status
 |---|---|---|
 | node 角色无 `[uplink]` 日志、或一直连不上中继 | 零中继时 uplink 空闲、不拨号，这是预期。已配置中继时每次尝试打 `[uplink] connect failed … attempt=<n> reason=<code> next_retry_ms=<delay>`（同一 reason 最多 30 s 一条），成功为 `[uplink] online … after_ms=…`，掉线为 `[uplink] offline reason=…`。副中继另有 `[uplink] secondary connect failed …` / `[uplink] secondary online …`（同样 30 s 节流）。不打 URL / token | 看 node 的 `reason`：`tls` 证书链不被系统信任；`dns` 解析失败（默认会再走 DoH 重拨，见下一行）；`refused` 端口未开或防火墙；`timeout` TLS/WS/auth 握手超过 `UPLINK_CONNECT_TIMEOUT_MS`（默认 20 s）；`http_4401` / `http_403` 升级被拒；`auth_rejected` 证书未 admit / 已吊销 / 签名失败。进程内 `UplinkClient.lastConnectError` 保留最近一次原因与时间 |
 | `[uplink] connect failed reason=dns`，公网其实能打开同一域名；日志随后有 `[uplink] dns fallback host=… via=doh` | 本机系统解析器坏了（常见：VPN / NetBird 残留分流 DNS，`*.example.com` 解析失败而公网仍可达）。默认会走 DoH 并按 IP + SNI 重拨，证书仍按主机名校验 | 只读诊断（不要改生产服务）：`scutil --dns` 看 resolver 与 search domain；`python3 -c "import socket; print(socket.getaddrinfo('<host>', 443))"` 看系统 lookup 是否失败；`netbird status`（或其它 VPN）看分流 DNS 是否还挂着。关掉残留 VPN / 修系统 DNS 后应出现 `[uplink] dns recovered host=…`。`VIBETERM_DIAL_DNS_FALLBACK=off` 可关这条回退。见 [公共中继 §9](../architecture/relay.md) |
-| `[uplink] connect failed reason=timeout` 且随后有 `[mesh][dial] fake-ip redial … via=doh` | 系统 lookup 把中继域名解析成 TUN fake-IP（`198.18/15`），TCP 进代理后无回包；已按 DoH 真实 IP 重拨 | 代理侧仍建议给中继域名钉国内解析或 DIRECT。见 [KI-18](../known-issues.md) |
+| `[uplink] connect failed reason=timeout` 且随后有 `[mesh][dial] fake-ip redial … via=doh` | 系统 lookup 把中继域名解析成 TUN fake-IP（`198.18/15`），TCP 进代理后无回包；已按 DoH 真实 IP 重拨 | 代理侧仍建议给中继域名钉国内解析（mihomo `nameserver-policy`）或加 DIRECT 规则绕开 TUN；机制见 [公共中继「系统 DNS 失败时的 DoH 重拨」](../architecture/relay.md)；`VIBETERM_DIAL_DNS_FALLBACK` 可关闭该重拨 |
 | `[uplink] connect failed reason=timeout` 反复出现 | 20 s 内未完成 WS 打开 + auth 握手（TLS 卡住、中继无响应、无 `auth.challenge`） | 确认中继公开地址可达、反代支持 WebSocket、证书有效。必要时把 `UPLINK_CONNECT_TIMEOUT_MS` 调大后重启 |
 | WS 关闭码 **4401** | 无 `node-session`、会话过期或 logout。`/ws`、`/n/:id/ws`、`/mesh/ws` 升级后以此码关闭；`/mesh/ws` 每 5 分钟复验失败同样 4401 | 本机入口：跳 `/login?next=`。其它 node：不跳全局登录，侧边栏「登录此节点」（内存里还有 `sk_sess` 则静默补登）。前端对 4401 **停止重连**，避免 open→close 循环 |
 | HTTP 401 `NODE_LOGIN_REQUIRED` | 目标 node 未登录或票的 `via` 不是当前 entry | 只在该 node 行登录，不要当整站掉登录 |
@@ -453,7 +453,7 @@ vibeterm mesh keylog status
 | HTTP 409 `KEY_LOG_FORK` | 同一 `seq/prev_hash` 出现两个不同后继，硬失败，不选胜 | 不要强行重放。核对是否两条入口同时改密 / admit。无法收敛则走灾难恢复 |
 | 503 `DIRECT_UNAVAILABLE` `reason=disabled` / `native-missing` | 直连关掉，或原生栈没装上 | `direct enable`；看 `VIBETERM_NATIVE_DIR` 与 `native/manifest.json`。客户端停放 10 分钟，页面刷新不会再问，要用户点重试。装不了的平台接受 relay |
 | 503 `DIRECT_BUSY` | 这次没协商出来：`reason=timeout` / `aborted` / `failed` / `capacity`，带 `retryAfterMs` | 不是「这台不能直连」。`capacity` 是名额满（每会话 2、每用户 8、全节点 64），等 `retryAfterMs` 或关掉多余标签。`timeout` 看目标日志有没有 `authorize failed`。老节点把这些原因塞进 `DIRECT_UNAVAILABLE` 时，新客户端仍按忙处理 |
-| 经入口打开终端正常，但直连徽标一直不亮，authorize 约 5–7 s 后 503 `NODE_UNREACHABLE` `reason=timeout` | 2.8.0 及更早的目标在空 PC 上等指纹，入口转发预算先到，目标日志是空的 | 把**目标**升到含探测通道授权的版本。升完后目标应有 `[mesh][rtc] authorize`，失败才有 `authorize failed … reason=`。见 [KI-19](../known-issues.md) |
+| 经入口打开终端正常，但直连徽标一直不亮，authorize 约 5–7 s 后 503 `NODE_UNREACHABLE` `reason=timeout` | 2.8.0 及更早的目标在空 PC 上等指纹，入口转发预算先到，目标日志是空的 | 把**目标**升到含探测通道授权的版本。升完后目标应有 `[mesh][rtc] authorize`，失败才有 `authorize failed … reason=`；仍异常时再看 `datachannel closed … initiator= lifetime_ms= proven=`、`dc drop`、`breaker rearm … level_before`、`signal dropped kind=sdp cause=fake-ip` |
 | 直连降级到 relay | ICE 失败、一端 `direct_capable=false`、或 `direct disable`、或 DC 存活超时 | 预期行为。功能应仍可用，徽标变为 `relay` / `turn`。UDP 被丢后 `transport` 应在约 10 s 内离开 `dc`（日志 `liveness timeout`）；若仍卡 ~35 s 才变，说明存活探测未生效 |
 | 终端卡顿、`failover from=dc to=dc`、中继 RTT 远小于 DC | 智能模式未过滞环，或模式为「直连」；旧版本没有慢 DC→中继 | 设置 → 多节点互联 → 延迟优化：智能会在 3 次 ping 且 ≥ 15 s、直连 > max(1.5×中继, 中继+40 ms) 后搬到中继；强制走中继选「中继」。日志 `[mesh][peer] route_switch … from=dc to=relay`。重掷 3/3 `no-remote-sdp` 是另一条线，见 [路径优选](../architecture/path-selection.md) |
 | 两边 `direct_capable=true` 但 `transport` 不是 `dc` | 只走了中继转发 / LAN WS，或升级尚未完成 | 日志前缀 `[mesh][rtc]`。应先有 `dial start role=offerer\|answerer`，较大 id 侧有 `kind=wake`，随后 `signal send/recv kind=sdp`。没有 `dial start` 说明没人拨号；只有 answerer 没有 wake/offer 是旧 bug。`ice failed … local_types=[host] remote_types=[…]` 且无 `srflx` → STUN 不可达；两边都有 `srflx` 仍失败 → 对称 NAT，需要一台**探测得通**的 TURN（中继角色自带，看 `[mesh][rtc] turn gate` 这行的 `reachable=`）。`datachannel open` 才算 DC 握手成功。不要把完整 SDP / ICE 密码打进日志 |

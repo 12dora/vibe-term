@@ -257,14 +257,13 @@ dpr 钳 ≥1），再放不下走平移视口。ghostty 的 resize 会重排已�
 checkpoint 快进到当前时刻；网格变化不会再引起网格变化，无环。首个实例要等对话框 `zoom-in-95` 动画结束、外框量到
 `clientWidth/Height`、第一页日志落地（包络已知）后才挂载，因此打开时就是最终字号与网格，不跳变；播放机按 `generation`
 而非 `ready` 翻转重放（boot 链在微任务内完成时 React 会把 false→true 合并成一次渲染）。外框高度按视口铺开
-（`h-[max(18rem,calc(100dvh-17rem))]`），对话框接近全宽。2.6.0 曾按「字号缩放 + 居中 letterbox」做过一版，被否——
-窄屏录的仍是窄屏、打开后跳变；`surfaceFrame`/`read-only-surface-frame` 已随之删除。
+（`h-[max(18rem,calc(100dvh-17rem))]`），对话框接近全宽。回放不做字号缩放 + 居中 letterbox：窄屏录的仍是窄屏、打开后会跳变。
 
 进度条是带刻度的时间轴（`replay-timeline.ts` 纯计算：墙钟格式化、刻度规划、位置换算）：
 保留原生 `range` 做可访问性，外层画主 / 次刻度与起止墙钟（跨日补日期）；墙钟 = `startAt + t`
 （`startAt` 是日志最早一条的 `at`）；拖动与悬停显示预览气泡，时钟旁并列当前墙钟。
 
-曾踩过的两个显示 bug：
+回放显示的三个约束（均已处理）：
 
 1. **左侧列被裁**：Ghostty 主画布设了像素宽高后仍留 `inset: 0`，绝对定位被右锚定，平移视口时裁掉左列；
    对话框 zoom 期间对零尺寸容器 `fit` 会把网格算错。现已清掉 `inset`/`right`/`bottom`（保留 `left`/`top = 0`），

@@ -283,8 +283,8 @@ CLI：`vibeterm relay join <https-url> --tenant <id> --password [<p>]`（与 `--
 
 因子分别是 6× / 3× / 5× / （direct + 2×RTT 中继握手），DC 独跑还须比 direct 早 ≥ 500 ms；各档独立 clamp 后再抬外层或压内层，使任意 RTT 都满足不变式。有 LAN 样本时与改动前的 3/4/5 s 常量一致；**无有效样本一律按 800 ms 代理，不要退回 LAN 下限**。`FOREGROUND_DC_BUDGET_MS = nestedDialBudgetsMs(undefined).foregroundDcMs`（无样本即 2400 ms）。
 
-RTT 取值顺序（网关侧 `lookupPeerRttMs`）：指定 peer 时用该 live 链路的 RTT → 否则取**全部 live 链路样本的中位数**（早期用全局最大值，
-一条慢链路会把所有预算顶到上限）→ uplink pong / 连接池最近候选 → 缺省 800 ms（`DEFAULT_DIAL_RTT_MS`，偏保守的跨区代理值，不是 LAN）。
+RTT 取值顺序（网关侧 `lookupPeerRttMs`）：指定 peer 时用该 live 链路的 RTT → 否则取**全部 live 链路样本的中位数**（不取最大值，
+避免一条慢链路把所有预算顶到上限）→ uplink pong / 连接池最近候选 → 缺省 800 ms（`DEFAULT_DIAL_RTT_MS`，偏保守的跨区代理值，不是 LAN）。
 单条链路的 `rttMs` 是 ctl ping/pong 的 EWMA（α = 0.3，超过当前值 3 倍的尖峰忽略一次）：ping 带发送时刻、对端原样回显、由发送端计算，
 因此**不含本端发送队列的排队时间**。它只用来放大拨号/转发预算与显示，不参与链路选择。
 

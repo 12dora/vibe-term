@@ -4,7 +4,7 @@
 
 ## 背景
 
-早期手工部署的 `vibeterm-node-docker`（镜像 `vibeterm-node:test`）把 `/opt/vibeterm` 直接手动解包，用 `/entry.sh` 死循环跑 `bun dist/runtime/server.js`，缺少 `install-meta.json`。网关的 `getInstallInfo()`（`apps/gateway/src/system/install-info.ts`）因此判定 `installedViaCli=false`，设置页的升级按钮报 `UPGRADE_NOT_ALLOWED`，只能手工换包重启。
+手工解包到 `/opt/vibeterm` 并用死循环跑 `bun dist/runtime/server.js` 的容器没有 `install-meta.json`，网关的 `getInstallInfo()`（`apps/gateway/src/system/install-info.ts`）会判定 `installedViaCli=false`，设置页的升级按钮报 `UPGRADE_NOT_ALLOWED`，只能手工换包重启。
 
 `scripts/docker-node/` 换成让容器**自己用 vibeterm-cli 装一遍**：首启跑 `vibeterm init --no-service`，写出 `serviceMode: "none"` 的 `install-meta.json`，之后无论是网页点升级还是容器里跑 `vibeterm upgrade`，走的都是和裸机安装完全相同的事务式升级器。
 

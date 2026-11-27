@@ -17,7 +17,7 @@
   - **仓库内不保存 prompt / plan 存档**（不要建 `prompt-archives` 之类的目录）。prompt、plan、探索记录、执行结果一律放在会话 scratchpad 或本机记忆里；只有对后续维护有价值的结论才按下方「写文档」规则沉淀到 `docs/`
   - 任务完成后把执行结果摘要写进对应的 `docs/` 文档（无对应文档则不写），不要生成单独的 result 文件
 - 写文档：
-  - 文档按主题放进 `docs/{architecture,operations,security,development}`，文件名用描述性 kebab-case 英文（如 `peer-direct-connect.md`），不带日期编号；同主题已有文档就更新它而不是另起一篇；新文档要补进所在目录的 `README.md` 与 `docs/README.md` 总索引，顶部一句话说明讲什么、面向谁，不写轮次 / 实测流水
+  - 文档按主题放进 `docs/{architecture,operations,security,development}`，文件名用描述性 kebab-case 英文（如 `peer-direct-connect.md`），不带日期编号；同主题已有文档就更新它而不是另起一篇；新文档要补进所在目录的 `README.md`（该目录的完整清单；`docs/README.md` 只保留「快速定位」，不再逐篇列出），顶部一句话说明讲什么、面向谁，不写轮次 / 实测流水
   - 文档内容应该同时使用简体中文（中国大陆）编写，使用markdown格式，并使用中文标点符号
   - 文档的预期受众为技术人员，应使用简洁、专业的语言，尽量使用专业术语，避免使用过于复杂的句式和词汇
   - 原则上文档应包含背景、目标、设计思路、任务清单、验收标准、风险评估、迁移计划、注意事项等内容，但内容应由实际情况决定，不要生搬硬套。

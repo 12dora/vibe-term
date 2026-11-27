@@ -159,6 +159,6 @@ agent 操作终端不是「屏幕抓取」而是**服务端 headless ghostty 渲
 
 ## 9. 测试
 
-- 单测：`agent/supervisor.test.ts`（approve 续跑 / deny / CAS 重复决策 / stop / 重启恢复 / 凭证告警）、`agent/run.test.ts`（auto 模式、终端工具连续失败终止）、`agent/ws-hub.test.ts`、`llm/provider-registry.test.ts`、`llm/ai-sdk.spike.test.ts`（AI SDK 能力闸门）、`secret-scan` 正负样本、`redaction-middleware`（user/system 不消毒）、OSC 133 parser、`HeadlessTerminal` 真 wasm、emulator/registry 防泄漏、run_command 全分支。
+- 单测：`agent/supervisor.test.ts`（approve 续跑 / deny / CAS 重复决策 / stop / 重启恢复 / 凭证告警）、`agent/run.test.ts`（auto 模式、终端工具连续失败终止）、`agent/ws-hub.test.ts`、`llm/provider-registry.test.ts`、`llm/ai-sdk-lazy.test.ts`、`secret-scan` 正负样本、`redaction-middleware`（user/system 不消毒）、OSC 133 parser、`HeadlessTerminal` 真 wasm、emulator/registry 防泄漏、run_command 全分支。
 - e2e（`apps/fe/tests/`）：`agent-session.spec.ts`（confirm flow、刷新后历史恢复、双标签页同步、provider 不可达、session CRUD）、`agent-panel.spec.ts`、`settings-llm.spec.ts`、`mobile-agent-watch.spec.ts`。
 - 打真实 LLM 端点的实测见 [实测](../development/live-integration-tests.md)。

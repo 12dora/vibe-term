@@ -13,11 +13,8 @@
 > | 设备连接 entry（Gateway） | `apps/gateway/src/ws/device-connection-registry.ts` |
 > | canonical feed（Gateway） | `apps/gateway/src/ws/canonical-feed-session.ts`、`apps/gateway/src/ws/canonical/` |
 >
-> **1.1.23 起 legacy 状态流整体下线**：`SWITCH_ACK` / `TERM_HISTORY` / `LIVE_RESUME` / `TERM_OUTPUT` /
-> `STATE_SNAPSHOT(_DIFF)` / `TERM_RESIZE` / `TERM_SYNC_SIZE` / `TMUX_FETCH_PANE_HISTORY` 全部删除，
-> 对应的 `SelectStateMachine`、`pane-history-gate`、`SwitchBarrier` 也一并删除。对端不满足
-> canonical v1.1 门槛（能力 `canonical-state-v1.1` + 版本 ≥ 1.1.23）时**不回退**，直接判定
-> `stateFeedMode = 'unsupported'` 并提示用户升级。屏障与 canonical 的机制对应见文末附录。
+> **只有 canonical 状态流**：对端不满足 canonical v1.1 门槛（能力 `canonical-state-v1.1` + 版本 ≥ 1.1.23）时**不回退**，
+> 直接判定 `stateFeedMode = 'unsupported'` 并提示用户升级。已删除的 legacy 屏障协议与 canonical 的对应见文末附录。
 
 ## 设计原则
 
@@ -122,8 +119,7 @@
 
 ## 3) Pane 画面重建（FE，按 deviceId+paneId）
 
-> legacy 的「选择事务状态机」（`SELECTING/ACKED/HISTORY_APPLIED/LIVE/SELECT_FAILED` + selectToken 对账）
-> 已于 1.1.23 删除。切 pane 不再有屏障帧，画面重建完全由 canonical 首屏事务承担。
+> 切 pane 没有屏障帧，画面重建完全由 canonical 首屏事务承担。
 
 ### 流程（能力 `canonical-screen-intent-v1`：首屏合并为一次往返）
 
@@ -168,8 +164,7 @@ HELLO 未带 intent（READY 后才挂载、或旧网关）：仍走 HELLO 之后
 
 ## 4) 订阅代与重连补流（FE，按 deviceId）
 
-> legacy 的「输出门控状态机」（`FLOWING/BUFFERING` + `LIVE_RESUME` 放闸）已随屏障一起删除。
-> canonical 下没有需要闸门的窗口期：订阅集合与首屏事务本身就界定了哪些字节该写。
+> 没有需要闸门的窗口期：订阅集合与首屏事务本身就界定了哪些字节该写。
 
 ### 规则
 
@@ -198,8 +193,7 @@ HELLO 未带 intent（READY 后才挂载、或旧网关）：仍走 HELLO 之后
 - 切 pane 后补测三轮（`runPostSelect`）：立即一次、`POST_SELECT_RETRY_MS = 60` 后一次、`document.fonts.ready` 后一次。
 - 去重：cols/rows 未变化不发送。
 - `TMUX_SELECT` 可以携带 cols/rows 作为首包同步。
-- 尺寸命令统一走 canonical `ResizePaneV11`，两类语义由 `geometryReason` 区分（原 `TERM_RESIZE` /
-  `TERM_SYNC_SIZE` 两个 kind 已删除）：
+- 尺寸命令统一走 canonical `ResizePaneV11`，两类语义由 `geometryReason` 区分：
   - `geometryReason = 0`（change）：真实容器/视口变化，发送前 `sizeEpoch` 自增。
   - `geometryReason = 1`（resend）：焦点恢复、暖切换后重新声明当前尺寸，复用该 pane 上一次 change 的
     `sizeEpoch`；网关据此走「不信任旧快照几何」的分支。
@@ -295,29 +289,9 @@ HELLO 未带 intent（READY 后才挂载、或旧网关）：仍走 HELLO 之后
 
 ---
 
-## 附录：selectToken 屏障（1.1.23 移除）与 canonical 的对应
+## 附录：与已删除的 selectToken 屏障的对应
 
-保留这一节是为了解释「canonical 首屏事务为什么长这样」。屏障机制本身
-（`SWITCH_ACK` → `TERM_HISTORY` → `LIVE_RESUME`，`apps/gateway/src/ws/borsh/switch-barrier.ts`、
-`packages/ws-client/src/state-machine.ts`、`pane-history-gate.ts`）已随 legacy 状态流删除。
-
-### 屏障要解决的问题（仍然成立）
-
-屏障之前，gateway 在 `tmux/select` 后 `capture-pane` 推 history，FE 先写 history 再追加 live buffer，
-没有事务边界，于是：
-
-- live output 可能早于 history 到达并被 history 覆盖，画面乱序；
-- 快速切 pane 时旧 pane 的 history / live 会写进新 pane；
-- 历史订阅与 select 的时机竞态，偶发「无历史 / 白屏」。
-
-### 屏障为什么被替换
-
-- 屏障边界与 `capture-pane` 的一致性只靠时序约定，没有可对账的序号，重叠与缺口都无法证明；
-- history 只有「当前屏」一页，向上滚动要另走 `TMUX_FETCH_PANE_HISTORY`，两条路径各有一套门控；
-- 缓冲期在 gateway 与 FE 各存一份，快切时两侧都要靠 token 对账丢弃，出错就是白屏；
-- 尺寸补发与真实尺寸变化在 wire 上无法区分（`TERM_RESIZE` / `TERM_SYNC_SIZE` 字段完全相同）。
-
-### 机制对应表
+旧的 `SWITCH_ACK` → `TERM_HISTORY` → `LIVE_RESUME` 屏障已随 legacy 状态流删除。它的缺陷是：边界与 `capture-pane` 的一致性只靠时序约定、没有可对账序号；首屏与向上滚动两套历史路径各有门控；缓冲期在 gateway 与 FE 各存一份；尺寸补发与真实尺寸变化在 wire 上无法区分。canonical 协议的对应关系如下（读到旧代码、旧日志时用）：
 
 | 旧机制 | canonical 替代 |
 | --- | --- |
@@ -329,13 +303,6 @@ HELLO 未带 intent（READY 后才挂载、或旧网关）：仍走 HELLO 之后
 | 超时降级重试 | `SourceGap` + 重取整屏；不再有「无进展超时」状态机 |
 | `TERM_RESIZE` / `TERM_SYNC_SIZE` | `ResizePaneV11` 的 `geometryReason`（change / resend）+ `sizeEpoch` |
 
-`TMUX_SELECT` / `TMUX_SELECT_WINDOW` / `TMUX_FOCUS_PANE` 保留：它们是 tmux 控制面（真正切 tmux 的当前
-pane、携带视口尺寸参与几何仲裁），不属于被删除的状态流。`selectToken` 仍随 wire 发（schema 未改），
-但客户端已不再用它对账。
+`TMUX_SELECT` / `TMUX_SELECT_WINDOW` / `TMUX_FOCUS_PANE` 保留：它们是 tmux 控制面（真正切 tmux 的当前 pane、携带视口尺寸参与几何仲裁）。`selectToken` 仍随 wire 发（schema 未改），但客户端已不再用它对账。
 
-### e2e 覆盖
-
-`apps/fe/tests/ws-borsh-pane-switch.spec.ts`：跨 window 切换后 `TMUX_SELECT` 仍携带本地 cols/rows、
-目标 pane 的首屏事务 Begin/Commit 成对且 requestId 一致；连续两次切换后订阅 generation 单调递增，
-且没有 `PaneData` 落在从未进过订阅集合的 pane 上。首屏内容与 canonical PaneTarget 的 pane 路由分别由
-`ws-borsh-history.spec.ts`、`ws-borsh-pane-route.spec.ts` 覆盖。
+e2e 覆盖：`apps/fe/tests/ws-borsh-pane-switch.spec.ts`（切换后 `TMUX_SELECT` 携带本地 cols/rows、首屏事务 Begin/Commit 成对、generation 单调递增）、`ws-borsh-history.spec.ts`、`ws-borsh-pane-route.spec.ts`。

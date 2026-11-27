@@ -175,7 +175,7 @@ metadata diff 用「目标 window 直查 + 懒建全局索引」而非「全量 
 
 **取舍**：Claude Code 每帧只滚一行、且对堆积的输入有自己的丢弃/去重规则（大块整丢；之后有时要等一个移动事件才恢复），不值得逆向；网关只保证「每条序列一次 pty 写入、不合并」，节奏交给应用与 tmux 回执，这与原生终端行为最接近。慢速探针（30 ms/帧）120 Hz 发 100 行：改前 35 行 / 丢 63；2.0.5 后 46 行 / 应用侧 0 丢弃 / 派发一结束即收敛（无拖尾）。快速探针（5 ms/帧）甩动：2.0.4 有 150–500 ms 拖尾，2.0.5 无拖尾且多滚 6–25%。真实 Claude Code 本机甩动：消息约 45 条、帧间隔无一超过 33 ms、派发结束即收敛。
 
-**复现 / 验收**：`bun run dev`（隔离 socket）→ `tmux -L vibeterm-r37 new-session -d -s slow "python3 scripts/slow-mouse-tui.py 30"` → 建设备 → `cd apps/fe && bun run bench/scroll-bench.ts --device <id> --events 100 --gap 8 --headed --synthetic`，看输出里 `line0` 的 `APPLIED/DROPPED` 前后差。远端拓扑用 `apps/fe/tests/helpers/relay-boot.ts` 起中继 + 租户节点，`--mesh <state.json> --session <名>`。
+**复现 / 验收**：`bun run dev`（隔离 socket）→ `tmux -L vibeterm-bench new-session -d -s slow "python3 scripts/slow-mouse-tui.py 30"` → 建设备 → `cd apps/fe && bun run bench/scroll-bench.ts --device <id> --events 100 --gap 8 --headed --synthetic`，看输出里 `line0` 的 `APPLIED/DROPPED` 前后差。远端拓扑用 `apps/fe/tests/helpers/relay-boot.ts` 起中继 + 租户节点，`--mesh <state.json> --session <名>`。
 
 ## Rust / WASM 移植评估
 
@@ -195,6 +195,6 @@ metadata diff 用「目标 window 直查 + 懒建全局索引」而非「全量 
 
 ## 已知边界
 
-- **ghostty scrollback 容量**：`max_scrollback` 的单位是字节，`ghostty-wasm.ts` 的 `scrollbackLinesToBytes` 按**创建时列数**把行数折成页预算（`ghostty-wasm.scrollback.test.ts` 锁定 10000 行不再被截到 1129）；预算在创建后固定，所以宽终端必须用实测列数创建（round 37 起 `useTerminalBootSurface` 传入，列数下限 200）。客户端 history 预算 `MAX_SURFACE_HISTORY_BYTES = 10_000 × 200` / `MAX_SURFACE_HISTORY_PAGES = 22` 与之对齐。
+- **ghostty scrollback 容量**：`max_scrollback` 的单位是字节，`ghostty-wasm.ts` 的 `scrollbackLinesToBytes` 按**创建时列数**把行数折成页预算（`ghostty-wasm.scrollback.test.ts` 锁定 10000 行不再被截到 1129）；预算在创建后固定，所以宽终端必须用实测列数创建（`useTerminalBootSurface` 传入，列数下限 200）。客户端 history 预算 `MAX_SURFACE_HISTORY_BYTES = 10_000 × 200` / `MAX_SURFACE_HISTORY_PAGES = 22` 与之对齐。
 - 出站仍会 Borsh 编码一次 envelope：要做到「编一次、sizing 与 send 共用 payload」，需在 `packages/shared` 暴露「只算长度」或「接受已编码 payload」的 helper。
 - `DeviceConnectionAdapter` 的 `useMemo` 依赖整张连接态表，任一设备连接态变化会击穿所有 `DeviceRow` 的 memo——**故意保留**（连接态必须实时反映到每行，且变更频率远低于终端输出）。

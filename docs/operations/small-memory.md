@@ -80,8 +80,6 @@ Linux 上进程 RSS 拆成两类页：
 - 不要在启动路径新增大依赖的静态 import：常驻内存约为启动时求值 JS 体积的 6–9 倍，新代码请走按需加载并补 `packages/app/src/runtime/boot-graph.test.ts` 的守卫。
 - 字节拷贝一律用 `new Uint8Array(src)`，不要用 `Uint8Array.from(src)`：后者在 JSC 上逐元素迭代，9 MB 拷贝额外占用约 166 MB、耗时约 700 ms。
 
-2.4.2 当时（懒加载 + 分包、单台本地设备、无浏览器，`process.memoryUsage`）空闲 RSS 约为 standalone 153 / node 154 / relay 105 MB，堆约 17–29 MB。本轮启动图又砍掉 WebAuthn / X.509 / 全量 i18n / 未配置子系统 / zod，应以本表实测为准，不要再用那组数字做容量规划。
-
 ### 仍占空闲 RSS 的
 
 - bun 二进制的 file-backed 映射（Linux `RssFile`，数量级约数十 MB，随 bun 版本变）。

@@ -1,15 +1,12 @@
 # 已知问题（Known Issues）
 
-本文件登记**尚未解决**的已知问题，面向开发者与运维。解决后从本文件移除（背景留在对应模块文档里）。
+本文件登记**尚未解决**的已知问题，面向开发者与运维。解决后从本文件移除（背景留在对应模块文档里）。编号不复用，因此不连续。
 
-## KI-1：e2e / 单测的负载抖动基线
+## KI-1：e2e / 单测的负载抖动
 
-`cd apps/fe && bun run test:e2e` 标准套件在 1.1.32 上为 108 pass / 3 fail / 1 skip，失败的三条
-（`terminal-mouse-recovery:411`、`terminal-render-regressions:478`、`terminal-selection-canvas:139`）
-在隔离定向复跑中 16/16 通过，属高负载下的渲染时序抖动，不是产品缺陷。mesh 套件 12/12。
+高负载下 `cd apps/fe && bun run test:e2e` 的终端渲染类用例（`terminal-mouse-recovery`、`terminal-render-regressions`、`terminal-selection-canvas`）和 gateway 单测中的 `dc-handshake`、`run-command` 的 `--More--` 用例会偶发失败，隔离定向复跑通过，属渲染 / 调度时序抖动，不是产品缺陷。
 
-判断某个分支是否引入回归时以**定向复跑**为准，不要拿本机全量 e2e 当唯一依据。gateway 全量单测在高负载
-下 `dc-handshake`、`run-command` 的 `--More--` 用例也偶发失败，隔离复跑通过。
+判断某个分支是否引入回归时以**定向复跑**为准，不要拿本机全量 e2e 当唯一依据。
 
 ## KI-3：直连 ICE 候选无法按网卡过滤
 
@@ -36,7 +33,7 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 - **只有 UDP**：节点侧 ICE 由 node-datachannel（libjuice）实现，`turns:` 与 `?transport=tcp` 不产生 relay 候选；内置 TURN
   也只中继 UDP/IPv4（IPv6 peer 直接 400）。本机 UDP 出不去时（KI-13）仍只能走中继流。
 - **防火墙必须人工放行**：用户级服务碰不了云安全组 / ufw。`init` / join / `doctor` / 接入向导会打印角色端口计划；`GET /api/mesh/nodes[].ports` 与 `POST …/ports/probe` 把 peer / ICE 标成 `open|blocked|unknown`（连续两次失败才 `blocked`）；TURN 磁贴有 `membersProbe`（成员 Binding 可达 ok/total）。少放一段仍是节点探测失败、TURN 不进 ICE，日志里没有任何报错——探测与 UI 只让问题可见，改不了防火墙。
-- **宿主跑 TUN 代理时必须绑具体地址**：2.3.0 内置 TURN 绑 `0.0.0.0`，在 mihomo / clash `auto-route` 的宿主（如上海中继）上回包
+- **宿主跑 TUN 代理时必须绑具体地址**：2.3.0 内置 TURN 绑 `0.0.0.0`，在 mihomo / clash `auto-route` 的宿主上回包
   被 `from 0.0.0.0 iif lo` 策略路由吸进 TUN、以 `198.18.0.1` 源地址发出，全网探测超时且无任何报错。2.3.1 起默认
   `VIBETERM_TURN_BIND_HOST=auto`（主出站 IPv4）；显式设回 `0.0.0.0` 会复现该问题。
 - **最多两条 TURN 进 ICE**：节点对每条下发的 TURN URL 做 STUN Binding 可达探测，只有探测 `ok` 的按 RTT 取前两条进
@@ -120,9 +117,7 @@ iOS 切网：`/ws` 与 `/n/:id/ws` 走 2–6 s 短期限探测（`pageshow` 不�
 本机代理 TUN（Surge / mihomo 一类）下，若命中的代理策略不转发 UDP（Surge 的 `ss` 策略未开 `udp-relay`，
 `udp-policy-not-supported-behavior` 默认 REJECT；mihomo 同理），节点对非直连目的地的所有 UDP 都会被本机丢掉：
 对该中继 TURN 控制口的 STUN Binding 探测一直 `error=timeout`，境外公共 STUN（Google / Cloudflare）同样超时，
-而国内直连目的地的探测正常。现网例：本机（Surge）与一台跑 mihomo 的节点探东京中继 `turn:4.2.2.2:40000` 超时，
-无 TUN 的 demo-app 与 oracle 自身探测 `ok`。此前记录的「同机裸 `dgram` 有回包」是探测脚本把「已发送数」当「回包数」
-打印造成的误判，UDP 实际不可达。
+而国内直连目的地的探测正常。现网例：本机（Surge）与一台跑 mihomo 的节点探某中继 `turn:4.2.2.2:40000` 超时，无 TUN 的节点探测 `ok`。探测脚本若把「已发送数」当「回包数」打印，会误判为 UDP 有回包。
 
 影响：该节点不把这个 TURN 纳入 ICE（`turn gate … reachable=` 少一条），走另一中继的 TURN 或中继流；不影响其它节点。
 界面从 2.3.6 起按「本机不可达 · N/M 节点可达」标注，并在金丝雀判定本机为 TUN 时提示「探测结果仅代表本机」；
@@ -161,46 +156,15 @@ iOS 切网：`/ws` 与 `/n/:id/ws` 走 2–6 s 短期限探测（`pageshow` 不�
 
 验证：生产启动应有 `[vibeterm][loop-watchdog] armed …`；卡死时应有 `main thread stalled …`、`<installDir>/loop-watchdog.log` 一行 JSON，随后服务被拉起。现场重启前用 `eu-stack -p <pid>` 核对 `agent_get_selected_candidate_pair` / `DtlsTransport::handleTimeout` / `agent_send`。`vibeterm doctor` 在服务 running 但 HTTP 无响应时 FAIL `loop-stall`。根因要等上游发版（或 vendor 补丁构建）才能从本文件移除。
 
-## KI-18：TUN 代理 fake-IP 把中继域名解析成假地址时上联拨号超时
-
-状态：已在 2.7.1 修复/缓解。
-
-本机走 mihomo / Surge 一类 TUN 代理、且 DNS 回落打到一条已死的境外出口时，系统 lookup 会把中继域名「成功」解析成 fake-IP（`198.18.0.0/15`）。上联按这个地址拨号，TCP 进 TUN 后无回包，表现为 `connect-timeout`，中继本身是健康的。隧道边缘与 STUN 的 fake-IP 绕行（[隧道边缘](./operations/tunnel-edge-fake-ip.md)、KI-13 / KI-15）不覆盖这条 TCP 上联。
-
-2.7.1 起：系统 lookup 仍先用 fake-IP 拨号（许多主机的 TUN 可用，且 DoH 可能被拦）；若 TCP 连接失败（`connect-timeout` / `ECONNREFUSED` / `EHOSTUNREACH` / `ENETUNREACH`），再走 DoH 解析真实 IP，按 IP + SNI 重拨，并在正缓存 TTL 内优先用真实 IP。关闭 `VIBETERM_DIAL_DNS_FALLBACK` 则行为与修复前相同。见 [公共中继「系统 DNS 失败时的 DoH 重拨」](./architecture/relay.md)。
-
-人工规避（代理侧，二选一）：给中继域名钉国内解析（mihomo `nameserver-policy`），或加 DIRECT 规则绕开 TUN。
-
-## KI-19：经入口访问时节点超时，浏览器直连协商不起来
-
-状态：本版本修复。2.8.0 及更早仍会复现；混合版本网要入口和目标都升上来，只升入口不够。
-
-现象：浏览器经入口（现网例：tmexhub-sh）已经能开终端，但 `POST /n/<id>/api/rtc/authorize` 在大约 5–7 s 后变成 503 `NODE_UNREACHABLE` `reason=timeout`，直连徽标一直不亮。同时节点之间的 DataChannel 在「刚通就断」上反复拨号，共享的中继上行被打满，其它节点的转发也开始超时。
-
-三层原因都在目标节点，不是入口把请求体吃掉：
-
-1. `node-datachannel@0.33.1` 在空 PeerConnection 上没有本地描述。旧 authorize 干等指纹到 15 s，入口的转发预算先到，目标日志是空的。名额满和指纹超时以前也一律答 `DIRECT_UNAVAILABLE`，客户端把「暂时忙」停放 10 分钟。
-2. DC 打开 5 s 就拆掉中继，而这条 DC 常在打开后约 10 s 被静默关闭（两端都没有 liveness 日志，疑为 libdatachannel SCTP 10 s 心跳）；已建立后的关闭又被记成拨号失败，熔断升到 5 级冷却 16 分钟，下一次请求只能重拨中继。另一方面，中继会话一闪就把已禁用的 DC 熔断清零，对永远打不通的节点（如老 hub）反复拨号，每次白烧 15 s 和一次 TURN 分配。
-3. 对端还在测量的直连上，接收方把整节点降级并拆掉那条 DC，测量方再拨，两边对打。
-
-本版本用探测通道在 3 s 内铸出指纹；暂时失败答 `DIRECT_BUSY`，只有真不能直连才停放 10 分钟。DC 要先证明（本端 ping 的 pong）并活过 15 s 才拆中继，短命断开走不计档的冷却。测量中的直连只隔离这条直连，旁边借一条中继，不降级。
-
-升完之后目标上应能 grep 到 `[mesh][rtc] authorize`。仍失败时看 `authorize failed … reason=`、`datachannel closed … initiator= lifetime_ms= proven=`、`dc drop`、`breaker rearm … level_before`、`signal dropped kind=sdp cause=fake-ip`。对照见 [mesh 运维「常见排障」](./operations/mesh-operations.md)。
-
-## KI-20：同一条直连被装两次后，入站流全部 `stale-link`
-
-状态：已在 2.10.0 修复。更早的版本上会复现；两端都升上来之后，已经打开的僵尸会话要断一次才会消失。
-
-现象：节点对之间 DataChannel 显示还在，终端与转发却全部失败。目标日志里同一条 session 上有两个监听，每条入站 OPEN 被 RST `stale-link`，随后仍被派发；`route_switch from=dc to=dc`。
-
-根因：晋升有两张门（`DcPromoteGate` 与 `RouteDegrade`）。两边都对同一条已经 live 的 session 调用 `installLive`，注册表不幂等，于是留下一个非当前的 `LivePeer`。它既不是 live 也不是正在退役，就对之后所有流回 `stale-link`，而且不关 session，所以会一直留着。mux 在流已经被 RST 之后仍交给后面的监听。
-
-现在只剩 `RouteDegrade` 一张晋升门，`installLive` 对当前 session 幂等。每条 session 只有一份流 / ctl 监听；非当前、非退役的绑定标 `dead`，RST `stale-link` 并只关一次。对端看到 `stale-link` 时同样关掉本端 session，不再把这条拒绝留在可重放集合里。机制见 [路径优选](./architecture/path-selection.md)「晋升：一条门」。
-
 ## KI-21：会话 sid 尚未与客户端密钥绑定
 
-状态：2.15.1 起部分修复。登录时声明 `pop: true` 的会话（能持久化不可导出会话钥的浏览器、新版 CLI）已要求会话持有证明，只偷到 sid 无法使用，见 [mesh 架构 §2「会话持有证明（PoP）」](./architecture/mesh-architecture.md)。仍然存在的部分：未声明的会话（旧客户端、浏览器 `@noble` 内存回退）的 sid 只绑定签发时的入口 `via`；PoP 防的是 cookie 被带离本机，不防同源 XSS（页面内仍能调用私钥签名）；CLI 的 `session.json` 现在含会话私钥，被读走即等于完整凭证。会话窗口为最后一次使用起 18 小时滑动、7 天上限。
+状态：部分修复。登录时声明 `pop: true` 的会话（能持久化不可导出会话钥的浏览器、新版 CLI）要求会话持有证明，只偷到 sid 无法使用，见 [mesh 架构 §2「会话持有证明（PoP）」](./architecture/mesh-architecture.md)。仍然存在的部分：
 
-现有机制：吊销入口（`revoke-node`）作废经它进来的会话，以及经它签发的访问令牌、终端分享、窗格授权、端口映射与放行；改密（含默认 `rotate-root-keep`）作废全部会话、令牌、窗格授权与分享。会话窗口内经 shell 留下的持久化不在级联范围内。0063 迁移之前创建的令牌、分享、授权与映射记为本机签发（`self`），不参与按入口的级联。
+- 未声明 PoP 的会话（旧客户端、浏览器 `@noble` 内存回退）的 sid 只绑定签发时的入口 `via`；
+- PoP 防的是 cookie 被带离本机，不防同源 XSS（页面内仍能调用私钥签名）；
+- CLI 的 `session.json` 含会话私钥，被读走即等于完整凭证；
+- 会话窗口为最后一次使用起 18 小时滑动、7 天上限，窗口内经 shell 留下的持久化不在级联吊销范围内。
 
-计划：访问令牌与分享凭证的绑定需要另一套协议，暂不做，见 [访问令牌 §4](./security/access-tokens.md#4-管理)。
+已有的级联：吊销入口（`revoke-node`）作废经它进来的会话，以及经它签发的访问令牌、终端分享、窗格授权、端口映射与放行；改密（含默认 `rotate-root-keep`）作废全部会话、令牌、窗格授权与分享。早期版本创建的令牌、分享、授权与映射记为本机签发（`self`），不参与按入口的级联。
+
+访问令牌与分享凭证的绑定需要另一套协议，暂不做，见 [访问令牌 §4](./security/access-tokens.md#4-管理)。

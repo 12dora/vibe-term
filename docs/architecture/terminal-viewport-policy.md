@@ -6,7 +6,7 @@
 
 一个 tmux pane 对应一个共享 PTY。原先每个浏览器的尺寸上报都会 `resize-window` / `resizePane`，手机打开同一 pane 会把桌面端的几何压小。
 
-> 1.1.23 起 legacy 的 `TERM_RESIZE` / `TERM_SYNC_SIZE` 两个 kind 已删除，尺寸命令统一走 canonical `ResizePaneV11`；下文凡提到这两个 kind 的地方，按 `geometryReason` 理解：`change`（0）对应原 `TERM_RESIZE`，`resend`（1）对应原 `TERM_SYNC_SIZE`。命令还带 `sizeEpoch`（u64，恒 ≥ 1）：真实尺寸变化时自增，补发复用原值，网关据此丢弃过期尺寸（同 epoch 的补发必须放行）。
+> 尺寸命令统一走 canonical `ResizePaneV11`，语义由 `geometryReason` 区分：`change`（0）= 真实尺寸变化，`resend`（1）= 补发当前尺寸。命令还带 `sizeEpoch`（u64，恒 ≥ 1）：真实尺寸变化时自增，补发复用原值，网关据此丢弃过期尺寸（同 epoch 的补发必须放行）。
 
 ## 规则
 

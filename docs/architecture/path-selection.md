@@ -120,14 +120,6 @@ make-before-break：upgrade 拨出的直连**先 hold**，中继继续载流。�
 
 POST 在派发前被拒（`pending-measure` / `stale-link` / `parked`）时，只有**声明了 `Content-Length` 且 ≤ 64 KiB** 的请求体会先缓冲再重放一次。没有长度、或更大的流式上传原样透传，不重放。GET / HEAD 没有请求体，按原有次数换链路。
 
-### 现网事故（2026-09-13）
-
-`work-mac` ↔ `tmexhub-sh`：ICMP / TLS 443 正常，本机中继上行 ~14 ms、对端上行 ~1 ms，经中继合计 ~15 ms 且稳定。两端之间的 DataChannel 是 UDP 打洞（`srflx`），RTT 从数十毫秒抖到数秒（`reroll_result … better=false`）。终端流固定跟 DC（`failover from=dc to=dc`），出现 `[ws] backpressure enter carrier=mesh_link_stream` 与 `rst … head-timeout`，用户看到卡顿。
-
-当时没有「DC ≫ 中继 ⇒ 把流搬到 relay」的策略；重掷只跟本对端 pathRtt 的 DC / ws-secure / tcp-connect 最佳比，不用中继 uplink。重掷 3/3 全部失败：offerer 新 attempt `stage=no-remote-sdp remote_types=[]`；answerer 把更高 epoch 的 offer **先投给 live PC 残留监听**判 `superseded` 并退订，随后 `interceptOffer` 因应答侧 request 预算耗尽拒收。链路停在坏 DC 上直到 liveness 超时（约 16 min）。次因：应答侧对旧节点 `tmex` 循环应答 offer、占 TURN。
-
-修复分两块：本节约的选路滞环（慢 DC → 中继，不等重掷成功）；下节的重掷协议（先 intercept 再投递、接 offer 与 request 预算解耦、应答侧独立冷却）。`signal dropped cause=fake-ip` 只丢 ICE candidate 的 connection-address ∈ `198.18.0.0/15`，与本次主因无关。
-
 ## 1. WebSocket 开链竞速
 
 拨号时同时开 `N` 条 WebSocket（不同源端口 → 不同五元组），取最先 `open` 的一条，其余立刻 `close(1000, 'ws-race-loser')`，**不发任何字节**。输家在中继鉴权之前就关掉，不会触发 `replaced` / `relay-replaced`，也不会进注册表。

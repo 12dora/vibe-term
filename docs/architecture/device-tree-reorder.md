@@ -35,8 +35,6 @@ device 是数据库实体；window / pane 来自 tmux 实时快照（不入库�
   （`packages/ws-client/src/canonical-metadata-identity.ts`）用 `sortSnapshotByCanonicalTreeOrder`
   把 `baseSnapshot` 排成展示视图，保存顺序里仍存在的 live id 保序在前，未在保存中的按 tmux `index`
   追加在后，已不存在的 stale id 自动失效。
-- 1.1.23 前这条链路是 gateway 侧的 `applyDeviceTreeOverlay` + `encodeSnapshotWithOverlays` 在
-  `STATE_SNAPSHOT` 下发前重排；该 kind 与 `ws/overlay-utils.ts` 已随 legacy 状态流删除。
 
 ### WS 协议
 

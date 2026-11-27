@@ -116,7 +116,7 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
      scrollbar 数据同步 viewport / baseY / length。
 
 因此页面上的终端内容是 Ghostty 维护的终端状态读回后由 canvas 绘制的结果，既不是前端自己解释 ANSI，
-也不再是 formatter 出的 HTML（早期实现是 `.xterm-screen.innerHTML`，已换成 canvas）。
+也不是 formatter 出的 HTML。
 
 ## 输入链路
 
