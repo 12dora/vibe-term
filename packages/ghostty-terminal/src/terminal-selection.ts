@@ -39,7 +39,7 @@ export type SelectionHostContext = {
   renderSelection(): void;
 };
 
-// 指针拖拽结束后的处置：ignored=非本次拖拽的事件；clear=原地单击应清空选择；
+// 指针拖拽结束后的处置：ignored=当前没有进行中的拖拽；clear=原地单击应清空选择；
 // keep=保留选择并重绘。清空要连带重置鼠标/输入侧状态，故交回宿主执行。
 export type PointerDragEnd = 'ignored' | 'clear' | 'keep';
 
@@ -187,13 +187,15 @@ export class TerminalSelection {
     this.updateAutoScroll();
   }
 
-  finishPointerDrag(event: MouseEvent): PointerDragEnd {
-    if (this.disposed || !this.drag.active || event.button !== 0) {
+  // 调用方（指针手势模块）已判定这是主键手势的结束——含 mouseup 丢失后由其它键的事件收尾，
+  // 故不再看触发事件是哪个键。
+  finishPointerDrag(clientX: number, clientY: number): PointerDragEnd {
+    if (this.disposed || !this.drag.active) {
       return 'ignored';
     }
 
-    this.drag.lastClientX = event.clientX;
-    this.drag.lastClientY = event.clientY;
+    this.drag.lastClientX = clientX;
+    this.drag.lastClientY = clientY;
     this.stopAutoScroll();
 
     const shouldClear =

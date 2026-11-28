@@ -220,3 +220,48 @@ describe('render-state 跨帧缓存', () => {
     }
   });
 });
+
+// OSC 8：hyperlink 标记随 raw cell 一起读出；同文本但标记翻转必须让 cell 失效，
+// 否则按 cells 身份缓存的 explicit 链接段会沿用旧结果。
+describe('render-state hyperlink 标记', () => {
+  const LINKED = 'ab\x1b]8;;https://example.com/a\x1b\\label\x1b]8;;\x1b\\ z';
+
+  test('只有 OSC 8 包住的格子带 hasHyperlink', async () => {
+    const harness = await createHarness();
+    try {
+      harness.bindings.writeVt(harness.terminal, LINKED);
+      const { rows } = harness.frame();
+      const flags = rows[0].cells.slice(0, 9).map((cell) => cell.hasHyperlink);
+      expect(flags).toEqual([false, false, true, true, true, true, true, false, false]);
+      expect(rows[1].cells.some((cell) => cell.hasHyperlink)).toBeFalse();
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  test('同文本重写、只翻转 hyperlink 标记：被翻转的 cell 换新，行标脏', async () => {
+    const harness = await createHarness();
+    try {
+      harness.bindings.writeVt(harness.terminal, 'ablabel z');
+      harness.frame();
+      const plain = harness.frame();
+      expect(plain.rows[0].cells[3].hasHyperlink).toBeFalse();
+
+      harness.bindings.writeVt(harness.terminal, `\r${LINKED}`);
+      const linked = harness.frame();
+      expect(linked.rows[0].dirty).toBeTrue();
+      expect(linked.rows[0].cells).not.toBe(plain.rows[0].cells);
+      expect(linked.rows[0].cells[3]).not.toBe(plain.rows[0].cells[3]);
+      expect(linked.rows[0].cells[3].hasHyperlink).toBeTrue();
+      // 未翻转的格子仍复用同一实例
+      expect(linked.rows[0].cells[0]).toBe(plain.rows[0].cells[0]);
+
+      harness.bindings.writeVt(harness.terminal, '\rablabel z');
+      const unlinked = harness.frame();
+      expect(unlinked.rows[0].cells[3].hasHyperlink).toBeFalse();
+      expect(unlinked.rows[0].cells).not.toBe(linked.rows[0].cells);
+    } finally {
+      harness.dispose();
+    }
+  });
+});

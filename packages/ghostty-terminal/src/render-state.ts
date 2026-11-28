@@ -428,4 +428,4 @@ export function disposeRenderStateResources(resources: GhosttyRenderStateResourc
 }
 
 export type { GhosttyRenderStateResources };
-export { isCellUnchanged, reuseUnchangedRow } from './render-state-read';
+export { isCellUnchanged, reuseUnchangedRow } from './render-state-cell';

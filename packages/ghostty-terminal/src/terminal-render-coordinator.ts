@@ -16,7 +16,7 @@ import {
 import { normalizeVisibleLines } from './terminal-buffer';
 import { DEFAULT_ROWS } from './terminal-constants';
 import type { TerminalScrollbarState } from './terminal-dom';
-import { LinkMatchCache, collectLinkUnderlineSegments, findLinkAtPoint } from './terminal-links';
+import { type LinkViewState, TerminalLinkResolver } from './terminal-link-resolver';
 import type { TerminalLinkHit } from './terminal-pointer';
 import { TerminalRenderLoop, ThrottledTask } from './terminal-render-loop';
 import type {
@@ -30,7 +30,6 @@ import type {
 
 // 链接下划线重算节流：只扫可见区，且相邻两次重算至少间隔此值（trailing 保证终态正确）。
 const LINK_OVERLAY_THROTTLE_MS = 150;
-const LINK_MATCH_CACHE_LIMIT = 300;
 const LINE_CACHE_MIN_LIMIT = 2000;
 const LINE_CACHE_VIEWPORT_MULTIPLIER = 20;
 // 光标落定的兜底上限：应用若持续不停地写（流永不静默），最多把光标压这么久就按当刻
@@ -69,7 +68,7 @@ export class TerminalRenderCoordinator {
   // 行模型按 cells 数组的对象身份缓存：render-state 对内容未变的行会复用同一个 cells
   // 数组，于是整帧只为真正变化的行重建模型；数组换新即自动 miss，不存在过期风险。
   private readonly lineModelByCells = new WeakMap<GhosttyRenderCell[], SelectionLineModel>();
-  private readonly linkMatchCache = new LinkMatchCache(LINK_MATCH_CACHE_LIMIT);
+  private readonly links: TerminalLinkResolver;
   private readonly linkOverlayTask = new ThrottledTask(LINK_OVERLAY_THROTTLE_MS, () => {
     this.updateLinkOverlay();
   });
@@ -102,7 +101,9 @@ export class TerminalRenderCoordinator {
     private readonly terminalHandle: number,
     private readonly renderState: GhosttyRenderStateResources,
     private readonly host: RenderCoordinatorHost
-  ) {}
+  ) {
+    this.links = new TerminalLinkResolver(bindings, terminalHandle);
+  }
 
   attach(renderer: CanvasRenderer): void {
     this.renderer = renderer;
@@ -215,6 +216,7 @@ export class TerminalRenderCoordinator {
     this.lineCache.clear();
     this.rowShiftInvalidated = true;
     this.selectionActive = false;
+    this.linkOverlayTask.cancel();
   }
 
   getLineModel(line: number): SelectionLineModel {
@@ -254,17 +256,19 @@ export class TerminalRenderCoordinator {
 
   linkAt(clientX: number, clientY: number): TerminalLinkHit | null {
     const point = this.hitTest(clientX, clientY);
-    if (!point) {
-      return null;
-    }
+    return point ? this.links.hitAt(point, this.linkView()) : null;
+  }
 
-    return findLinkAtPoint({
-      line: point.line,
-      col: point.col,
+  // rowsPendingOutput / rowShiftInvalidated 同时为 false 即内核网格与 renderedRows 一致。
+  private linkView(): LinkViewState {
+    return {
+      rows: this.renderedRows,
+      offset: this.viewportOffset,
+      viewportRows: this.viewportRows,
+      synced: !this.rowsPendingOutput && !this.rowShiftInvalidated,
       getLineModel: (line) => this.getLineModel(line),
-      cache: this.linkMatchCache,
       fileLinkContext: this.host.fileLinkContext(),
-    });
+    };
   }
 
   scheduleLinkOverlayUpdate(): void {
@@ -276,7 +280,7 @@ export class TerminalRenderCoordinator {
 
   cancelLinkOverlay(): void {
     this.linkOverlayTask.cancel();
-    this.linkMatchCache.clear();
+    this.links.clearMatches();
   }
 
   renderNow(): void {
@@ -311,6 +315,7 @@ export class TerminalRenderCoordinator {
     this.viewportOffset = scrollbar.offset;
     this.viewportRows = Math.max(2, meta.rows || fallbackRows);
     this.renderedRows = rows;
+    this.links.warm(this.linkView());
     const boundedLineCacheLimit = Math.max(
       LINE_CACHE_MIN_LIMIT,
       this.viewportRows * LINE_CACHE_VIEWPORT_MULTIPLIER
@@ -359,8 +364,12 @@ export class TerminalRenderCoordinator {
       selectionText,
     });
 
-    // 滚动后旧下划线位置立刻失效：先清空避免错位残影，再等节流重算。
-    if (this.linkOverlayDrawnOffset !== -1 && this.linkOverlayDrawnOffset !== scrollbar.offset) {
+    this.refreshLinkOverlay(renderer, scrollbar.offset);
+  }
+
+  // 滚动后旧下划线位置立刻失效：先清空避免错位残影，再等节流重算。
+  private refreshLinkOverlay(renderer: { clearLinkUnderlines(): void }, offset: number): void {
+    if (this.linkOverlayDrawnOffset !== -1 && this.linkOverlayDrawnOffset !== offset) {
       this.linkOverlayDrawnOffset = -1;
       renderer.clearLinkUnderlines();
     }
@@ -425,6 +434,8 @@ export class TerminalRenderCoordinator {
     this.renderer = null;
     this.lineCache.clear();
     this.renderedRows = [];
+    this.linkOverlayTask.cancel();
+    this.links.dispose();
   }
 
   private cancelSelectionRepaint(): void {
@@ -480,20 +491,7 @@ export class TerminalRenderCoordinator {
       return;
     }
 
-    const offset = this.viewportOffset;
-    const segments = collectLinkUnderlineSegments({
-      offset,
-      rows: this.viewportRows,
-      getLineModel: (line) => this.lineModelForOverlay(line),
-      cache: this.linkMatchCache,
-      fileLinkContext: this.host.fileLinkContext(),
-    });
-
-    this.linkOverlayDrawnOffset = offset;
-    renderer.drawLinkUnderlines(segments);
-  }
-
-  private lineModelForOverlay(line: number): SelectionLineModel {
-    return this.getLineModel(line);
+    this.linkOverlayDrawnOffset = this.viewportOffset;
+    renderer.drawLinkUnderlines(this.links.segments(this.linkView()));
   }
 }

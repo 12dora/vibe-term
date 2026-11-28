@@ -107,6 +107,7 @@ function project(rows: GhosttyRenderRow[]): unknown {
       codepoints: [...cell.codepoints],
       widthKind: cell.widthKind,
       hasText: cell.hasText,
+      hasHyperlink: cell.hasHyperlink,
       style: { ...cell.style },
       fgColor: cell.fgColor ? { ...cell.fgColor } : null,
       bgColor: cell.bgColor ? { ...cell.bgColor } : null,

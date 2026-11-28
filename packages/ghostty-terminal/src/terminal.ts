@@ -24,11 +24,12 @@ import {
   TerminalInputBridge,
   pointerLikeEventToGhosttyMods,
 } from './terminal-input-bridge';
+import { TerminalLinkActivation } from './terminal-link-activation';
 import {
   GHOSTTY_MOUSE_BUTTON_LEFT,
+  type PointerClientPoint,
   type PointerEventContext,
   SYNTHETIC_MOUSE_SUPPRESS_MS,
-  type TerminalLinkHit,
   bindMouseEvents,
 } from './terminal-pointer';
 import { TerminalPrediction } from './terminal-prediction';
@@ -77,8 +78,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   private readonly inputState = createTerminalInputState();
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly selectionListeners = new Set<(text: string | null) => void>();
-  private readonly linkListeners = new Set<(url: string) => void>();
-  private readonly fileLinkListeners = new Set<(path: string) => void>();
+  private readonly links = new TerminalLinkActivation();
   private readonly addons = new Set<{ dispose: () => void }>();
   private readonly domEventDisposers: Array<() => void> = [];
   private fileLinkContext: FileLinkContext | null = null;
@@ -242,11 +242,11 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   }
 
   onLinkActivated(callback: (url: string) => void): TerminalDisposable {
-    return this.subscribe(this.linkListeners, callback);
+    return this.links.onUrl(callback);
   }
 
   onFileLinkActivated(callback: (path: string) => void): TerminalDisposable {
-    return this.subscribe(this.fileLinkListeners, callback);
+    return this.links.onFile(callback);
   }
 
   attachCustomKeyEventHandler(callback: (event: KeyboardEvent) => boolean): void {
@@ -368,6 +368,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.renderCoordinator.invalidateLines();
     this.predictionRuntime.invalidate();
     this.clearSelectionState(false);
+    this.input.resetPointerGesture();
     this.bindings.resetTerminal(this.handles.terminal);
     this.input.resetOutputObserver();
     this.input.invalidateModeCache();
@@ -504,6 +505,13 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       mods: 0,
       anyButtonPressed: event.action !== 'release',
     });
+  }
+
+  // 触屏轻点：与无修饰单击同一策略（上报判定折叠 disableStdin，只读视图的轻点从不上报）。
+  // 返回 true 表示链接已交给监听器打开，调用方跳过该次 tap 的上报与聚焦。
+  openLinkAt(clientX: number, clientY: number, trigger: 'tap'): boolean {
+    const hit = this.disposed ? null : this.renderCoordinator.linkAt(clientX, clientY);
+    return this.links.open(hit, trigger, this.isMouseReporting());
   }
 
   // 触摸手势被消费后调用：开启合成鼠标抑制窗（自 touchend 时刻起算）
@@ -760,9 +768,10 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       pointerMods: (event) => pointerLikeEventToGhosttyMods(event),
       emitMouseInput: (request) => this.input.emitMouseInput(request),
       clearSelection: () => this.clearSelectionState(),
+      cellAtClient: (clientX, clientY) => this.renderCoordinator.hitTest(clientX, clientY),
       linkAtClient: (clientX, clientY) => this.renderCoordinator.linkAt(clientX, clientY),
-      activateLink: (hit) => this.activateLink(hit),
-      setLinkCursor: (active) => this.dom.setLinkCursor(active),
+      activateLink: (hit) => this.links.activate(hit),
+      setLinkCursor: (active, title) => this.dom.setLinkCursor(active, title),
       beginPointerSelection: (event) => this.beginPointerSelection(event),
       updatePointerSelection: (event) => this.updatePointerSelection(event),
       finishPointerSelection: (event) => this.finishPointerSelection(event),
@@ -824,8 +833,8 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.selection.update(event.clientX, event.clientY);
   }
 
-  private finishPointerSelection(event: MouseEvent): void {
-    const outcome = this.selection.finishPointerDrag(event);
+  private finishPointerSelection(point: PointerClientPoint): void {
+    const outcome = this.selection.finishPointerDrag(point.clientX, point.clientY);
     if (outcome === 'clear') {
       this.clearSelectionState();
       return;
@@ -833,14 +842,6 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
 
     if (outcome === 'keep') {
       this.renderCoordinator.renderNow();
-    }
-  }
-
-  private activateLink(hit: TerminalLinkHit): void {
-    const listeners = hit.kind === 'url' ? this.linkListeners : this.fileLinkListeners;
-    const target = hit.kind === 'url' ? hit.url : hit.path;
-    for (const listener of listeners) {
-      listener(target);
     }
   }
 

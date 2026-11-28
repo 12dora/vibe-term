@@ -88,9 +88,7 @@ describe('TerminalSelection 拖拽', () => {
     selection.begin(5, 5, 'character');
     selection.update(6, 6);
     expect(calls.renderSelection).toBe(0);
-    expect(selection.finishPointerDrag({ button: 0, clientX: 6, clientY: 6 } as MouseEvent)).toBe(
-      'keep'
-    );
+    expect(selection.finishPointerDrag(6, 6)).toBe('keep');
   });
 
   test('拖出视口的自动滚动仍走全渲染', async () => {

@@ -14,6 +14,10 @@ export {
   resolveValidFilePath,
 } from './file-path';
 export type { FileLinkContext } from './file-path';
+export { classifyExplicitUri, MAX_EXPLICIT_URI_LENGTH } from './explicit-links';
+export { classifyLinkModifiers, NO_LINK_MODIFIERS, shouldOpenLink } from './link-open-policy';
+export type { LinkModifiers, LinkOpenInput, LinkOpenTrigger } from './link-open-policy';
+export type { TerminalLinkHit, TerminalLinkTarget } from './terminal-pointer-shared';
 export type {
   CompatibleTerminalBuffer,
   CompatibleTerminalLike,

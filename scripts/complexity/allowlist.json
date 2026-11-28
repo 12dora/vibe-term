@@ -698,10 +698,6 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "fileLines": 548
   },
-  "packages/ghostty-terminal/src/render-state-read.ts": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "fileLines": 585
-  },
   "apps/fe/src/auth/credential-prompt-dialog.tsx:CredentialPromptFields": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 13,
@@ -2160,19 +2156,6 @@
   "packages/ghostty-terminal/src/selection-viewport-rect.ts:unionSelectionViewportRect": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 13
-  },
-  "packages/ghostty-terminal/src/render-state-read.ts:ensureRenderStateScratch": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "lines": 84
-  },
-  "packages/ghostty-terminal/src/render-state-read.ts:isCellUnchanged": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "params": 8
-  },
-  "packages/ghostty-terminal/src/render-state-read.ts:readRowCells": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14,
-    "lines": 111
   },
   "packages/ghostty-terminal/src/render-state-read.ts:readRenderStateRow": {
     "reason": "round46 收紧门禁时冻结的存量",

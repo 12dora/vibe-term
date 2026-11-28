@@ -57,6 +57,7 @@ async function loadControllerModule(
       codepoints: [char.codePointAt(0) ?? 32],
       widthKind: 'narrow' as const,
       hasText: true,
+      hasHyperlink: false,
       style: {
         bold: false,
         italic: false,

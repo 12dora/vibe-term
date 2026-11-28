@@ -28,6 +28,7 @@ function makeCell(x: number, text: string, widthKind: GhosttyCellWidthKind = 'na
     codepoints: Array.from(text, (char) => char.codePointAt(0) ?? 32),
     widthKind,
     hasText: text !== '',
+    hasHyperlink: false,
     style: STYLE,
     fgColor: null,
     bgColor: null,

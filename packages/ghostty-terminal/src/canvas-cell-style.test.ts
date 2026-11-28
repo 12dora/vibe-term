@@ -39,6 +39,7 @@ function makeCell(overrides: Partial<GhosttyRenderCell> = {}): GhosttyRenderCell
     codepoints: [0x61],
     widthKind: 'narrow',
     hasText: true,
+    hasHyperlink: false,
     style: STYLE,
     fgColor: null,
     bgColor: null,

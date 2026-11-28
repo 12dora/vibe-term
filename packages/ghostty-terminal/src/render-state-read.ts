@@ -1,13 +1,17 @@
 import type { GhosttyBindings } from './ghostty-wasm';
 import type { GhosttyRenderStateResources } from './render-state';
-import { INTERN_LIMIT, internColorByKey } from './render-state-color';
-import type {
-  GhosttyCellWidthKind,
-  GhosttyColorRgb,
-  GhosttyRenderCell,
-  GhosttyRenderCellStyle,
-  GhosttyRenderRow,
-} from './types';
+import {
+  type CellProbe,
+  buildRowText,
+  codepointsToText,
+  createCellProbe,
+  internStyle,
+  isCellUnchanged,
+  materializeCell,
+  reuseUnchangedRow,
+} from './render-state-cell';
+import { readColorAt } from './render-state-color';
+import type { GhosttyCellWidthKind, GhosttyRenderCell, GhosttyRenderRow } from './types';
 
 const GHOSTTY_SUCCESS = 0;
 const GHOSTTY_INVALID_VALUE = -2;
@@ -26,9 +30,22 @@ const GHOSTTY_ROW_DATA_WRAP = 1;
 const GHOSTTY_ROW_DATA_WRAP_CONTINUATION = 2;
 const GHOSTTY_CELL_DATA_WIDE = 3;
 const GHOSTTY_CELL_DATA_HAS_TEXT = 4;
+const GHOSTTY_CELL_DATA_HAS_HYPERLINK = 7;
 
-const ROW_CELL_BATCH_COUNT = 5;
-const RAW_CELL_BATCH_COUNT = 2;
+const ROW_CELL_KEYS = [
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN,
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR,
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR,
+] as const;
+const RAW_CELL_KEYS = [
+  GHOSTTY_CELL_DATA_WIDE,
+  GHOSTTY_CELL_DATA_HAS_TEXT,
+  GHOSTTY_CELL_DATA_HAS_HYPERLINK,
+] as const;
+const ROW_CELL_BATCH_COUNT = ROW_CELL_KEYS.length;
+const RAW_CELL_BATCH_COUNT = RAW_CELL_KEYS.length;
 const GRAPHEME_SCRATCH_CODEPOINTS = 64;
 
 const STYLE_FLAG_FIELDS = [
@@ -42,16 +59,9 @@ const STYLE_FLAG_FIELDS = [
   'overline',
 ] as const;
 
-const EMPTY_CODEPOINTS: number[] = [];
-const ASCII_TEXT: string[] = [];
-const ASCII_CODEPOINTS: number[][] = [];
-for (let codepoint = 0; codepoint < 128; codepoint += 1) {
-  ASCII_TEXT.push(String.fromCharCode(codepoint));
-  ASCII_CODEPOINTS.push([codepoint]);
-}
-
 const CELL_WIDTH_KINDS: GhosttyCellWidthKind[] = ['narrow', 'wide', 'spacer-tail', 'spacer-head'];
 const graphemeScratch: number[] = new Array(GRAPHEME_SCRATCH_CODEPOINTS).fill(0);
+const cellProbe = createCellProbe();
 
 export type RenderStateScratch = {
   base: number;
@@ -65,6 +75,7 @@ export type RenderStateScratch = {
   cellBg: number;
   rawCellWide: number;
   rawCellHasText: number;
+  rawCellHasHyperlink: number;
   rowCellKeys: number;
   rowCellValues: number;
   rawCellKeys: number;
@@ -117,7 +128,8 @@ export function ensureRenderStateScratch(
   const bgOffset = fgOffset + colorSize;
   const rawCellWideOffset = alignUp(bgOffset + colorSize, 4);
   const rawCellHasTextOffset = rawCellWideOffset + 4;
-  const rowCellKeysOffset = alignUp(rawCellHasTextOffset + 1, 4);
+  const rawCellHasHyperlinkOffset = rawCellHasTextOffset + 1;
+  const rowCellKeysOffset = alignUp(rawCellHasHyperlinkOffset + 1, 4);
   const rowCellValuesOffset = rowCellKeysOffset + ROW_CELL_BATCH_COUNT * 4;
   const rawCellKeysOffset = rowCellValuesOffset + ROW_CELL_BATCH_COUNT * 4;
   const rawCellValuesOffset = rawCellKeysOffset + RAW_CELL_BATCH_COUNT * 4;
@@ -141,6 +153,7 @@ export function ensureRenderStateScratch(
     cellBg: aligned + bgOffset,
     rawCellWide: aligned + rawCellWideOffset,
     rawCellHasText: aligned + rawCellHasTextOffset,
+    rawCellHasHyperlink: aligned + rawCellHasHyperlinkOffset,
     rowCellKeys: aligned + rowCellKeysOffset,
     rowCellValues: aligned + rowCellValuesOffset,
     rawCellKeys: aligned + rawCellKeysOffset,
@@ -162,26 +175,18 @@ export function ensureRenderStateScratch(
   };
 
   const view = bindings.view();
-  writeBatchLayout(
-    view,
-    scratch.rowCellKeys,
-    scratch.rowCellValues,
-    [
-      GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
-      GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN,
-      GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
-      GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR,
-      GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR,
-    ],
-    [scratch.cellRaw, scratch.cellGraphemeLen, scratch.cellStyle, scratch.cellFg, scratch.cellBg]
-  );
-  writeBatchLayout(
-    view,
-    scratch.rawCellKeys,
-    scratch.rawCellValues,
-    [GHOSTTY_CELL_DATA_WIDE, GHOSTTY_CELL_DATA_HAS_TEXT],
-    [scratch.rawCellWide, scratch.rawCellHasText]
-  );
+  writeBatchLayout(view, scratch.rowCellKeys, scratch.rowCellValues, ROW_CELL_KEYS, [
+    scratch.cellRaw,
+    scratch.cellGraphemeLen,
+    scratch.cellStyle,
+    scratch.cellFg,
+    scratch.cellBg,
+  ]);
+  writeBatchLayout(view, scratch.rawCellKeys, scratch.rawCellValues, RAW_CELL_KEYS, [
+    scratch.rawCellWide,
+    scratch.rawCellHasText,
+    scratch.rawCellHasHyperlink,
+  ]);
   resources.scratch = scratch;
   return scratch;
 }
@@ -213,54 +218,6 @@ function throwRawCellBatchError(result: number, written: number): never {
     throw new Error(`ghostty enum read failed with result ${result}`);
   }
   throw new Error(`ghostty bool read failed with result ${result}`);
-}
-
-function internStyle(
-  styleCache: Map<number, GhosttyRenderCellStyle>,
-  key: number,
-  flags: number,
-  underline: number
-): GhosttyRenderCellStyle {
-  if (styleCache.size >= INTERN_LIMIT) {
-    styleCache.clear();
-  }
-  const style: GhosttyRenderCellStyle = {
-    bold: (flags & 0b0000_0001) !== 0,
-    italic: (flags & 0b0000_0010) !== 0,
-    faint: (flags & 0b0000_0100) !== 0,
-    blink: (flags & 0b0000_1000) !== 0,
-    inverse: (flags & 0b0001_0000) !== 0,
-    invisible: (flags & 0b0010_0000) !== 0,
-    strikethrough: (flags & 0b0100_0000) !== 0,
-    overline: (flags & 0b1000_0000) !== 0,
-    underline,
-  };
-  styleCache.set(key, style);
-  return style;
-}
-
-function codepointsToText(buffer: number[], length: number): string {
-  if (length === 0) {
-    return '';
-  }
-  if (length === 1 && buffer[0] < 128) {
-    return ASCII_TEXT[buffer[0]];
-  }
-  try {
-    return String.fromCodePoint(...buffer.slice(0, length));
-  } catch {
-    return '';
-  }
-}
-
-function materializeCodepoints(buffer: number[], length: number): number[] {
-  if (length === 0) {
-    return EMPTY_CODEPOINTS;
-  }
-  if (length === 1 && buffer[0] < 128) {
-    return ASCII_CODEPOINTS[buffer[0]];
-  }
-  return buffer.slice(0, length);
 }
 
 function readGraphemeText(
@@ -317,70 +274,21 @@ function readSkippedBackground(
   throw new Error(`ghostty optional color read failed with result ${result}`);
 }
 
-function buildRowText(cells: GhosttyRenderCell[]): string {
-  let text = '';
-  for (const cell of cells) {
-    if (cell.widthKind === 'spacer-tail' || cell.widthKind === 'spacer-head') {
-      continue;
-    }
-    if (cell.text) {
-      text += cell.text;
-      continue;
-    }
-    if (cell.widthKind === 'narrow') {
-      text += ' ';
-    }
-  }
-  return text;
-}
-
-export function isCellUnchanged(
-  candidate: GhosttyRenderCell,
-  text: string,
-  codepointCount: number,
-  widthKind: GhosttyCellWidthKind,
-  hasText: boolean,
-  style: GhosttyRenderCellStyle,
-  fgColor: GhosttyColorRgb | null,
-  bgColor: GhosttyColorRgb | null
-): boolean {
-  return (
-    candidate.text === text &&
-    candidate.codepoints.length === codepointCount &&
-    candidate.widthKind === widthKind &&
-    candidate.hasText === hasText &&
-    candidate.style === style &&
-    candidate.fgColor === fgColor &&
-    candidate.bgColor === bgColor
-  );
-}
-
-export function reuseUnchangedRow(
-  previous: GhosttyRenderRow | null,
-  rowIndex: number,
-  cellCount: number,
-  wrap: boolean,
-  wrapContinuation: boolean
-): GhosttyRenderRow | null {
-  if (
-    !previous ||
-    previous.cells.length !== cellCount ||
-    previous.wrap !== wrap ||
-    previous.wrapContinuation !== wrapContinuation
-  ) {
-    return null;
-  }
-  if (!previous.dirty && previous.y === rowIndex) {
-    return previous;
-  }
-  return {
-    y: rowIndex,
-    dirty: false,
-    wrap,
-    wrapContinuation,
-    text: previous.text,
-    cells: previous.cells,
-  };
+// get_multi 写到第几项决定可选色是否存在：>3 有前景色，>4 有背景色；恰为 3 时 FG 缺失、BG 未读。
+function readCellColors(
+  resources: GhosttyRenderStateResources,
+  scratch: RenderStateScratch,
+  view: DataView,
+  batchWritten: number,
+  probe: CellProbe
+): void {
+  const { colorCache } = resources;
+  probe.fgColor = batchWritten > 3 ? readColorAt(colorCache, scratch.cellFg, view) : null;
+  const bgAvailable =
+    batchWritten > 4 ||
+    (batchWritten === 3 &&
+      readSkippedBackground(resources.bindings, resources.rowCellsHandle, scratch.cellBg));
+  probe.bgColor = bgAvailable ? readColorAt(colorCache, scratch.cellBg, view) : null;
 }
 
 function readRowCells(
@@ -389,7 +297,7 @@ function readRowCells(
   previousCells: GhosttyRenderCell[] | null,
   cells: GhosttyRenderCell[]
 ): boolean {
-  const { bindings, rowCellsHandle, styleCache, colorCache } = resources;
+  const { bindings, rowCellsHandle, styleCache } = resources;
   const wasm = bindings.exports;
   const stylePtr = scratch.cellStyle;
   let view = bindings.view();
@@ -413,9 +321,11 @@ function readRowCells(
       }
     }
 
+    const probe = cellProbe;
     const rawCell = view.getBigUint64(scratch.cellRaw, true);
     const codepointCount = view.getUint32(scratch.cellGraphemeLen, true);
-    const text = readGraphemeText(bindings, rowCellsHandle, scratch, view, codepointCount);
+    probe.text = readGraphemeText(bindings, rowCellsHandle, scratch, view, codepointCount);
+    probe.codepointCount = codepointCount;
     if (codepointCount > GRAPHEME_SCRATCH_CODEPOINTS) {
       view = bindings.view();
     }
@@ -430,8 +340,9 @@ function readRowCells(
     if (rawResult !== GHOSTTY_SUCCESS) {
       throwRawCellBatchError(rawResult, view.getUint32(scratch.multiWritten, true));
     }
-    const widthKind = CELL_WIDTH_KINDS[view.getInt32(scratch.rawCellWide, true)] ?? 'narrow';
-    const hasText = view.getUint8(scratch.rawCellHasText) !== 0;
+    probe.widthKind = CELL_WIDTH_KINDS[view.getInt32(scratch.rawCellWide, true)] ?? 'narrow';
+    probe.hasText = view.getUint8(scratch.rawCellHasText) !== 0;
+    probe.hasHyperlink = view.getUint8(scratch.rawCellHasHyperlink) !== 0;
 
     let flags = 0;
     for (let index = 0; index < scratch.styleFlagOffsets.length; index += 1) {
@@ -439,56 +350,15 @@ function readRowCells(
     }
     const underline = view.getInt32(stylePtr + scratch.styleUnderlineOffset, true);
     const styleKey = underline * 256 + flags;
-    let style = styleCache.get(styleKey);
-    style ??= internStyle(styleCache, styleKey, flags, underline);
-
-    let fgColor: GhosttyColorRgb | null = null;
-    if (batchWritten > 3) {
-      const red = view.getUint8(scratch.cellFg);
-      const green = view.getUint8(scratch.cellFg + 1);
-      const blue = view.getUint8(scratch.cellFg + 2);
-      const colorKey = (red << 16) | (green << 8) | blue;
-      fgColor = internColorByKey(colorCache, colorKey, red, green, blue);
-    }
-
-    let bgAvailable = batchWritten > 4;
-    if (batchWritten === 3) {
-      bgAvailable = readSkippedBackground(bindings, rowCellsHandle, scratch.cellBg);
-    }
-    let bgColor: GhosttyColorRgb | null = null;
-    if (bgAvailable) {
-      const red = view.getUint8(scratch.cellBg);
-      const green = view.getUint8(scratch.cellBg + 1);
-      const blue = view.getUint8(scratch.cellBg + 2);
-      const colorKey = (red << 16) | (green << 8) | blue;
-      bgColor = internColorByKey(colorCache, colorKey, red, green, blue);
-    }
+    probe.style = styleCache.get(styleKey) ?? internStyle(styleCache, styleKey, flags, underline);
+    readCellColors(resources, scratch, view, batchWritten, probe);
 
     const reusable = previousCells?.[x];
-    if (
-      reusable &&
-      (Number(reusable.text === text) &
-        Number(reusable.codepoints.length === codepointCount) &
-        Number(reusable.widthKind === widthKind) &
-        Number(reusable.hasText === hasText) &
-        Number(reusable.style === style) &
-        Number(reusable.fgColor === fgColor) &
-        Number(reusable.bgColor === bgColor)) !==
-        0
-    ) {
+    if (reusable && isCellUnchanged(reusable, probe)) {
       cells.push(reusable);
     } else {
       changed = true;
-      cells.push({
-        x,
-        text,
-        codepoints: materializeCodepoints(graphemeScratch, codepointCount),
-        widthKind,
-        hasText,
-        style,
-        fgColor,
-        bgColor,
-      });
+      cells.push(materializeCell(x, probe, graphemeScratch));
     }
     x += 1;
   }

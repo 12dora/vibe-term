@@ -22,6 +22,7 @@ function cell(
     codepoints: Array.from(text).map((ch) => ch.codePointAt(0) ?? 32),
     widthKind,
     hasText,
+    hasHyperlink: false,
     style: {
       bold: false,
       italic: false,

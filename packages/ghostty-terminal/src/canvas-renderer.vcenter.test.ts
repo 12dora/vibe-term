@@ -104,6 +104,7 @@ function makeCell(overrides: Partial<GhosttyRenderCellStyle>): GhosttyRenderCell
     codepoints: [0x4d], // 'M'——非块元素，走 fillText 分支
     widthKind: 'narrow',
     hasText: true,
+    hasHyperlink: false,
     style: { ...DEFAULT_STYLE, ...overrides },
     fgColor: null,
     bgColor: null,

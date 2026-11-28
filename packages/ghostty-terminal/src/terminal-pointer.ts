@@ -18,8 +18,12 @@ export type {
   InputRoutingState,
   MouseInputRequest,
   MouseInputState,
+  PendingLinkClick,
+  PointerClientPoint,
   PointerEventContext,
+  TerminalCellPoint,
   TerminalLinkHit,
+  TerminalLinkTarget,
 } from './terminal-pointer-shared';
 
 // 只负责注册 / 注销：监听器行为在 terminal-pointer-handlers 里。

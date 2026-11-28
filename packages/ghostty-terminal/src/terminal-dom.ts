@@ -7,6 +7,7 @@ import {
   createTextareaElement,
   createViewportElement,
 } from './terminal-dom-elements';
+import { LinkHoverStyle } from './terminal-link-hover';
 import type {
   GhosttyCellDimensions,
   GhosttyPanDelta,
@@ -58,7 +59,7 @@ export class TerminalDomSurface {
   private scrollbarFadeDeadline = 0;
   private scrollbarVisible = false;
   private focused = true;
-  private linkCursorActive = false;
+  private readonly linkHover = new LinkHoverStyle();
   private panEnabled = false;
   private contentWidth = 0;
   private contentHeight = 0;
@@ -496,14 +497,8 @@ export class TerminalDomSurface {
     this.scrollbarFadeTimer = null;
   }
 
-  setLinkCursor(active: boolean): void {
-    if (this.linkCursorActive === active) {
-      return;
-    }
-    this.linkCursorActive = active;
-    if (this.screen) {
-      this.screen.style.cursor = active ? 'pointer' : '';
-    }
+  setLinkCursor(active: boolean, title: string | null = null): void {
+    this.linkHover.apply(this.screen, active, title);
   }
 
   dispose(): void {

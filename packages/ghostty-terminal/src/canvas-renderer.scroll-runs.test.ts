@@ -282,6 +282,7 @@ function makeCell(
     codepoints: text ? [text.codePointAt(0) ?? 32] : [],
     widthKind: 'narrow',
     hasText: text !== '',
+    hasHyperlink: false,
     style: STYLE,
     fgColor: null,
     bgColor: null,

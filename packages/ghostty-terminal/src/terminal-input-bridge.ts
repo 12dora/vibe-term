@@ -29,6 +29,7 @@ import {
   type MouseInputState,
   createMouseInputState,
 } from './terminal-pointer';
+import { resetPointerGesture, resetReportedPointerGesture } from './terminal-pointer-gesture';
 import type {
   GhosttyCellDimensions,
   GhosttyTerminalModeSnapshot,
@@ -234,18 +235,22 @@ export class TerminalInputBridge {
     }
     this.invalidateModeCache();
     this.resetMouseEncoder();
-    this.mouse.pressedButtons.clear();
     this.mouse.lastMotionCell = null;
-    this.mouse.dragActive = false;
+    resetReportedPointerGesture(this.mouse);
   }
 
   resetMouseEncoder(): void {
     this.bindings.resetMouseEncoder(this.handles.mouseEncoder);
   }
 
-  // 清空选择时连带复位：残留的按下按钮与半格滚轮余量会让下一次交互从错误状态起步。
+  resetPointerGesture(): void {
+    resetPointerGesture(this.mouse);
+    this.mouse.lastMotionCell = null;
+  }
+
+  // 清空选择时连带复位半格滚轮余量。已上报的按下按钮不在此清：它们的 release 仍要补发，
+  // 丢失的 mouseup 由 terminal-pointer-gesture 按 event.buttons 收尾。
   resetPointerAccumulation(): void {
-    this.mouse.pressedButtons.clear();
     this.wheelAccumulatorY.pixels = 0;
     this.wheelAccumulatorX.pixels = 0;
   }

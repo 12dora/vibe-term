@@ -2,6 +2,7 @@
 // 二者共同决定 GhosttyRenderRow.dirty，进而决定 canvas 只重画哪些行。
 import { describe, expect, test } from 'bun:test';
 import { isCellUnchanged, reuseUnchangedRow } from './render-state';
+import { type CellProbe, materializeCell } from './render-state-cell';
 import type {
   GhosttyColorRgb,
   GhosttyRenderCell,
@@ -32,6 +33,7 @@ function cell(overrides: Partial<GhosttyRenderCell> = {}): GhosttyRenderCell {
     codepoints: [97],
     widthKind: 'narrow',
     hasText: true,
+    hasHyperlink: false,
     style: STYLE,
     fgColor: null,
     bgColor: null,
@@ -51,26 +53,50 @@ function row(overrides: Partial<GhosttyRenderRow> = {}): GhosttyRenderRow {
   };
 }
 
+function probe(overrides: Partial<CellProbe> = {}): CellProbe {
+  return {
+    text: 'a',
+    codepointCount: 1,
+    widthKind: 'narrow',
+    hasText: true,
+    hasHyperlink: false,
+    style: STYLE,
+    fgColor: null,
+    bgColor: null,
+    ...overrides,
+  };
+}
+
 describe('isCellUnchanged', () => {
   test('全部字段一致时判定未变', () => {
-    expect(isCellUnchanged(cell(), 'a', 1, 'narrow', true, STYLE, null, null)).toBe(true);
+    expect(isCellUnchanged(cell(), probe())).toBe(true);
   });
 
-  test('文本、码位数、宽度类型、hasText 任一不同都判定已变', () => {
-    expect(isCellUnchanged(cell(), 'b', 1, 'narrow', true, STYLE, null, null)).toBe(false);
-    expect(isCellUnchanged(cell(), 'a', 2, 'narrow', true, STYLE, null, null)).toBe(false);
-    expect(isCellUnchanged(cell(), 'a', 1, 'wide', true, STYLE, null, null)).toBe(false);
-    expect(isCellUnchanged(cell(), 'a', 1, 'narrow', false, STYLE, null, null)).toBe(false);
+  test('文本、码位数、宽度类型、hasText、hasHyperlink 任一不同都判定已变', () => {
+    expect(isCellUnchanged(cell(), probe({ text: 'b' }))).toBe(false);
+    expect(isCellUnchanged(cell(), probe({ codepointCount: 2 }))).toBe(false);
+    expect(isCellUnchanged(cell(), probe({ widthKind: 'wide' }))).toBe(false);
+    expect(isCellUnchanged(cell(), probe({ hasText: false }))).toBe(false);
+    expect(isCellUnchanged(cell(), probe({ hasHyperlink: true }))).toBe(false);
+    expect(isCellUnchanged(cell({ hasHyperlink: true }), probe())).toBe(false);
   });
 
   test('style 与颜色按引用比对：内插实例才算相同', () => {
-    expect(isCellUnchanged(cell(), 'a', 1, 'narrow', true, OTHER_STYLE, null, null)).toBe(false);
+    expect(isCellUnchanged(cell(), probe({ style: OTHER_STYLE }))).toBe(false);
 
     const colored = cell({ fgColor: RED });
-    expect(isCellUnchanged(colored, 'a', 1, 'narrow', true, STYLE, RED, null)).toBe(true);
+    expect(isCellUnchanged(colored, probe({ fgColor: RED }))).toBe(true);
     // 值相等但不是同一个内插实例 → 视作已变（内插表保证同色同实例）。
-    expect(isCellUnchanged(colored, 'a', 1, 'narrow', true, STYLE, SAME_RED, null)).toBe(false);
-    expect(isCellUnchanged(colored, 'a', 1, 'narrow', true, STYLE, null, null)).toBe(false);
+    expect(isCellUnchanged(colored, probe({ fgColor: SAME_RED }))).toBe(false);
+    expect(isCellUnchanged(colored, probe())).toBe(false);
+  });
+});
+
+describe('materializeCell', () => {
+  test('按 probe 物化新 cell，hasHyperlink 一并带上', () => {
+    const created = materializeCell(4, probe({ hasHyperlink: true }), [97]);
+    expect(created).toMatchObject({ x: 4, text: 'a', codepoints: [97], hasHyperlink: true });
+    expect(isCellUnchanged(created, probe({ hasHyperlink: true }))).toBe(true);
   });
 });
 

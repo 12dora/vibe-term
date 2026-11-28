@@ -192,13 +192,13 @@ describe('TerminalInputBridge.resetPointerAccumulation', () => {
     expect(scrolled).toEqual([1]);
   });
 
-  test('复位同时清空已按下按钮记录', () => {
+  test('复位不丢已上报的按下按钮：其 release 仍要补发给应用', () => {
     const { bridge } = createHarness();
 
     bridge.mouse.pressedButtons.add(1);
     bridge.resetPointerAccumulation();
 
-    expect(bridge.mouse.pressedButtons.size).toBe(0);
+    expect([...bridge.mouse.pressedButtons]).toEqual([1]);
   });
 });
 
@@ -420,5 +420,23 @@ describe('TerminalInputBridge.observeOutput 鼠标跟踪互斥', () => {
 
     expect(bridge.routingState().mouseReporting).toBe(false);
     expect(bridge.isModeEnabled(1006)).toBe(true);
+  });
+
+  test('clearMouseTrackingModes 作废已上报按键与链接手势，不动本地选区', () => {
+    const { bridge } = createHarness(new Set([1000, 1006]));
+    const hit = { kind: 'url' as const, url: 'https://example.com', explicit: true };
+    bridge.mouse.primary = 'swallowed';
+    bridge.mouse.pendingLink = { line: 0, col: 0, hit };
+    bridge.mouse.pressedButtons.add(2);
+
+    bridge.clearMouseTrackingModes();
+
+    expect(bridge.mouse.primary).toBe('none');
+    expect(bridge.mouse.pendingLink).toBeNull();
+    expect(bridge.mouse.pressedButtons.size).toBe(0);
+
+    bridge.mouse.primary = 'selection';
+    bridge.clearMouseTrackingModes();
+    expect(bridge.mouse.primary).toBe('selection');
   });
 });

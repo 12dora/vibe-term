@@ -317,6 +317,7 @@ describe('TerminalRenderCoordinator performance guards', () => {
       expect(harness.coordinator.linkAt(8, 8)).toEqual({
         kind: 'url',
         url: 'https://example.com',
+        explicit: false,
       });
       expect(harness.linkUnderlines.at(-1)).toContainEqual({ row: 0, startCol: 0, endCol: 8 });
     } finally {

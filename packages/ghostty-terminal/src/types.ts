@@ -144,6 +144,8 @@ export interface GhosttyRenderCell {
   codepoints: number[];
   widthKind: GhosttyCellWidthKind;
   hasText: boolean;
+  /** 格子带 OSC 8 超链接标记；URI 不随帧读取，命中/下划线时按需经 grid_ref 查询 */
+  hasHyperlink: boolean;
   style: GhosttyRenderCellStyle;
   fgColor: GhosttyColorRgb | null;
   bgColor: GhosttyColorRgb | null;
@@ -265,6 +267,8 @@ export interface CompatibleTerminalLike {
     clientY: number;
   }) => boolean;
   noteTouchHandled?: () => void;
+  /** 触屏轻点按链接策略打开链接；返回 true 时调用方跳过该次 tap 的上报与聚焦 */
+  openLinkAt?: (clientX: number, clientY: number, trigger: 'tap') => boolean;
   /** 打开/关闭平移视口（follower 模式）。关闭时 DOM 与样式回到裁剪语义。 */
   setViewportPan?: (enabled: boolean) => void;
   /** 平移视口的可滚状态；未启用/未挂载时返回 null。 */

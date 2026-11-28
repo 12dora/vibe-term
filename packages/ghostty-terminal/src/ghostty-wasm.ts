@@ -128,6 +128,7 @@ type GhosttyExports = WebAssembly.Exports & {
   ghostty_terminal_mode_get: (terminal: number, mode: number, outValuePtr: number) => number;
   ghostty_terminal_mode_set: (terminal: number, mode: number, enabled: number) => number;
   ghostty_terminal_grid_ref: (terminal: number, pointPtr: number, outRefPtr: number) => number;
+  ghostty_grid_ref_hyperlink_uri: (ref: number, buf: number, len: number, outLen: number) => number;
   ghostty_render_state_new: (allocatorPtr: number, outStatePtr: number) => number;
   ghostty_render_state_free: (state: number) => void;
   ghostty_render_state_update: (state: number, terminal: number) => number;
@@ -212,11 +213,7 @@ type GhosttyExports = WebAssembly.Exports & {
 let bindingsPromise: Promise<GhosttyBindings> | null = null;
 
 function assertResult(result: number, action: string): void {
-  if (result === GHOSTTY_SUCCESS) {
-    return;
-  }
-
-  throw new Error(`${action} failed with result ${result}`);
+  if (result !== GHOSTTY_SUCCESS) throw new Error(`${action} failed with result ${result}`);
 }
 
 const HEX_RGB_PATTERN = /^[0-9a-fA-F]{6}$/;

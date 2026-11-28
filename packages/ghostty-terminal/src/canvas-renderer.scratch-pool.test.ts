@@ -63,6 +63,7 @@ function makeRow(y: number, text: string, dirty: boolean): GhosttyRenderRow {
     codepoints: [character.codePointAt(0) ?? 32],
     widthKind: 'narrow' as const,
     hasText: true,
+    hasHyperlink: false,
     style: STYLE,
     fgColor: null,
     bgColor: null,

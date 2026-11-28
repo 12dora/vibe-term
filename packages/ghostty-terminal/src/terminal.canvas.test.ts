@@ -141,6 +141,7 @@ async function loadControllerModule(bindings: FakeBindings, version: number) {
                 codepoints: Array.from('mock-canvas-line').map((char) => char.codePointAt(0) ?? 32),
                 widthKind: 'narrow',
                 hasText: true,
+                hasHyperlink: false,
                 style: {
                   bold: false,
                   italic: false,
@@ -754,7 +755,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
         clientX: 20,
         clientY: 20,
         button: 2,
-        buttons: 2,
+        buttons: 6,
       }) as unknown as FakeEvent
     );
 
@@ -1179,6 +1180,35 @@ describe('GhosttyTerminalController canvas baseline', () => {
     expect(terminal.isMouseReporting()).toBeFalse();
   });
 
+  // 快照重写走 reset()：按下中的上报键、主键手势与待定链接都必须归零，否则之后会发孤立
+  // motion / release，或在同一格松开时打开 reset 前的旧链接。
+  test('reset clears the whole pointer gesture', async () => {
+    dom = installCanvasDom();
+    const { terminal, screen } = await setupMouseTerminal([1000, 1006]);
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousedown', {
+        clientX: 10,
+        clientY: 10,
+        button: 0,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+    const mouse = terminal.input.mouse;
+    expect(mouse.primary).toBe('reported');
+    expect([...mouse.pressedButtons]).toEqual([1]);
+    mouse.pendingLink = {
+      line: 0,
+      col: 0,
+      hit: { kind: 'url', url: 'https://example.com', explicit: true },
+    };
+
+    terminal.reset();
+
+    expect(mouse.primary).toBe('none');
+    expect(mouse.pressedButtons.size).toBe(0);
+    expect(mouse.pendingLink).toBeNull();
+  });
+
   // 内核对 1000/1002/1003 逐位记录：1003h 之后收到 1000l，1003 位仍在，悬停会继续上报
   test('DECRST 1000 after 1003 turns tracking off entirely', async () => {
     dom = installCanvasDom();
@@ -1550,6 +1580,7 @@ describe('CanvasRenderer', () => {
               codepoints: [65],
               widthKind: 'narrow' as const,
               hasText: true,
+              hasHyperlink: false,
               style: {
                 bold: false,
                 italic: false,
@@ -1570,6 +1601,7 @@ describe('CanvasRenderer', () => {
               codepoints: [66],
               widthKind: 'narrow' as const,
               hasText: true,
+              hasHyperlink: false,
               style: {
                 bold: true,
                 italic: false,
@@ -1599,6 +1631,7 @@ describe('CanvasRenderer', () => {
               codepoints: [67],
               widthKind: 'narrow' as const,
               hasText: true,
+              hasHyperlink: false,
               style: {
                 bold: false,
                 italic: true,
@@ -1619,6 +1652,7 @@ describe('CanvasRenderer', () => {
               codepoints: [68],
               widthKind: 'narrow' as const,
               hasText: true,
+              hasHyperlink: false,
               style: {
                 bold: false,
                 italic: false,
@@ -1771,6 +1805,7 @@ describe('CanvasRenderer', () => {
                 codepoints: [65],
                 widthKind: 'narrow' as const,
                 hasText: true,
+                hasHyperlink: false,
                 style: cellStyle,
                 fgColor: null,
                 bgColor: { r: 0, g: 128, b: 0 },
@@ -1781,6 +1816,7 @@ describe('CanvasRenderer', () => {
                 codepoints: [66],
                 widthKind: 'narrow' as const,
                 hasText: true,
+                hasHyperlink: false,
                 style: { ...cellStyle, underline: 1, strikethrough: true },
                 fgColor: null,
                 bgColor: null,
@@ -1861,6 +1897,7 @@ describe('CanvasRenderer', () => {
       codepoints: [codepoint],
       widthKind: 'narrow' as const,
       hasText: true,
+      hasHyperlink: false,
       style: cellStyle,
       fgColor: { r: 255, g: 255, b: 255 },
       bgColor: null,
@@ -1975,6 +2012,7 @@ describe('CanvasRenderer', () => {
           codepoints: [ch.codePointAt(0) ?? 32],
           widthKind: 'narrow' as const,
           hasText: true,
+          hasHyperlink: false,
           style: cellStyle,
           fgColor: null,
           bgColor: null,
@@ -2066,6 +2104,7 @@ describe('CanvasRenderer', () => {
           codepoints: [ch.codePointAt(0) ?? 32],
           widthKind: 'narrow' as const,
           hasText: true,
+          hasHyperlink: false,
           style: cellStyle,
           fgColor: null,
           bgColor: null,

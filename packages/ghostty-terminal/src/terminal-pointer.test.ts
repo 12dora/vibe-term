@@ -37,6 +37,7 @@ function createContext(): PointerEventContext {
     pointerMods: () => 0,
     emitMouseInput: () => false,
     clearSelection: () => {},
+    cellAtClient: () => null,
     linkAtClient: () => null,
     activateLink: () => {},
     setLinkCursor: () => {},

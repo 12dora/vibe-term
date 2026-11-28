@@ -1,6 +1,7 @@
 // 指针 → 焦点的判定：真鼠标点击聚焦终端（桌面靠这条输入），触摸手势之后浏览器
 // 合成的那套鼠标事件一律作废——它会在触屏上弹出/收起软键盘。
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { isPointerDragActive } from './terminal-pointer-gesture';
 import { createPointerListeners } from './terminal-pointer-handlers';
 import { SYNTHETIC_MOUSE_SUPPRESS_MS, createMouseInputState } from './terminal-pointer-shared';
 import type { MouseInputRequest, PointerEventContext } from './terminal-pointer-shared';
@@ -20,6 +21,7 @@ function createContext(overrides: Partial<PointerEventContext> = {}): {
     pointerMods: () => 0,
     emitMouseInput: () => false,
     clearSelection: () => {},
+    cellAtClient: () => null,
     linkAtClient: () => null,
     activateLink: () => {},
     setLinkCursor: () => {},
@@ -177,7 +179,7 @@ describe('鼠标上报的 motion 约束', () => {
 
   test('按住按钮的拖拽带着按下状态上报 motion', () => {
     const { context, requests } = createReportingContext({ anyEvent: false });
-    context.mouse.dragActive = true;
+    context.mouse.primary = 'reported';
     context.mouse.pressedButtons.add(1);
 
     createPointerListeners(context).dragMove(moveEvent(1));
@@ -189,7 +191,7 @@ describe('鼠标上报的 motion 约束', () => {
 
   test('mouseup 丢失后按钮已抬起：补发释放并结束拖拽，不再发按钮为空的 motion', () => {
     const { context, requests } = createReportingContext({ anyEvent: false });
-    context.mouse.dragActive = true;
+    context.mouse.primary = 'reported';
     context.mouse.pressedButtons.add(1);
 
     const listeners = createPointerListeners(context);
@@ -199,7 +201,7 @@ describe('鼠标上报的 motion 约束', () => {
     expect(requests).toEqual([
       expect.objectContaining({ action: 'release', button: 1, anyButtonPressed: false }),
     ]);
-    expect(context.mouse.dragActive).toBe(false);
+    expect(isPointerDragActive(context.mouse)).toBe(false);
     expect(context.mouse.pressedButtons.size).toBe(0);
   });
 });
