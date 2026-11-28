@@ -152,7 +152,7 @@ describe('pane stream parser - OSC 8 hyperlinks', () => {
       pushText(parser, `A${ESC}]8;;${huge.slice(0, 10 * 1024)}`),
       pushText(parser, huge.slice(10 * 1024)),
       pushText(parser, `${ESC}`),
-      pushText(parser, `\\B`),
+      pushText(parser, '\\B'),
     ];
     expect(outputs.join('')).toBe(`A${CLOSE_ST}B`);
   });
