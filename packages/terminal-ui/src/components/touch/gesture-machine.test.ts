@@ -122,6 +122,10 @@ function createHarness(options: {
   onSelectionCommitted?: () => void;
   readOnly?: boolean;
   inputDisabled?: boolean;
+  /** 省略 = 终端不暴露 openLinkAt；否则表示触点是否落在链接上 */
+  linkAtPoint?: boolean;
+  /** 终端行高；省略 = CELL_HEIGHT */
+  cellHeight?: number;
 }): Harness {
   const calls: string[] = [];
   let reporting = options.reporting;
@@ -158,12 +162,21 @@ function createHarness(options: {
     focus: () => calls.push('focus'),
     isInputDisabled: options.inputDisabled ? () => true : undefined,
   };
+  if (options.linkAtPoint !== undefined) {
+    const onLink = options.linkAtPoint;
+    terminal.openLinkAt = (clientX, clientY, trigger) => {
+      calls.push(`openLinkAt(${clientX},${clientY},${trigger})`);
+      return onLink;
+    };
+  }
   if (options.cursorRow !== undefined) {
     terminal.lastCursor = { visible: true, y: options.cursorRow };
     terminal.buffer = { active: { viewportY: 10, baseY: 10 } };
   }
   terminal._core = {
-    _renderService: { dimensions: { css: { cell: { height: CELL_HEIGHT } } } },
+    _renderService: {
+      dimensions: { css: { cell: { height: options.cellHeight ?? CELL_HEIGHT } } },
+    },
   };
 
   if (pan) {
@@ -277,6 +290,225 @@ describe('mouse reporting gestures', () => {
 
     expect(calls).toEqual([]);
     expect(machine.currentState()).toBe('idle');
+  });
+});
+
+describe('tap on a link', () => {
+  const surface = () => new FakeElement(['.xterm']);
+  const screenContainer = () =>
+    new FakeElement([], {
+      '.xterm-screen': new FakeElement([], {}, { left: 0, right: 200, top: 0, bottom: 400 }),
+    });
+
+  test('上报模式点中链接：打开链接，不上报鼠标、不聚焦', () => {
+    const { machine, calls } = createHarness({
+      reporting: true,
+      linkAtPoint: true,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)])));
+    const end = touchEvent([], [touch(1, 103, 111)]);
+    machine.handleTouchEnd(asTouchEvent(end));
+
+    expect(calls).toEqual(['openLinkAt(100,110,tap)', 'noteTouchHandled']);
+    expect(end.defaultPrevented).toBe(true);
+    expect(machine.currentState()).toBe('idle');
+  });
+
+  test('上报模式没点中链接：照常上报，点光标行照常聚焦', () => {
+    const { machine, calls } = createHarness({
+      reporting: true,
+      linkAtPoint: false,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)])));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 110)])));
+
+    expect(calls).toEqual([
+      'openLinkAt(100,110,tap)',
+      'press(100,110)',
+      'release(100,110)',
+      'noteTouchHandled',
+      'focus',
+    ]);
+  });
+
+  test('非上报模式点中链接：打开链接，不聚焦', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      linkAtPoint: true,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, surface())));
+    const end = touchEvent([], [touch(1, 101, 111)], surface());
+    machine.handleTouchEnd(asTouchEvent(end));
+
+    expect(calls).toEqual(['openLinkAt(100,110,tap)', 'noteTouchHandled']);
+    expect(end.defaultPrevented).toBe(true);
+    expect(machine.currentState()).toBe('idle');
+  });
+
+  test('非上报模式没点中链接：行为不变（点光标行聚焦）', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      linkAtPoint: false,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, surface())));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 110)], surface())));
+
+    expect(calls).toEqual(['openLinkAt(100,110,tap)', 'noteTouchHandled', 'focus']);
+  });
+
+  test('越过位移容差的手势永不调用 openLinkAt', () => {
+    for (const reporting of [true, false]) {
+      const { machine, calls } = createHarness({ reporting, linkAtPoint: true });
+      machine.handleTouchStart(
+        asTouchEvent(touchEvent([touch(1, 100, 200)], undefined, surface()))
+      );
+      machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 100, 160)], undefined, surface())));
+      machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 160)], surface())));
+
+      expect(calls.some((call) => call.startsWith('openLinkAt'))).toBe(false);
+    }
+  });
+
+  test('非上报模式双指捏合（首指不动、次指移动）不算轻点：不打开链接、不聚焦、不起长按选择', () => {
+    jest.useFakeTimers();
+    const { machine, calls } = createHarness({
+      reporting: false,
+      linkAtPoint: true,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, surface())));
+    machine.handleTouchStart(
+      asTouchEvent(touchEvent([touch(1, 100, 110), touch(2, 140, 110)], undefined, surface()))
+    );
+    machine.handleTouchMove(
+      asTouchEvent(touchEvent([touch(1, 100, 110), touch(2, 170, 110)], undefined, surface()))
+    );
+    jest.advanceTimersByTime(LONG_PRESS_SELECT_MS);
+    machine.handleTouchEnd(
+      asTouchEvent(touchEvent([touch(1, 100, 110)], [touch(2, 170, 110)], surface()))
+    );
+    const end = touchEvent([], [touch(1, 100, 110)], surface());
+    machine.handleTouchEnd(asTouchEvent(end));
+
+    expect(calls).toEqual([]);
+    expect(end.defaultPrevented).toBe(false);
+    expect(machine.currentState()).toBe('idle');
+  });
+
+  test('下一次单指轻点不受上一次多指手势残留影响', () => {
+    const { machine, calls } = createHarness({ reporting: false, linkAtPoint: true });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, surface())));
+    machine.handleTouchStart(
+      asTouchEvent(touchEvent([touch(1, 100, 110), touch(2, 140, 110)], undefined, surface()))
+    );
+    machine.handleTouchEnd(
+      asTouchEvent(touchEvent([touch(1, 100, 110)], [touch(2, 140, 110)], surface()))
+    );
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 110)], surface())));
+    calls.length = 0;
+
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(3, 60, 60)], undefined, surface())));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(3, 60, 60)], surface())));
+
+    expect(calls).toEqual(['openLinkAt(60,60,tap)', 'noteTouchHandled']);
+  });
+
+  test('小行高下容差内的位移已真实滚动：不算轻点，不打开链接，长按也解除', () => {
+    jest.useFakeTimers();
+    // 12px × 1.3 = 15.6px ≥ 行高 14 → 滚出一行，但位移未超过 12px 容差
+    const { machine, calls } = createHarness({
+      reporting: false,
+      linkAtPoint: true,
+      cellHeight: 14,
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)], undefined, surface())));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 100, 188)], undefined, surface())));
+    expect(calls.some((call) => call.startsWith('viewportGesture'))).toBe(true);
+    jest.advanceTimersByTime(LONG_PRESS_SELECT_MS);
+    calls.length = 0;
+    const end = touchEvent([], [touch(1, 100, 188)], surface());
+    machine.handleTouchEnd(asTouchEvent(end));
+
+    expect(calls).toEqual([]);
+    expect(end.defaultPrevented).toBe(false);
+  });
+
+  test('容差内的平移（轴锁 8px）同样不算轻点', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      linkAtPoint: true,
+      pan: { overflowX: 200, overflowY: 100 },
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)], undefined, surface())));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 90, 200)], undefined, surface())));
+    expect(machine.currentState()).toBe('pan');
+    calls.length = 0;
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 90, 200)], surface())));
+
+    expect(calls).toEqual([]);
+  });
+
+  test('覆盖层上的轻点（非终端画布）不尝试打开链接', () => {
+    const { machine, calls } = createHarness({ reporting: false, linkAtPoint: true });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, {})));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 110)], {})));
+
+    expect(calls).toEqual([]);
+  });
+
+  test('热区 bypass 态的轻点不打开链接', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      linkAtPoint: true,
+      container: hotzoneContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 180, 100)], undefined, surface())));
+    expect(machine.currentState()).toBe('bypass');
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 180, 100)], surface())));
+
+    expect(calls.some((call) => call.startsWith('openLinkAt'))).toBe(false);
+  });
+
+  test('长按选区不受影响：不尝试打开链接', () => {
+    jest.useFakeTimers();
+    const { machine, calls } = createHarness({ reporting: false, linkAtPoint: true });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    jest.advanceTimersByTime(LONG_PRESS_SELECT_MS);
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 200)])));
+
+    expect(calls).toEqual(['startSelection(100,200,word)', 'endSelection', 'noteTouchHandled']);
+  });
+
+  test('只读终端（readOnly）点中链接照常打开', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      linkAtPoint: true,
+      readOnly: true,
+      inputDisabled: true,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, surface())));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 110)], surface())));
+
+    expect(calls).toEqual(['openLinkAt(100,110,tap)', 'noteTouchHandled']);
+  });
+
+  test('终端未暴露 openLinkAt 时行为与之前完全一致', () => {
+    const { machine, calls } = createHarness({ reporting: true });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 100)])));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 100)])));
+
+    expect(calls).toEqual(['press(100,100)', 'release(100,100)', 'noteTouchHandled']);
   });
 });
 

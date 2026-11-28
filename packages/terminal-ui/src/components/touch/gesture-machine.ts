@@ -49,8 +49,8 @@ export class MobileTouchGestureMachine {
   private touchStartX = 0;
   private touchStartY = 0;
   private reporting = false;
-  /** 本次手势是否越过位移容差；用于把轻点与滚动/平移区分开 */
-  private moved = false;
+  /** 本次手势已不再是轻点（越过位移容差 / 真的滚动或平移过 / 出现过第二指）；抬指时据此放弃轻点语义 */
+  private tapCancelled = false;
 
   private readonly container: Element;
   private readonly resolveTerminal: ResolveTerminal;
@@ -85,7 +85,7 @@ export class MobileTouchGestureMachine {
     this.state = 'idle';
     this.touchId = null;
     this.reporting = false;
-    this.moved = false;
+    this.tapCancelled = false;
     this.scroll.resetAccumulator();
     this.pan.reset();
   }
@@ -115,6 +115,13 @@ export class MobileTouchGestureMachine {
       panned: applied.deltaX !== 0 || applied.deltaY !== 0,
       remainingY: plan.remainingY,
     };
+  }
+
+  // 「轻点」的唯一出口：任何让手势不再是单指原地轻点的事件都经这里。
+  // 长按定时器一并解除，避免已滚动/多指的手势还翻成本地选择。
+  private cancelTap(): void {
+    this.tapCancelled = true;
+    this.selection.clear();
   }
 
   private primaryTouch(touches: TouchList): TouchPoint | null {
@@ -186,10 +193,12 @@ export class MobileTouchGestureMachine {
       return;
     }
 
+    // 出现过第二指的手势永远不是轻点（双指捏合/滚轮）
+    this.cancelTap();
+
     // 第二指加入：tap 待定（pending）→ 双指滚轮；
     // wheel 中触点数变化 → 只重锚质心，不产生 delta
     if (this.state === 'pending') {
-      this.selection.clear();
       this.state = 'wheel';
       this.scroll.beginWheel(event.touches);
       return;
@@ -236,8 +245,7 @@ export class MobileTouchGestureMachine {
 
   private handleSingleFingerMove(touch: TouchPoint, event: TouchEvent): void {
     if (exceedsMoveTolerance(this.touchStartX, this.touchStartY, touch.clientX, touch.clientY)) {
-      this.moved = true;
-      this.selection.clear();
+      this.cancelTap();
     }
 
     // 滚动途中划入滚动条热区：交还原生（上报态只认真正的滚动条元素，见 bypasses）。
@@ -254,6 +262,7 @@ export class MobileTouchGestureMachine {
     const panOutcome = this.applyPan(touch, this.scroll.takeVerticalDelta(touch.clientY));
     if (panOutcome.panned) {
       this.state = 'pan';
+      this.cancelTap();
     }
     if (panOutcome.remainingY === 0) {
       if (panOutcome.panned) {
@@ -268,6 +277,9 @@ export class MobileTouchGestureMachine {
       touch.clientX,
       touch.clientY
     );
+    if (outcome?.didScroll) {
+      this.cancelTap();
+    }
     if (!outcome || !event.cancelable) return;
 
     if (outcome.didScroll || outcome.atTopWhilePullingDown) {
@@ -284,8 +296,12 @@ export class MobileTouchGestureMachine {
 
     if (this.state === 'pending') {
       // preventDefault 抑制 compat mouse 序列（规范保证）：上报模式的轻点发鼠标字节，
-      // 焦点只在点中输入行时才显式给出
+      // 焦点只在点中输入行时才显式给出；点中链接则整段让位给打开链接
       const terminal = this.resolveTerminal();
+      if (this.openLinkOnTap(terminal, event)) {
+        this.resetGesture();
+        return;
+      }
       this.mouseReport.tap(terminal, this.touchStartX, this.touchStartY);
       terminal?.noteTouchHandled?.();
       preventIfCancelable(event);
@@ -329,13 +345,28 @@ export class MobileTouchGestureMachine {
   // 画布上没滚动起来的那次抬指 = 轻点：合成鼠标序列一律作废（焦点不被隐式改动），
   // 只有点在光标所在行时才显式聚焦、唤起软键盘。
   private handleCanvasTap(event: TouchEvent): void {
-    if (!shouldSuppressTapSyntheticMouse({ moved: this.moved, target: event.target })) {
+    if (!shouldSuppressTapSyntheticMouse({ moved: this.tapCancelled, target: event.target })) {
       return;
     }
     const terminal = this.resolveTerminal();
+    // 非上报模式的轻点停在 scroll 态（上报模式走 pending 分支）；平移/滚动条/双指不是轻点
+    if (this.state === 'scroll' && this.openLinkOnTap(terminal, event)) {
+      return;
+    }
     terminal?.noteTouchHandled?.();
     preventIfCancelable(event);
     this.focusIfTapHitsInputRow(terminal);
+  }
+
+  // 轻点落在链接上：交给终端按链接策略打开（只读终端同样放行，打开链接不是输入）。
+  // 打开后抑制合成鼠标序列，不发上报、不聚焦（不弹软键盘）。
+  private openLinkOnTap(terminal: ReturnType<ResolveTerminal>, event: TouchEvent): boolean {
+    if (!terminal?.openLinkAt?.(this.touchStartX, this.touchStartY, 'tap')) {
+      return false;
+    }
+    terminal.noteTouchHandled?.();
+    preventIfCancelable(event);
+    return true;
   }
 
   // 输入行 = 光标所在行（上下各一行容差）。行号与画布渲染同源（最近一帧的光标快照 +

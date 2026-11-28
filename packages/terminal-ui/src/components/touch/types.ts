@@ -34,6 +34,8 @@ export interface TerminalScroller {
     clientY: number;
   }) => boolean;
   noteTouchHandled?: () => void;
+  /** 在该点按链接策略（显式/检测链接 × 当前上报状态）打开链接；打开了返回 true */
+  openLinkAt?: (clientX: number, clientY: number, trigger: 'tap') => boolean;
   focus?: () => void;
   isInputDisabled?: () => boolean;
   /** 最近一帧的光标；y 是视口内行号，null/不可见表示读不到 */
