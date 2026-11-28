@@ -1,21 +1,33 @@
-# 2.20.1
+# 2.21.0
 
-_2026-11-27_
+_2026-11-28_
 
 ## English
 
+### New Features
+
+- **Click links printed by coding agents**: links from Claude Code, Codex and other tools that mark up links (OSC 8 hyperlinks) now open with a plain click, including Markdown links that show only their label and long URLs the tool split across lines — every part opens the full address. Hovering a link whose text differs from its address shows the full address.
+- **Plain click opens links**: links open with a single click; dragging still selects text. In apps that use the mouse (such as vim with mouse enabled), clicking plain-text URLs still goes to the app — hold Cmd (macOS) or Ctrl to open them. Shift+click always selects.
+- **Tap links on mobile**: tapping a link opens it without bringing up the keyboard.
+
 ### Bug Fixes
 
-- **Desktop no longer stuck at phone size**: after viewing a terminal on a phone, locking the phone or leaving the browser could keep the desktop at the phone's narrow size, sometimes even after a reload, and occasionally garbled. The server now drops a client that has gone silent: within about 45 seconds the remaining devices get their full size back, and a session silent for 3 minutes is closed. A phone that wakes up reconnects and reclaims its size as usual. For terminals reached through another node, both nodes should run 2.20.1.
-- **Reload restores the correct size**: reloading or reconnecting always re-applies the terminal size, even when the server believed it was already set.
-- **Faster hand-off when a page goes to the background**: mobile browsers that close or freeze the page without a visibility change now release the terminal size immediately and claim it again when the page comes back. Size changes made while the page is in the background are applied once it is active again.
+- **More reliable mouse handling in terminal apps**: pressing several mouse buttons together, or releasing the mouse outside the window, no longer leaves a stuck drag or sends stray clicks to the app.
+
+For terminals on another node, that node needs 2.21.0 for agent links to be clickable.
 
 ---
 
 ## 中文
 
+### 新功能
+
+- **编码 Agent 输出的链接可直接点击**：Claude Code、Codex 等以 OSC 8 超链接输出的链接，现在单击即可打开，包括只显示标题的 Markdown 链接，以及被工具拆成多行的长网址（点击任意一段都打开完整地址）。悬停在文字与地址不同的链接上会显示完整地址。
+- **单击打开链接**：链接单击即开，拖动仍为选择文本。在使用鼠标的程序中（如开启鼠标的 vim），单击纯文本网址仍交给程序处理，按住 Cmd（macOS）或 Ctrl 单击即可打开；Shift+单击始终为选择。
+- **移动端轻点打开链接**：轻点链接即打开，不会弹出键盘。
+
 ### 问题修复
 
-- **电脑端不再卡在手机尺寸**：用手机看过终端后锁屏或离开浏览器，电脑端可能一直保持手机的窄尺寸，刷新也不一定恢复，偶尔还会显示错乱。现在服务器会剔除已无响应的客户端：约 45 秒内其余设备恢复完整尺寸，无响应满 3 分钟的会话会被关闭。手机唤醒后照常重连并重新取得尺寸。经其他节点访问的终端，两端节点都需升级到 2.20.1。
-- **刷新后恢复正确尺寸**：刷新或重连时总会重新下发终端尺寸，即使服务器认为尺寸已经一致。
-- **页面切到后台时更快交还尺寸**：移动端浏览器关闭或冻结页面而未触发可见性变化时，现在也会立即交还终端尺寸，页面回到前台后重新声明；后台期间的尺寸变化在页面恢复后补发。
+- **终端程序中的鼠标操作更可靠**：同时按下多个鼠标键，或在窗口外松开鼠标，不再导致拖动卡住或向程序发送多余的点击。
+
+经其他节点访问的终端，该节点需升级到 2.21.0，Agent 输出的链接才可点击。
