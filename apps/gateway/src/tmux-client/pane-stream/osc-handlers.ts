@@ -1,4 +1,5 @@
 import type { PaneStreamParserOptions } from '../pane-stream-parser';
+import { forwardOscHyperlink } from './osc-hyperlink';
 import type { ParserContext, ParserState } from './parser-state';
 import {
   MAX_KITTY_PENDING_IDS,
@@ -10,7 +11,8 @@ import {
   warnTitleOverflow,
 } from './parser-state';
 
-const HANDLED_OSC_KINDS = new Set(['0', '1', '2', '7', '9', '52', '99', '133', '777', '1337']);
+// 8（超链接）不触发回调，而是由 forwardOscHyperlink 重新编码后写回输出流
+const HANDLED_OSC_KINDS = new Set(['0', '1', '2', '7', '8', '9', '52', '99', '133', '777', '1337']);
 
 export function emitTitle(titleBytes: number[], onTitle: (title: string) => void): void {
   const title = utf8Decoder.decode(new Uint8Array(titleBytes)).trim();
@@ -171,7 +173,11 @@ export function emitOsc(state: ParserState, options: PaneStreamParserOptions): v
 }
 
 function finishOsc(ctx: ParserContext): void {
-  emitOsc(ctx.state, ctx.options);
+  if (ctx.state.oscKind === '8') {
+    forwardOscHyperlink(ctx);
+  } else {
+    emitOsc(ctx.state, ctx.options);
+  }
   resetOscState(ctx.state);
   ctx.state.phase = 'normal';
 }

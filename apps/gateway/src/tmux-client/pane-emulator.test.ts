@@ -65,6 +65,21 @@ describe('PaneEmulator + registry', () => {
     await reg.shutdownAll();
   });
 
+  test('OSC 8 超链接序列不进渲染态文本', async () => {
+    const fake = createFakeSource();
+    const reg = new PaneEmulatorRegistry();
+    const emu = await reg.acquire('d1', '%1', fake.source);
+    fake.pushBytes(
+      '%1',
+      'see \x1b]8;id=a1;https://example.com/very/long\x1b\\docs\x1b]8;;\x1b\\ here\r\n'
+    );
+    const text = emu.render();
+    expect(text).toContain('see docs here');
+    expect(text).not.toContain('example.com');
+    expect(text).not.toContain('\x1b');
+    await reg.shutdownAll();
+  });
+
   test('runtime source seeds through retention checkpoint and replay without a second stream', async () => {
     const listeners = new Set<EmulatorStreamListener>();
     const retention = new PaneRetention({ scheduleTimers: false });

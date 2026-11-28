@@ -403,7 +403,7 @@ dispatcher 在 `commands/settings.ts`，主题拆到 `settings-http.ts` / `setti
 - `capture`：默认把截屏原始字节写 stdout（颜色保留），`--strip-ansi` 洗成纯文本，`--history <bytes>` 另取一页回滚，`--wait-idle <ms>` 先等 pane 静默再取一次画面。
 - `run`：把命令 + Enter 打进 pane，收字节直到静默 `--idle`（默认 800 ms）或 `--timeout`。`--ephemeral` 走独立 kind `TMUX_CREATE_WINDOW_DETACHED`（不改历史 `TMUX_CREATE_WINDOW` 载荷）；create 之后先等新 pane 的第一帧 `PaneData` 再静默 `--idle`（上限 `--timeout`）才 `terminal-input`，避免 zsh 还没开 bracketed-paste 就把 CSI 当字面回显。结束路径（含 SIGINT）都会尝试关窗，失败写 stderr 警告。`--json` / 非 TTY 时 `captureDiagnostics` 丢掉 `[borsh-client] State: …`。
 
-`run` 的完成判定：**网关会吞掉 OSC 133**（`apps/gateway/src/tmux-client/pane-stream/osc-handlers.ts` 的 `HANDLED_OSC_KINDS` 命中即整段不转发），不可见的 shell 集成标记根本到不了客户端。所以 `--marker` 用的是一个**肉眼可见**的哨兵 `(echo __VT_DONE_<nonce>_$?)`，并且分两阶段：
+`run` 的完成判定：**网关会吞掉 OSC 133**（`apps/gateway/src/tmux-client/pane-stream/osc-handlers.ts` 的 `HANDLED_OSC_KINDS` 命中即整段不转发；OSC 8 超链接是例外，重编码为 ST 终止的规范形式后转发，`params` ≤ 256 B、URI ≤ 4096 B，超限、畸形或含控制字节整段丢弃并补发一个关闭序列 `ESC]8;;ESC\`（防止此前已转发的链接延伸到后续文本），其余未知 OSC 仍整段吞掉），不可见的 shell 集成标记根本到不了客户端。所以 `--marker` 用的是一个**肉眼可见**的哨兵 `(echo __VT_DONE_<nonce>_$?)`，并且分两阶段：
 
 1. 打进命令，等输出静默 `--idle`（或撞上 `--timeout`）；
 2. 静默之后**才**把哨兵作为**独立的一行**打进去，然后只等它的结果行 `__VT_DONE_<nonce>_<数字>`（不再按静默收尾，`sleep 30` 这种要等到 shell 真读到那一行）。

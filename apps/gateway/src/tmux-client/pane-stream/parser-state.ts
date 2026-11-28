@@ -2,6 +2,8 @@ import type { PaneStreamParserOptions } from '../pane-stream-parser';
 
 export const MAX_OSC_KIND_BYTES = 16;
 export const MAX_OSC_PAYLOAD_BYTES = 8 * 1024;
+export const MAX_OSC_HYPERLINK_URI_BYTES = 4096;
+export const MAX_OSC_HYPERLINK_PARAMS_BYTES = 256;
 export const MAX_TITLE_BYTES = 8 * 1024;
 export const MAX_DCS_PASSTHROUGH_BYTES = 64 * 1024;
 export const MAX_KITTY_PENDING_IDS = 16;
@@ -13,6 +15,7 @@ export const EMPTY_UINT8 = new Uint8Array(0);
 export const utf8Decoder = new TextDecoder();
 
 const DIRECT_COPY_MAX_BYTES = 16;
+const HYPERLINK_CLOSE = new Uint8Array([0x1b, 0x5d, 0x38, 0x3b, 0x3b, 0x1b, 0x5c]);
 
 export type ParserPhase =
   | 'normal'
@@ -140,6 +143,11 @@ export function writeRun(
   out.len += n;
 }
 
+// 丢弃一条 OSC 8 时补发规范关闭，保证之前已转发的链接不会延伸到后续文本；无链接打开时关闭无副作用。
+export function writeHyperlinkClose(out: ParserOutput | null): void {
+  writeBytes(out, HYPERLINK_CLOSE);
+}
+
 export function snapshotOutput(out: ParserOutput | null): number[] {
   if (!out) return [];
   return Array.from(out.buf.subarray(0, out.len));
@@ -191,6 +199,9 @@ export function appendOscPayloadByte(ctx: ParserContext, byte: number): boolean 
     if (!state.warnedOscPayloadOverflow) {
       state.warnedOscPayloadOverflow = true;
       console.warn('[vibeterm] pane stream parser dropped oversized OSC payload');
+    }
+    if (state.oscKind === '8') {
+      writeHyperlinkClose(ctx.output);
     }
     state.oscPayloadBytes = [];
     state.phase = 'osc-body-ignore';

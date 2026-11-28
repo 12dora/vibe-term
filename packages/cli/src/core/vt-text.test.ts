@@ -11,6 +11,13 @@ describe('stripAnsiText', () => {
     expect(stripAnsiText('\u001b]52;c;Zm9v\u001b\\after')).toBe('after');
   });
 
+  test('drops OSC 8 hyperlinks and keeps only the label', () => {
+    expect(
+      stripAnsiText('see \u001b]8;id=a1;https://example.com/a/b\u001b\\docs\u001b]8;;\u001b\\ here')
+    ).toBe('see docs here');
+    expect(stripAnsiText('\u001b]8;;https://example.com\u0007x\u001b]8;;\u0007')).toBe('x');
+  });
+
   test('a bare LF starts a new line at column 0', () => {
     expect(stripAnsiText('one\ntwo')).toBe('one\ntwo');
   });
